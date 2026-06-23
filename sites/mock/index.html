@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Latitude Mock Site</title>
+    <link rel="stylesheet" href="/mock/website/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Static mount verified</p>
+        <h1>Latitude is serving this mock website.</h1>
+        <p class="lede">
+          This page is coming from a local directory through the `/mock/website`
+          route on the proxy server.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="/mock/website/status.json">View JSON Status</a>
+          <a class="button" href="/mock/website/about.html">Open About Page</a>
+        </div>
+      </section>
+
+      <section class="grid" aria-label="Test cards">
+        <article>
+          <span class="metric">5597</span>
+          <h2>Public Port</h2>
+          <p>Remote traffic should reach Latitude through the firewall rule.</p>
+        </article>
+        <article>
+          <span class="metric">/mock/website</span>
+          <h2>Static Route</h2>
+          <p>Files are served from `sites/mock` without a separate web server.</p>
+        </article>
+        <article>
+          <span class="metric" id="clock">--:--:--</span>
+          <h2>Live Asset</h2>
+          <p>JavaScript loaded successfully if the clock is ticking.</p>
+        </article>
+      </section>
+    </main>
+
+    <script src="/mock/website/app.js"></script>
+  </body>
+</html>

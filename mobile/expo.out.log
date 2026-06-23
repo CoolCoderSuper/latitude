@@ -1,0 +1,8 @@
+
+> mobile@1.0.0 start
+> expo start --port 8081 --host lan
+
+Starting project at C:\CodingCool\Code\Projects\latitude\mobile
+Starting Metro Bundler
+Waiting on http://localhost:8081
+Logs for your project will appear below.

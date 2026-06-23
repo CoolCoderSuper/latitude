@@ -1,0 +1,7 @@
+/target/
+/.idea/
+/.vscode/
+*.pdb
+latitude.json
+.codex-remote-attachments/
+logs/

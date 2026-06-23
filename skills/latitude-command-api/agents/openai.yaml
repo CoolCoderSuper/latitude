@@ -1,0 +1,4 @@
+interface:
+  display_name: "Latitude CLI"
+  short_description: "Operate Latitude through its CLI, with command API fallback"
+  default_prompt: "Use $latitude-command-api to publish or manage a Latitude project via the Latitude CLI first; use direct local command API requests only if the CLI is unavailable."
