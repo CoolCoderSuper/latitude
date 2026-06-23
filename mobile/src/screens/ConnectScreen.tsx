@@ -1,4 +1,4 @@
-import { CheckCircle2, Server } from 'lucide-react-native';
+import { CheckCircle2, Server, X } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-import { AppButton, Chip, InlineNotice } from '../components/ui';
+import { AppButton, Chip, IconButton, InlineNotice } from '../components/ui';
 import { ANDROID_EMULATOR_URL, DEFAULT_BASE_URL } from '../constants';
 import { useTheme } from '../theme';
 import { errorMessage } from '../utils/errors';
@@ -17,11 +17,13 @@ import { errorMessage } from '../utils/errors';
 export function ConnectScreen({
   error,
   initialBaseUrl,
+  onCancel,
   onClearError,
   onLogin,
 }: {
   error: string | null;
   initialBaseUrl: string;
+  onCancel?: () => void;
   onClearError: () => void;
   onLogin: (baseUrl: string, password: string) => Promise<void>;
 }) {
@@ -71,14 +73,23 @@ export function ConnectScreen({
         contentContainerStyle={styles.connectContent}
         keyboardShouldPersistTaps="handled"
       >
-        <View style={styles.brandRow}>
-          <View style={styles.brandMark}>
-            <Server color={colors.onAccent} size={28} />
+        <View style={styles.connectTopRow}>
+          <View style={styles.brandRow}>
+            <View style={styles.brandMark}>
+              <Server color={colors.onAccent} size={28} />
+            </View>
+            <View>
+              <Text style={styles.appName}>Latitude</Text>
+              <Text style={styles.appSubhead}>Native client</Text>
+            </View>
           </View>
-          <View>
-            <Text style={styles.appName}>Latitude</Text>
-            <Text style={styles.appSubhead}>Native client</Text>
-          </View>
+          {onCancel && (
+            <IconButton
+              accessibilityLabel="Cancel"
+              icon={<X color={colors.text} size={20} />}
+              onPress={onCancel}
+            />
+          )}
         </View>
 
         <View style={styles.formGroup}>

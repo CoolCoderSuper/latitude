@@ -8,10 +8,12 @@ export type ViewerState = {
 };
 export type ProjectTab = 'deployments' | 'code' | 'terminal';
 export type RootStackParamList = {
+  Connect: undefined;
   Home: undefined;
   Project: {
     initialTab?: ProjectTab;
     name: string;
   };
+  Servers: undefined;
   Viewer: ViewerState;
 };
