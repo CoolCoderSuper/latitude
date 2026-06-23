@@ -2,15 +2,16 @@ import {
   Download,
   GitCommitHorizontal,
   Rocket,
+  Trash2,
   Upload,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, TextInput, View } from 'react-native';
+import { Alert, ScrollView, TextInput, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../../api';
 import { AppButton, EmptyState, InlineNotice, LoadingBlock } from '../../components/ui';
 import { useRefreshControl, useTheme } from '../../theme';
-import type { GitActionPayload, GitDiffResponse } from '../../types';
+import type { GitActionPayload, GitDiffResponse, GitFileChange } from '../../types';
 import { errorMessage } from '../../utils/errors';
 import { DiffSection } from './DiffSection';
 import { canStage, canUnstage, toggleExpanded } from './gitDiffUtils';
@@ -72,6 +73,47 @@ export function DiffPanel({
     [api, projectName],
   );
 
+  const confirmDiscardAll = useCallback(() => {
+    Alert.alert(
+      'Discard changes?',
+      'This will discard all unstaged changes and untracked files. It cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () =>
+            runAction(
+              { action: 'discard_all' },
+              'Unstaged changes discarded.',
+            ),
+        },
+      ],
+    );
+  }, [runAction]);
+
+  const confirmDiscardFile = useCallback(
+    (change: GitFileChange) => {
+      Alert.alert(
+        'Discard file?',
+        `Discard unstaged changes for ${change.path}? This cannot be undone.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Discard',
+            style: 'destructive',
+            onPress: () =>
+              runAction(
+                { action: 'discard_file', path: change.path },
+                `${change.path} discarded.`,
+              ),
+          },
+        ],
+      );
+    },
+    [runAction],
+  );
+
   const unstaged = diff?.file_changes.filter(canStage) ?? [];
   const staged = diff?.file_changes.filter(canUnstage) ?? [];
   const refreshControl = useRefreshControl(loading, loadDiff);
@@ -101,6 +143,14 @@ export function DiffPanel({
             runAction({ action: 'unstage_all' }, 'All changes unstaged.')
           }
           variant="secondary"
+        />
+        <AppButton
+          compact
+          disabled={actioning || unstaged.length === 0}
+          icon={<Trash2 color={colors.danger} size={16} />}
+          label="Discard all"
+          onPress={confirmDiscardAll}
+          variant="danger"
         />
       </View>
 
@@ -154,6 +204,7 @@ export function DiffPanel({
               )
             }
             onCodeInteractionChange={onCodeInteractionChange}
+            onDiscard={confirmDiscardFile}
             onToggle={(path) => toggleExpanded(setExpanded, path)}
             section="unstaged"
             title="Unstaged"

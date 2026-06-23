@@ -14,13 +14,13 @@ main {
   box-sizing: border-box;
   width: 100%;
   margin: 0 auto;
-  padding: 32px 18px 56px;
+  padding: 24px 14px 40px;
 }
 
 header {
   display: grid;
-  gap: 8px;
-  margin-bottom: 24px;
+  gap: 6px;
+  margin-bottom: 16px;
 }
 
 h1,
@@ -71,6 +71,16 @@ button:hover {
   border-color: #0f766e;
 }
 
+button.danger-button {
+  border-color: #fecdd3;
+  color: #991b1b;
+  background: #fff1f2;
+}
+
+button.danger-button:hover {
+  border-color: #991b1b;
+}
+
 input {
   min-width: min(360px, 100%);
   min-height: 40px;
@@ -86,14 +96,14 @@ input {
   display: grid;
   grid-template-columns: auto minmax(280px, 520px) auto;
   align-items: center;
-  gap: 12px;
-  margin: 20px 0;
+  gap: 8px;
+  margin: 12px 0;
 }
 
 .action-group {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
 .action-group-push {
@@ -102,7 +112,7 @@ input {
 
 .diff-workspace {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .diff-workspace .action-panel {
@@ -117,7 +127,7 @@ input {
 .action-status {
   border: 1px solid #a8d0c9;
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 8px 10px;
   color: #0f766e;
   background: #ecfdf3;
 }
@@ -135,8 +145,8 @@ input {
 
 .file-list {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: 8px;
 }
 
 .file-card {
@@ -152,10 +162,10 @@ input {
 
 .file-summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 8px;
   align-items: center;
-  padding: 10px 14px;
+  padding: 7px 10px;
   cursor: pointer;
 }
 
@@ -189,21 +199,20 @@ input {
   color: #64748b;
 }
 
-.file-count {
-  color: #64748b;
-  font-size: 0.82rem;
+.file-summary-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-self: end;
+  justify-content: flex-end;
+}
+
+.file-summary-action button {
+  width: auto;
 }
 
 .file-content {
   border-top: 1px solid #e6ebf2;
-}
-
-.file-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #e6ebf2;
 }
 
 .file-diff {
@@ -217,7 +226,7 @@ input {
 .commit-form {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -230,8 +239,8 @@ input {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 8px 10px;
   border-bottom: 1px solid #d7dde8;
 }
 
@@ -244,7 +253,7 @@ input {
 
 .empty,
 .error {
-  padding: 14px;
+  padding: 10px;
   color: #64748b;
 }
 
@@ -262,33 +271,18 @@ input {
 pre {
   margin: 0;
   overflow-x: auto;
-  padding: 14px 0;
+  padding: 6px 0;
   background: #fbfcfe;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 0.86rem;
-  line-height: 1.5;
+  line-height: 1.28;
   tab-size: 2;
-}
-
-.file-diff-title {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #e6ebf2;
-  color: #526173;
-  font-size: 0.82rem;
-}
-
-.file-diff-title code {
-  overflow-wrap: anywhere;
-  text-align: right;
 }
 
 .line {
   display: block;
   min-width: max-content;
-  padding: 0 14px;
+  padding: 0 10px;
   white-space: pre;
 }
 
@@ -380,16 +374,12 @@ pre {
   }
 
   .file-content,
-  .file-actions,
-  .file-diff,
-  .file-diff-title {
+  .file-diff {
     border-color: #2f3a4a;
   }
 
   .status-code,
-  .file-path span,
-  .file-count,
-  .file-diff-title {
+  .file-path span {
     color: #aeb9c7;
   }
 
@@ -398,6 +388,16 @@ pre {
     border-color: #2f3a4a;
     background: #151c28;
     color: #dbe4ef;
+  }
+
+  button.danger-button {
+    border-color: #7f1d1d;
+    color: #fecdd3;
+    background: #3f151b;
+  }
+
+  button.danger-button:hover {
+    border-color: #fecdd3;
   }
 
   .section-heading {
@@ -462,11 +462,11 @@ pre {
 
 @media (max-width: 720px) {
   main {
-    padding: 20px 10px 44px;
+    padding: 14px 8px 32px;
   }
 
   header {
-    margin-bottom: 16px;
+    margin-bottom: 12px;
   }
 
   h1 {
@@ -490,32 +490,21 @@ pre {
     justify-content: stretch;
   }
 
-  .section-heading,
-  .file-diff-title {
+  .section-heading {
     display: grid;
     gap: 6px;
   }
 
-  .section-heading code,
-  .file-diff-title code {
+  .section-heading code {
     text-align: left;
   }
 
   .file-list {
-    padding: 8px;
+    padding: 6px;
   }
 
   .file-summary {
-    grid-template-columns: auto 1fr;
-  }
-
-  .file-count {
-    grid-column: 2;
-  }
-
-  .file-actions {
-    display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
   }
 
   pre {
@@ -523,6 +512,6 @@ pre {
   }
 
   .line {
-    padding: 0 10px;
+    padding: 0 8px;
   }
 }

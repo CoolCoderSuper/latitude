@@ -541,6 +541,10 @@ function createStyles(colors: ThemeColors) {
     borderColor: colors.border,
     backgroundColor: colors.surface,
   },
+  buttonDanger: {
+    borderColor: colors.danger,
+    backgroundColor: colors.dangerBg,
+  },
   buttonDisabled: {
     borderColor: colors.border,
     backgroundColor: colors.panel,
@@ -552,6 +556,9 @@ function createStyles(colors: ThemeColors) {
   },
   buttonSecondaryText: {
     color: colors.text,
+  },
+  buttonDangerText: {
+    color: colors.danger,
   },
   buttonDisabledText: {
     color: colors.muted,
@@ -683,6 +690,12 @@ function createStyles(colors: ThemeColors) {
     alignItems: 'center',
     gap: 10,
   },
+  fileRowActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
   fileRowAction: {
     minHeight: 36,
     flexDirection: 'row',
@@ -693,6 +706,9 @@ function createStyles(colors: ThemeColors) {
     paddingHorizontal: 10,
     backgroundColor: colors.accent,
   },
+  fileRowDangerAction: {
+    backgroundColor: colors.dangerBg,
+  },
   fileRowActionDisabled: {
     backgroundColor: colors.muted,
   },
@@ -700,6 +716,9 @@ function createStyles(colors: ThemeColors) {
     color: colors.onAccent,
     fontSize: 12,
     fontWeight: '900',
+  },
+  fileRowDangerActionText: {
+    color: colors.danger,
   },
   statusBadge: {
     minWidth: 38,
@@ -745,10 +764,25 @@ function createStyles(colors: ThemeColors) {
     paddingBottom: 8,
     paddingRight: 16,
   },
+  diffList: {
+    backgroundColor: colors.codeBg,
+  },
   diffText: {
     minWidth: '100%',
     paddingHorizontal: 10,
     paddingVertical: 8,
+    color: colors.codeText,
+    fontFamily: Platform.select({
+      ios: 'Menlo',
+      android: 'monospace',
+      default: 'monospace',
+    }),
+    fontSize: 12,
+    lineHeight: 19,
+  },
+  diffLineText: {
+    height: 19,
+    paddingHorizontal: 10,
     color: colors.codeText,
     fontFamily: Platform.select({
       ios: 'Menlo',

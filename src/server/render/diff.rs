@@ -23,6 +23,11 @@ fn git_action_panel() -> Markup {
             div class="action-group" {
                 (git_action_button("stage_all", "Stage all"))
                 (git_action_button("unstage_all", "Unstage all"))
+                (git_destructive_action_button(
+                    "discard_all",
+                    "Discard all",
+                    "Discard all unstaged changes and untracked files? This cannot be undone.",
+                ))
             }
             div class="commit-form" {
                 input data-commit-message type="text" required placeholder="Commit message";
@@ -95,7 +100,6 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
         .iter()
         .filter(|diff| kind.includes_diff(diff))
         .collect::<Vec<_>>();
-    let count_label = diff_count_label(visible_diffs.len());
 
     html! {
         details class="file-card" data-file-path=(&change.path) {
@@ -107,19 +111,24 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
                         span { " from " (original_path) }
                     }
                 }
-                div class="file-count" { (count_label) }
-            }
-            div class="file-content" {
-                div class="file-actions" {
+                div class="file-summary-action" {
                     @match kind {
                         FileSectionKind::Unstaged => {
                             (git_file_action_button("stage_file", "Stage", &change.path))
+                            (git_file_destructive_action_button(
+                                "discard_file",
+                                "Discard",
+                                &change.path,
+                                "Discard unstaged changes for this file? This cannot be undone.",
+                            ))
                         }
                         FileSectionKind::Staged => {
                             (git_file_action_button("unstage_file", "Unstage", &change.path))
                         }
                     }
                 }
+            }
+            div class="file-content" {
                 @if visible_diffs.is_empty() {
                     div class="empty" { "No inline diff for this file." }
                 } @else {
@@ -132,19 +141,32 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
     }
 }
 
+fn git_destructive_action_button(action: &str, label: &str, confirm: &str) -> Markup {
+    html! {
+        button class="danger-button" type="button" data-git-action=(action) data-confirm=(confirm) { (label) }
+    }
+}
+
 fn git_file_action_button(action: &str, label: &str, path: &str) -> Markup {
     html! {
         button type="button" data-git-action=(action) data-path=(path) { (label) }
     }
 }
 
+fn git_file_destructive_action_button(
+    action: &str,
+    label: &str,
+    path: &str,
+    confirm: &str,
+) -> Markup {
+    html! {
+        button class="danger-button" type="button" data-git-action=(action) data-path=(path) data-confirm=(confirm) { (label) }
+    }
+}
+
 fn git_file_diff(diff: &GitFileDiff) -> Markup {
     html! {
         div class="file-diff" {
-            div class="file-diff-title" {
-                strong { (&diff.label) }
-                code { (&diff.command) }
-            }
             (PreEscaped(diff_code_html(&diff.content, &diff.path)))
         }
     }
@@ -160,13 +182,5 @@ fn file_count_label(count: usize) -> String {
     match count {
         1 => "1 file".to_string(),
         count => format!("{count} files"),
-    }
-}
-
-fn diff_count_label(count: usize) -> String {
-    match count {
-        0 => "status only".to_string(),
-        1 => "1 diff".to_string(),
-        count => format!("diffs: {count}"),
     }
 }

@@ -6,8 +6,12 @@ pub(super) use diff::render_diff_workspace_fragment;
 
 #[cfg(test)]
 pub(super) use syntax::{
-    SyntaxLanguage, diff_line_class, render_diff_code_output, syntax_language_for_path,
+    HighlightedDiffLine, diff_line_class, highlight_diff_lines, render_diff_code_output,
+    syntax_name_for_path,
 };
+
+#[cfg(not(test))]
+pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines};
 
 use maud::{PreEscaped, html};
 
@@ -41,8 +45,11 @@ pub(super) fn render_project_home(project: &ProjectConfig) -> String {
         html! {},
         html! {
             main {
-                h1 { (&project.name) }
-                p { "Project tools and deployments" }
+                header {
+                    a class="back-link" href="/" { "Back to projects" }
+                    h1 { (&project.name) }
+                    p { "Project tools and deployments" }
+                }
                 ul {
                     li {
                         a href=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {

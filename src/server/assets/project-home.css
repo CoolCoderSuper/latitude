@@ -28,6 +28,14 @@ p {
   color: #526173;
 }
 
+header {
+  margin: 0 0 24px;
+}
+
+header p {
+  margin-bottom: 0;
+}
+
 ul {
   display: grid;
   gap: 10px;
@@ -51,6 +59,18 @@ a {
 
 a:hover {
   background: #eef6f4;
+}
+
+.back-link {
+  display: inline-block;
+  margin: 0 0 18px;
+  padding: 0;
+  color: #0f766e;
+}
+
+.back-link:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 
 strong,
@@ -90,5 +110,9 @@ span {
 
   a:hover {
     background: #1d2d2f;
+  }
+
+  .back-link:hover {
+    background: transparent;
   }
 }

@@ -1,0 +1,72 @@
+%YAML 1.2
+---
+# Derived from vb-ls' VS Code TextMate grammar (vscode/syntaxes/vbnet.json).
+name: VB.NET
+scope: source.vbnet
+file_extensions:
+  - vb
+  - vbnet
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: numbers
+    - include: declarations
+    - include: keywords
+    - include: types
+    - include: functions
+    - include: punctuation
+
+  comments:
+    - match: '(?i)^\s*REM\b.*$'
+      scope: comment.line.rem.vbnet
+    - match: "'.*$"
+      scope: comment.line.apostrophe.vbnet
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.vbnet
+      push:
+        - meta_scope: string.quoted.double.vbnet
+        - match: '""'
+          scope: constant.character.escape.vbnet
+        - match: '"'
+          scope: punctuation.definition.string.end.vbnet
+          pop: true
+
+  numbers:
+    - match: '\b(?:&H[0-9A-Fa-f]+|&O[0-7]+|(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?)(?:[USIRDLF%&!#@])?\b'
+      scope: constant.numeric.vbnet
+
+  declarations:
+    - match: '(?i)^\s*((?:Public|Private|Protected|Friend|Shared|Static|Async|Iterator|Overloads|Overrides|Overridable|MustOverride|Partial)\s+)*(Function|Sub|Property|Class|Module|Structure|Interface|Enum|Delegate|Event)\s+([A-Za-z_][A-Za-z0-9_]*)'
+      captures:
+        1: storage.modifier.vbnet
+        2: storage.type.vbnet
+        3: entity.name.function.vbnet
+    - match: '(?i)\b(Dim|Const)\s+([A-Za-z_][A-Za-z0-9_]*)'
+      captures:
+        1: storage.type.vbnet
+        2: variable.other.vbnet
+
+  keywords:
+    - match: '(?i)\b(?:AddHandler|AddressOf|Alias|And|AndAlso|As|Async|Await|ByRef|ByVal|Call|Case|Catch|CBool|CByte|CChar|CDate|CDbl|CDec|CInt|Class|CLng|CObj|Const|Continue|CSByte|CShort|CSng|CStr|CType|CUInt|CULng|CUShort|Declare|Default|Delegate|Dim|DirectCast|Do|Each|Else|ElseIf|End|Enum|Erase|Error|Event|Exit|False|Finally|For|Friend|Function|Get|GetType|GetXMLNamespace|Global|GoSub|GoTo|Handles|If|Implements|Imports|In|Inherits|Interface|Is|IsNot|Let|Lib|Like|Loop|Me|Mod|Module|MustInherit|MustOverride|MyBase|MyClass|Namespace|Narrowing|New|Next|Not|Nothing|NotInheritable|NotOverridable|Of|On|Operator|Option|Optional|Or|OrElse|Out|Overloads|Overridable|Overrides|ParamArray|Partial|Private|Property|Protected|Public|RaiseEvent|ReadOnly|ReDim|RemoveHandler|Resume|Return|Select|Set|Shadows|Shared|Static|Step|Stop|Structure|Sub|SyncLock|Then|Throw|To|True|Try|TryCast|Type|TypeOf|Until|Using|Variant|Wend|When|While|Widening|With|WithEvents|WriteOnly|Xor)\b'
+      scope: keyword.control.vbnet
+
+  types:
+    - match: '(?i)\b(?:Boolean|Byte|Char|Date|DateTime|Decimal|Double|Integer|Long|Object|SByte|Short|Single|String|UInteger|ULong|UShort|Int16|Int32|Int64)\b'
+      scope: support.type.vbnet
+    - match: '(?i)(?<=\bAs\s)([A-Za-z_][A-Za-z0-9_]*)'
+      scope: support.type.vbnet
+    - match: '(?i)\b(?:vbArray|vbBinaryCompare|vbBoolean|vbByte|vbCr|vbCrLf|vbCurrency|vbDataObject|vbDate|vbDecimal|vbDouble|vbEmpty|vbError|vbFalse|vbFirstFourDays|vbFirstFullWeek|vbFirstJan1|vbFormFeed|vbFriday|vbGeneralDate|vbInteger|vbLf|vbLong|vbLongDate|vbLongTime|vbMonday|vbNewLine|vbNull|vbNullChar|vbNullString|vbObject|vbObjectError|vbSaturday|vbShortDate|vbShortTime|vbSingle|vbString|vbSunday|vbTab|vbTextCompare|vbThursday|vbTrue|vbTuesday|vbUseSystemDayOfWeek|vbVariant|vbVerticalTab|vbWednesday)\b'
+      scope: constant.language.vbnet
+
+  functions:
+    - match: '(?i)\b([A-Za-z_][A-Za-z0-9_]*)\b(?=\s*\()'
+      captures:
+        1: entity.name.function.vbnet
+
+  punctuation:
+    - match: '[(){}\[\],.:]'
+      scope: punctuation.separator.vbnet

@@ -20,6 +20,7 @@ use super::{
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
         parse_git_action_form, parse_porcelain_status, parse_public_git_action_payload,
+        public_diff_response,
     },
     page::{parse_page_payload, render_page_content, render_project_page_content},
     paths::{
@@ -28,9 +29,9 @@ use super::{
     },
     public::{public_entry, public_project_detail},
     render::{
-        SyntaxLanguage, diff_line_class, render_diff_code_output, render_diff_workspace_fragment,
-        render_project_diff, render_project_home, render_project_terminal, render_server_home,
-        syntax_language_for_path,
+        diff_line_class, highlight_diff_lines, render_diff_code_output,
+        render_diff_workspace_fragment, render_project_diff, render_project_home,
+        render_project_terminal, render_server_home, syntax_name_for_path,
     },
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
@@ -311,6 +312,7 @@ fn renders_project_home_with_enabled_deployments() {
         ],
     });
 
+    assert!(rendered.contains("href=\"/\">Back to projects</a>"));
     assert!(rendered.contains("href=\"/demo/_diff\""));
     assert!(rendered.contains("Code changes"));
     assert!(rendered.contains("href=\"/demo/_terminal\""));
@@ -663,10 +665,27 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-diff-workspace"));
     assert!(rendered.contains("data-action-url=\"/demo/_diff\""));
     assert!(rendered.contains("<details class=\"file-card\" data-file-path=\"src/server.rs\">"));
-    assert!(rendered.contains("<strong>Unstaged</strong>"));
     assert!(rendered.contains("data-git-action=\"stage_all\""));
+    assert!(rendered.contains("data-git-action=\"discard_all\""));
     assert!(rendered.contains("data-git-action=\"stage_file\""));
+    assert!(rendered.contains("data-git-action=\"discard_file\""));
     assert!(rendered.contains("data-path=\"src/server.rs\""));
+    assert!(rendered.contains("data-confirm=\"Discard all unstaged changes"));
+    let file_summary_start = rendered
+        .find("<summary class=\"file-summary\">")
+        .expect("file summary should render");
+    let file_content_start = rendered[file_summary_start..]
+        .find("<div class=\"file-content\">")
+        .map(|offset| file_summary_start + offset)
+        .expect("file content should render after summary");
+    let file_summary = &rendered[file_summary_start..file_content_start];
+    assert!(file_summary.contains("data-git-action=\"stage_file\""));
+    assert!(file_summary.contains("data-git-action=\"discard_file\""));
+    assert!(!rendered.contains("class=\"file-diff-title\""));
+    assert!(!rendered.contains("<strong>Unstaged</strong>"));
+    assert!(!rendered.contains("class=\"file-count\""));
+    assert!(!rendered.contains(">1 diff<"));
+    assert!(!rendered.contains("git diff --no-ext-diff --color=never"));
     assert!(rendered.contains("data-git-action=\"unstage_file\""));
     assert!(rendered.contains("data-path=\"src/new.rs\""));
     assert!(rendered.contains("data-commit-message"));
@@ -699,6 +718,7 @@ fn renders_diff_workspace_fragment_without_full_document() {
     assert!(rendered.contains("data-action-status hidden"));
     assert!(rendered.contains("<h2>Unstaged files</h2>"));
     assert!(rendered.contains("data-git-action=\"stage_file\""));
+    assert!(rendered.contains("data-git-action=\"discard_file\""));
     assert!(!rendered.contains("<!doctype html>"));
     assert!(!rendered.contains("<script>"));
 }
@@ -726,6 +746,16 @@ fn parses_git_action_forms() {
         }
     );
     assert_eq!(
+        parse_git_action_form(b"action=discard_all").unwrap(),
+        GitAction::DiscardAll
+    );
+    assert_eq!(
+        parse_git_action_form(b"action=discard_file&path=src%2Fserver.rs").unwrap(),
+        GitAction::DiscardFile {
+            path: "src/server.rs".to_string()
+        }
+    );
+    assert_eq!(
         parse_git_action_form(b"action=push").unwrap(),
         GitAction::Push
     );
@@ -748,6 +778,16 @@ fn parses_public_git_action_json_payloads() {
         )
         .unwrap(),
         GitAction::StageFile {
+            path: "src/server.rs".to_string()
+        }
+    );
+    assert_eq!(
+        parse_public_git_action_payload(
+            Some("application/json"),
+            br#"{"action":"discard_file","path":"src\\server.rs"}"#,
+        )
+        .unwrap(),
+        GitAction::DiscardFile {
             path: "src/server.rs".to_string()
         }
     );
@@ -900,27 +940,94 @@ fn highlights_diff_code_by_file_path() {
     assert!(rendered.contains("<span class=\"tok-keyword\">fn</span> answer"));
     assert!(rendered.contains("<span class=\"tok-type\">i32</span>"));
     assert!(rendered.contains("<span class=\"tok-number\">42</span>"));
+    assert!(!rendered.contains("</span>\n<span class=\"line"));
 }
 
 #[test]
-fn detects_syntax_language_from_path() {
-    assert_eq!(
-        syntax_language_for_path("src/main.rs"),
-        SyntaxLanguage::Rust
+fn highlights_visual_basic_diff_by_file_path() {
+    let lines = serde_json::to_value(highlight_diff_lines(
+        "diff --git a/src/Program.vb b/src/Program.vb\n@@ -0,0 +1,2 @@\n+Public Sub Main()\n+Dim message As String = \"hello\"",
+        "src/Program.vb",
+    ))
+    .unwrap();
+    let tokens = lines
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|line| line["tokens"].as_array().unwrap());
+
+    let has_token_containing = |text: &str, kind: &str| {
+        tokens.clone().any(|token| {
+            token["kind"] == kind
+                && token["text"]
+                    .as_str()
+                    .is_some_and(|value| value.contains(text))
+        })
+    };
+
+    assert!(has_token_containing("Public", "keyword"));
+    assert!(has_token_containing("Sub", "keyword"));
+    assert!(has_token_containing("String", "type"));
+    assert!(has_token_containing("\"hello\"", "string"));
+}
+
+#[test]
+fn public_diff_response_includes_highlighted_lines() {
+    let content = "diff --git a/src/lib.rs b/src/lib.rs\n@@ -0,0 +1 @@\n+let answer: i32 = 42;";
+    let response = public_diff_response(GitDiffReport {
+        repo_dir: PathBuf::from("C:/work/demo"),
+        file_changes: vec![GitFileChange {
+            path: "src/lib.rs".to_string(),
+            original_path: None,
+            index_status: ' ',
+            worktree_status: 'M',
+            diffs: vec![GitFileDiff {
+                label: "Unstaged".to_string(),
+                command: "git diff --no-ext-diff --color=never".to_string(),
+                path: "src/lib.rs".to_string(),
+                content: content.to_string(),
+            }],
+        }],
+    });
+
+    let payload = serde_json::to_value(&response).unwrap();
+    let diff = &payload["file_changes"][0]["diffs"][0];
+    assert_eq!(diff["content"], content);
+    assert_eq!(diff["lines"][0]["kind"], "file");
+    assert_eq!(diff["lines"][1]["kind"], "hunk");
+    assert_eq!(diff["lines"][2]["kind"], "add");
+
+    let tokens = diff["lines"][2]["tokens"].as_array().unwrap();
+    assert!(
+        tokens
+            .iter()
+            .any(|token| token["text"] == "let" && token["kind"] == "keyword")
     );
-    assert_eq!(
-        syntax_language_for_path("sites/app/App.svelte"),
-        SyntaxLanguage::JavaScript
+    assert!(
+        tokens
+            .iter()
+            .any(|token| token["text"] == "i32" && token["kind"] == "type")
     );
+}
+
+#[test]
+fn detects_syntax_with_syntect_path_lookup() {
+    assert_eq!(syntax_name_for_path("src/main.rs"), "Rust");
+    assert_eq!(syntax_name_for_path("scripts/tool.py"), "Python");
+    assert_eq!(syntax_name_for_path("package.json"), "JSON");
+    assert_eq!(syntax_name_for_path("frontend/App.ts"), "TypeScript");
+    assert_eq!(syntax_name_for_path("frontend/App.tsx"), "TypeScriptReact");
+    assert_eq!(syntax_name_for_path("frontend/App.svelte"), "Svelte");
+    assert_eq!(syntax_name_for_path("frontend/App.vue"), "Vue Component");
+    assert_eq!(syntax_name_for_path("Dockerfile"), "Dockerfile");
+    assert_eq!(syntax_name_for_path("config.toml"), "TOML");
+    assert_eq!(syntax_name_for_path("scripts/setup.ps1"), "PowerShell");
+    assert_eq!(syntax_name_for_path("src/Program.vb"), "VB.NET");
+    assert_ne!(syntax_name_for_path("README.md"), "Plain Text");
     assert_eq!(
-        syntax_language_for_path("package.json"),
-        SyntaxLanguage::Json
+        syntax_name_for_path("unknown.latitude-example"),
+        "Plain Text"
     );
-    assert_eq!(
-        syntax_language_for_path("latitude.example.json"),
-        SyntaxLanguage::Json
-    );
-    assert_eq!(syntax_language_for_path("README.md"), SyntaxLanguage::Plain);
 }
 
 #[test]

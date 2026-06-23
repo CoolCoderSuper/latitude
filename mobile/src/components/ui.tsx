@@ -75,7 +75,7 @@ export function AppButton({
   icon?: ReactNode;
   label: string;
   onPress: () => void;
-  variant?: 'primary' | 'secondary';
+  variant?: 'primary' | 'secondary' | 'danger';
 }) {
   const { styles } = useTheme();
 
@@ -87,6 +87,7 @@ export function AppButton({
         styles.button,
         compact && styles.buttonCompact,
         variant === 'secondary' && styles.buttonSecondary,
+        variant === 'danger' && styles.buttonDanger,
         disabled && styles.buttonDisabled,
         pressed && !disabled && styles.pressed,
       ]}
@@ -97,6 +98,7 @@ export function AppButton({
         style={[
           styles.buttonText,
           variant === 'secondary' && styles.buttonSecondaryText,
+          variant === 'danger' && styles.buttonDangerText,
           disabled && styles.buttonDisabledText,
         ]}
       >

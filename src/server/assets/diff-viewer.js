@@ -72,8 +72,14 @@ if (workspace) {
     }
 
     event.preventDefault();
+    event.stopPropagation();
 
     const action = button.dataset.gitAction;
+    const confirmMessage = button.dataset.confirm;
+    if (confirmMessage && !window.confirm(confirmMessage)) {
+      return;
+    }
+
     const body = new URLSearchParams({ action });
     if (button.dataset.path) {
       body.set('path', button.dataset.path);

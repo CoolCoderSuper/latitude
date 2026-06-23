@@ -62,11 +62,33 @@ export type ProjectDetail = {
   deployments: DeploymentSummary[];
 };
 
+export type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove';
+
+export type DiffTokenKind =
+  | 'comment'
+  | 'keyword'
+  | 'number'
+  | 'property'
+  | 'punctuation'
+  | 'string'
+  | 'type';
+
+export type DiffToken = {
+  text: string;
+  kind?: DiffTokenKind;
+};
+
+export type DiffLine = {
+  kind?: DiffLineKind;
+  tokens: DiffToken[];
+};
+
 export type GitFileDiff = {
   label: 'Unstaged' | 'Staged' | 'Untracked' | string;
   command: string;
   path: string;
   content: string;
+  lines?: DiffLine[];
 };
 
 export type GitFileChange = {
@@ -89,6 +111,8 @@ export type GitActionName =
   | 'stage_file'
   | 'unstage_all'
   | 'unstage_file'
+  | 'discard_all'
+  | 'discard_file'
   | 'commit'
   | 'push';
 
