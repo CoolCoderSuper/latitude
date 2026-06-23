@@ -18,6 +18,7 @@ import type { RootStackParamList } from './navigationTypes';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { ProjectRoute } from './screens/ProjectRoute';
+import { RootTerminalScreen } from './screens/RootTerminalScreen';
 import { ServersScreen } from './screens/ServersScreen';
 import {
   activateSession,
@@ -31,10 +32,16 @@ import {
   saveSession,
 } from './storage';
 import { useTheme } from './theme';
-import type { ProjectSummary, SessionRecord } from './types';
+import type { ProjectSummary, RootTerminalLink, SessionRecord } from './types';
 import { errorMessage } from './utils/errors';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const DEFAULT_ROOT_TERMINAL: RootTerminalLink = {
+  href: '/_terminal',
+  api_href: '/__latitude/api/terminal',
+  label: 'Root Terminal',
+  description: 'Run commands in your user directory',
+};
 
 export function AppContent() {
   const { colors, mode } = useTheme();
@@ -43,6 +50,9 @@ export function AppContent() {
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [sessions, setSessions] = useState<SessionRecord[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [rootTerminal, setRootTerminal] = useState<RootTerminalLink>(
+    DEFAULT_ROOT_TERMINAL,
+  );
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeBaseUrlRef = useRef<string | null>(null);
@@ -67,6 +77,7 @@ export function AppContent() {
       const response = await api.projects();
       if (activeBaseUrlRef.current === session.baseUrl) {
         setProjects(response.projects);
+        setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
         if (
           response.device_hostname &&
           session.deviceHostname !== response.device_hostname
@@ -89,6 +100,7 @@ export function AppContent() {
         setRememberedBaseUrl(session.baseUrl);
         setSession(null);
         setProjects([]);
+        setRootTerminal(DEFAULT_ROOT_TERMINAL);
         setError('Sign in again to continue.');
       } else {
         setError(errorMessage(loadError));
@@ -150,6 +162,7 @@ export function AppContent() {
     setSessions(nextSessions);
     setSession(nextSession);
     setProjects([]);
+    setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
     setError(null);
   }, []);
 
@@ -162,6 +175,7 @@ export function AppContent() {
     setSession(nextSession);
     setRememberedBaseUrl(nextSession.baseUrl);
     setProjects([]);
+    setRootTerminal(DEFAULT_ROOT_TERMINAL);
     setError(null);
   }, []);
 
@@ -176,6 +190,7 @@ export function AppContent() {
       setRememberedBaseUrl(nextState.activeSession?.baseUrl ?? baseUrl);
       if (nextBaseUrl !== previousBaseUrl) {
         setProjects([]);
+        setRootTerminal(DEFAULT_ROOT_TERMINAL);
       }
       setError(null);
     },
@@ -228,9 +243,11 @@ export function AppContent() {
                 error={error}
                 loading={projectsLoading}
                 projects={projects}
+                rootTerminal={rootTerminal}
                 serverSessions={sessions}
                 onManageServers={() => navigation.navigate('Servers')}
                 onOpenProject={(name) => navigation.navigate('Project', { name })}
+                onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
                 onRefresh={() => {
                   void loadProjects();
                 }}
@@ -255,6 +272,17 @@ export function AppContent() {
                     title: deployment.title ?? deployment.name,
                   })
                 }
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="RootTerminal">
+            {({ navigation }) => (
+              <RootTerminalScreen
+                api={api}
+                deviceHostname={session.deviceHostname}
+                rootTerminal={rootTerminal}
+                session={session}
+                onBack={() => navigation.goBack()}
               />
             )}
           </Stack.Screen>

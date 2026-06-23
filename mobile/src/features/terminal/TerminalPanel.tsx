@@ -13,6 +13,7 @@ import { EmptyState, InlineNotice, LoadingBlock } from '../../components/ui';
 import { useTheme } from '../../theme';
 import type {
   ProjectDetail,
+  RootTerminalLink,
   SessionRecord,
   TerminalSessionSummary,
 } from '../../types';
@@ -28,6 +29,60 @@ export function TerminalPanel({
   project: ProjectDetail;
   session: SessionRecord;
 }) {
+  const target = useMemo(
+    () => ({
+      title: project.name,
+      terminalHref: project.terminal.href,
+      listSessions: () => api.terminalSessions(project.name),
+      createSession: () => api.createTerminalSession(project.name),
+      closeSession: (sessionId: string) =>
+        api.closeTerminalSession(project.name, sessionId),
+    }),
+    [api, project.name, project.terminal.href],
+  );
+
+  return <TerminalWorkspace session={session} target={target} />;
+}
+
+export function RootTerminalPanel({
+  api,
+  rootTerminal,
+  session,
+}: {
+  api: LatitudePublicApi;
+  rootTerminal: RootTerminalLink;
+  session: SessionRecord;
+}) {
+  const target = useMemo(
+    () => ({
+      title: rootTerminal.label,
+      terminalHref: rootTerminal.href,
+      listSessions: () => api.rootTerminalSessions(),
+      createSession: () => api.createRootTerminalSession(),
+      closeSession: (sessionId: string) =>
+        api.closeRootTerminalSession(sessionId),
+    }),
+    [api, rootTerminal.href, rootTerminal.label],
+  );
+
+  return <TerminalWorkspace session={session} target={target} />;
+}
+
+type TerminalPanelTarget = {
+  title: string;
+  terminalHref: string;
+  listSessions: () => Promise<{ sessions: TerminalSessionSummary[] }>;
+  createSession: () => Promise<TerminalSessionSummary>;
+  closeSession: (sessionId: string) => Promise<void>;
+};
+
+function TerminalWorkspace({
+  session,
+  target,
+}: {
+  session: SessionRecord;
+  target: TerminalPanelTarget;
+}) {
   const { colors, styles } = useTheme();
   const [sessions, setSessions] = useState<TerminalSessionSummary[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -40,9 +95,9 @@ export function TerminalPanel({
     setLoading(true);
     setNotice(null);
     try {
-      let nextSessions = (await api.terminalSessions(project.name)).sessions;
+      let nextSessions = (await target.listSessions()).sessions;
       if (nextSessions.length === 0) {
-        nextSessions = [await api.createTerminalSession(project.name)];
+        nextSessions = [await target.createSession()];
       }
       setSessions(nextSessions);
       setActiveSessionId((current) =>
@@ -55,7 +110,7 @@ export function TerminalPanel({
     } finally {
       setLoading(false);
     }
-  }, [api, project.name]);
+  }, [target]);
 
   useEffect(() => {
     void loadSessions();
@@ -69,7 +124,7 @@ export function TerminalPanel({
     setCreating(true);
     setNotice(null);
     try {
-      const created = await api.createTerminalSession(project.name);
+      const created = await target.createSession();
       setSessions((current) => [...current, created]);
       setActiveSessionId(created.id);
     } catch (sessionError) {
@@ -77,7 +132,7 @@ export function TerminalPanel({
     } finally {
       setCreating(false);
     }
-  }, [api, creating, project.name]);
+  }, [creating, target]);
 
   const closeSession = useCallback(
     async (sessionId: string) => {
@@ -88,7 +143,7 @@ export function TerminalPanel({
       setClosingSessionId(sessionId);
       setNotice(null);
       try {
-        await api.closeTerminalSession(project.name, sessionId);
+        await target.closeSession(sessionId);
         setSessions((current) => {
           const next = current.filter((item) => item.id !== sessionId);
           setActiveSessionId((active) =>
@@ -102,7 +157,7 @@ export function TerminalPanel({
         setClosingSessionId(null);
       }
     },
-    [api, closingSessionId, project.name],
+    [closingSessionId, target],
   );
 
   return (
@@ -184,8 +239,9 @@ export function TerminalPanel({
               key={terminalSession.id}
               active={terminalSession.id === activeSessionId}
               baseUrl={session.baseUrl}
-              project={project}
               session={terminalSession}
+              terminalHref={target.terminalHref}
+              terminalTitle={target.title}
               token={session.token}
             />
           ))
@@ -212,25 +268,27 @@ function terminalWebSocketUrl(
 function TerminalSessionView({
   active,
   baseUrl,
-  project,
   session,
+  terminalHref,
+  terminalTitle,
   token,
 }: {
   active: boolean;
   baseUrl: string;
-  project: ProjectDetail;
   session: TerminalSessionSummary;
+  terminalHref: string;
+  terminalTitle: string;
   token: string;
 }) {
   const { styles } = useTheme();
   const webViewRef = useRef<WebView>(null);
   const terminalUrl = useMemo(
-    () => terminalWebSocketUrl(baseUrl, project.terminal.href, token, session.id),
-    [baseUrl, project.terminal.href, session.id, token],
+    () => terminalWebSocketUrl(baseUrl, terminalHref, token, session.id),
+    [baseUrl, terminalHref, session.id, token],
   );
   const terminalHtml = useMemo(
-    () => terminalDocument(`${project.name} - ${session.title}`, terminalUrl),
-    [project.name, session.title, terminalUrl],
+    () => terminalDocument(`${terminalTitle} - ${session.title}`, terminalUrl),
+    [session.title, terminalTitle, terminalUrl],
   );
 
   useEffect(() => {

@@ -3,7 +3,10 @@ use serde::Serialize;
 use crate::config::{ApplicationConfig, ProjectConfig};
 
 use super::super::{
-    constants::{DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH, TERMINAL_ROUTE_SEGMENT},
+    constants::{
+        DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
+        TERMINAL_ROUTE_SEGMENT,
+    },
     render::{
         deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
         enabled_deployment_count, project_summary,
@@ -19,6 +22,7 @@ pub(in crate::server) struct PublicLoginPayload {
 pub(in crate::server) struct PublicSessionResponse {
     pub(in crate::server) authenticated: bool,
     pub(in crate::server) projects_href: Option<String>,
+    pub(in crate::server) root_terminal: Option<PublicRootTerminalLink>,
     pub(in crate::server) device_hostname: String,
 }
 
@@ -27,12 +31,14 @@ pub(in crate::server) struct PublicLoginResponse {
     pub(in crate::server) token: String,
     pub(in crate::server) max_age_seconds: u64,
     pub(in crate::server) projects_href: String,
+    pub(in crate::server) root_terminal: PublicRootTerminalLink,
     pub(in crate::server) device_hostname: String,
 }
 
 #[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicProjectListResponse {
     pub(in crate::server) device_hostname: String,
+    pub(in crate::server) root_terminal: PublicRootTerminalLink,
     pub(in crate::server) projects: Vec<PublicProjectSummary>,
 }
 
@@ -75,6 +81,14 @@ pub(in crate::server) struct PublicProjectTerminalLink {
 }
 
 #[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicRootTerminalLink {
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) label: &'static str,
+    pub(in crate::server) description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicDeploymentSummary {
     pub(in crate::server) name: String,
     pub(in crate::server) href: String,
@@ -94,6 +108,15 @@ pub(in crate::server::public) fn public_project_summary(
         api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
         summary: project_summary(project),
         deployment_count,
+    }
+}
+
+pub(in crate::server) fn public_root_terminal_link() -> PublicRootTerminalLink {
+    PublicRootTerminalLink {
+        href: format!("/{TERMINAL_ROUTE_SEGMENT}"),
+        api_href: PUBLIC_API_ROOT_TERMINAL_PATH.to_string(),
+        label: "Root Terminal",
+        description: "Run commands in your user directory",
     }
 }
 

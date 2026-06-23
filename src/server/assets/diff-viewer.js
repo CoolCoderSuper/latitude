@@ -26,18 +26,41 @@ if (workspace) {
     box.classList.remove('error');
   };
 
-  const openFilePaths = () => new Set(
-    Array.from(workspace.querySelectorAll('details.file-card[open][data-file-path]'))
-      .map((card) => card.dataset.filePath)
+  const fileCardKey = (card) => {
+    const section = card.dataset.fileSection;
+    const path = card.dataset.filePath;
+    return section && path ? `${section}:${path}` : null;
+  };
+
+  const fileActionSection = (action) => {
+    if (action === 'stage_file' || action === 'discard_file') {
+      return 'unstaged';
+    }
+
+    if (action === 'unstage_file') {
+      return 'staged';
+    }
+
+    return null;
+  };
+
+  const openFileKeys = () => new Set(
+    Array.from(workspace.querySelectorAll(
+      'details.file-card[open][data-file-section][data-file-path]',
+    ))
+      .map(fileCardKey)
       .filter(Boolean),
   );
 
-  const restoreOpenFiles = (paths) => {
-    workspace.querySelectorAll('details.file-card[data-file-path]').forEach((card) => {
-      if (paths.has(card.dataset.filePath)) {
-        card.open = true;
-      }
-    });
+  const restoreOpenFiles = (keys) => {
+    workspace
+      .querySelectorAll('details.file-card[data-file-section][data-file-path]')
+      .forEach((card) => {
+        const key = fileCardKey(card);
+        if (key && keys.has(key)) {
+          card.open = true;
+        }
+      });
   };
 
   const setDisabled = (disabled) => {
@@ -75,14 +98,15 @@ if (workspace) {
     event.stopPropagation();
 
     const action = button.dataset.gitAction;
+    const actionPath = button.dataset.path;
     const confirmMessage = button.dataset.confirm;
     if (confirmMessage && !window.confirm(confirmMessage)) {
       return;
     }
 
     const body = new URLSearchParams({ action });
-    if (button.dataset.path) {
-      body.set('path', button.dataset.path);
+    if (actionPath) {
+      body.set('path', actionPath);
     }
 
     if (action === 'commit') {
@@ -97,7 +121,7 @@ if (workspace) {
       body.set('message', message);
     }
 
-    const openPaths = openFilePaths();
+    const openKeys = openFileKeys();
     const scrollY = window.scrollY;
 
     workspace.setAttribute('aria-busy', 'true');
@@ -119,7 +143,13 @@ if (workspace) {
       }
 
       workspace.innerHTML = payload.workspace_html;
-      restoreOpenFiles(openPaths);
+      if (payload.ok) {
+        const actionSection = fileActionSection(action);
+        if (actionSection && actionPath) {
+          openKeys.delete(`${actionSection}:${actionPath}`);
+        }
+      }
+      restoreOpenFiles(openKeys);
       window.scrollTo(0, scrollY);
 
       if (payload.ok) {

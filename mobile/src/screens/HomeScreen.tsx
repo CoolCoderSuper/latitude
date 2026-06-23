@@ -2,6 +2,7 @@ import {
   ChevronRight,
   FolderOpen,
   Server,
+  Terminal as TerminalIcon,
 } from 'lucide-react-native';
 import { useCallback, useMemo } from 'react';
 import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
@@ -14,7 +15,7 @@ import {
   ScreenHeader,
 } from '../components/ui';
 import { useRefreshControl, useTheme } from '../theme';
-import type { ProjectSummary, SessionRecord } from '../types';
+import type { ProjectSummary, RootTerminalLink, SessionRecord } from '../types';
 import { prependDeviceHostname } from '../utils/headers';
 
 export function HomeScreen({
@@ -24,9 +25,11 @@ export function HomeScreen({
   loading,
   onManageServers,
   onOpenProject,
+  onOpenRootTerminal,
   onRefresh,
   onSwitchServer,
   projects,
+  rootTerminal,
   serverSessions,
 }: {
   baseUrl: string;
@@ -35,9 +38,11 @@ export function HomeScreen({
   loading: boolean;
   onManageServers: () => void;
   onOpenProject: (name: string) => void;
+  onOpenRootTerminal: () => void;
   onRefresh: () => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
   projects: ProjectSummary[];
+  rootTerminal: RootTerminalLink;
   serverSessions: SessionRecord[];
 }) {
   const { colors, styles } = useTheme();
@@ -147,6 +152,24 @@ export function HomeScreen({
             })}
           </ScrollView>
         )}
+        <View style={styles.list}>
+          <Pressable
+            onPress={onOpenRootTerminal}
+            style={({ pressed }) => [
+              styles.projectCard,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={styles.cardIcon}>
+              <TerminalIcon color={colors.accent} size={21} />
+            </View>
+            <View style={styles.cardBody}>
+              <Text style={styles.cardTitle}>{rootTerminal.label}</Text>
+              <Text style={styles.cardMeta}>{rootTerminal.description}</Text>
+            </View>
+            <ChevronRight color={colors.muted} size={20} />
+          </Pressable>
+        </View>
         {error && <InlineNotice tone="error" text={error} />}
         {loading && projects.length === 0 ? (
           <LoadingBlock label="Loading projects" />

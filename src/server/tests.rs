@@ -31,7 +31,7 @@ use super::{
     render::{
         diff_line_class, highlight_diff_lines, render_diff_code_output,
         render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_server_home, syntax_name_for_path,
+        render_project_terminal, render_root_terminal, render_server_home, syntax_name_for_path,
     },
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
@@ -676,7 +676,9 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("<h2>Staged files</h2>"));
     assert!(rendered.contains("data-diff-workspace"));
     assert!(rendered.contains("data-action-url=\"/demo/_diff\""));
-    assert!(rendered.contains("<details class=\"file-card\" data-file-path=\"src/server.rs\">"));
+    assert!(rendered.contains(
+        "<details class=\"file-card\" data-file-section=\"unstaged\" data-file-path=\"src/server.rs\">"
+    ));
     assert!(rendered.contains("data-git-action=\"stage_all\""));
     assert!(rendered.contains("data-git-action=\"discard_all\""));
     assert!(rendered.contains("data-git-action=\"stage_file\""));
@@ -865,6 +867,54 @@ fn renders_project_terminal_page() {
     assert!(rendered.contains("data-ws-token=\"signed-token\""));
     assert!(rendered.contains("@xterm/xterm"));
     assert!(rendered.contains("C:/work/demo"));
+}
+
+#[test]
+fn renders_root_terminal_page() {
+    let info = PublicTerminalInfoResponse {
+        cwd: "C:/Users/tester".to_string(),
+        shell: "powershell",
+        timeout_seconds: 30,
+        max_output_bytes: 1024,
+        sessions_href: "/__latitude/api/terminal/sessions".to_string(),
+    };
+    let rendered = render_root_terminal(&info, Some("signed-token"), TEST_HOSTNAME);
+
+    assert!(rendered.contains("<title>Root terminal - Latitude - test-host</title>"));
+    assert!(rendered.contains("<h1>Root Terminal</h1>"));
+    assert!(rendered.contains("<p>User directory on test-host</p>"));
+    assert!(rendered.contains("data-sessions-path=\"/__latitude/api/terminal/sessions\""));
+    assert!(rendered.contains("data-ws-path=\"/_terminal/ws\""));
+    assert!(rendered.contains("data-ws-token=\"signed-token\""));
+    assert!(rendered.contains("C:/Users/tester"));
+}
+
+#[tokio::test]
+async fn serves_root_terminal_viewer() {
+    let config = LatitudeConfig::default();
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/_terminal")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("<h1>Root Terminal</h1>"));
+    assert!(rendered.contains("data-sessions-path=\"/__latitude/api/terminal/sessions\""));
+    assert!(rendered.contains("data-ws-path=\"/_terminal/ws\""));
 }
 
 #[test]
@@ -1084,6 +1134,9 @@ fn renders_server_home_with_enabled_projects() {
 
     assert!(rendered.contains("<title>Latitude Projects - test-host</title>"));
     assert!(rendered.contains("Available projects on test-host"));
+    assert!(rendered.contains("href=\"/_terminal\""));
+    assert!(rendered.contains("Root Terminal"));
+    assert!(rendered.contains("Run commands in your user directory"));
     assert!(rendered.contains("href=\"/mock\""));
     assert!(rendered.contains("1 deployment"));
     assert!(!rendered.contains("href=\"/hidden\""));

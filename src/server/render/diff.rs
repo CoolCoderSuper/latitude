@@ -102,7 +102,7 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
         .collect::<Vec<_>>();
 
     html! {
-        details class="file-card" data-file-path=(&change.path) {
+        details class="file-card" data-file-section=(kind.data_key()) data-file-path=(&change.path) {
             summary class="file-summary" {
                 div class="status-code" { (change.status_label()) }
                 div class="file-path" {

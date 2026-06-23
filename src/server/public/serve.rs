@@ -31,11 +31,12 @@ use super::super::{
     },
     render::{
         render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_server_home,
+        render_project_terminal, render_root_terminal, render_server_home,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
-        execute_terminal_command, parse_terminal_command_payload, terminal_info_response,
+        execute_root_terminal_command, execute_terminal_command, parse_terminal_command_payload,
+        root_terminal_info_response, terminal_info_response,
     },
 };
 
@@ -52,6 +53,10 @@ pub(in crate::server) async fn public_entry(
 
     if original_path == "/" {
         return serve_server_home(req, &config, &device_hostname).await;
+    }
+
+    if let Some(remainder) = root_terminal_remainder(&original_path) {
+        return serve_root_terminal(req, remainder, &device_hostname).await;
     }
 
     let Some(public_path) = split_project_path(&original_path) else {
@@ -526,6 +531,58 @@ async fn serve_project_terminal(
     )
 }
 
+async fn serve_root_terminal(
+    req: Request<Body>,
+    remainder: &str,
+    device_hostname: &str,
+) -> Response<Body> {
+    let method = req.method().clone();
+    if method != Method::GET && method != Method::HEAD && method != Method::POST {
+        return plain_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "terminal viewers support GET, HEAD, and POST\n",
+        );
+    }
+
+    if remainder != "/" {
+        return plain_response(
+            StatusCode::NOT_FOUND,
+            "terminal viewers only serve one document\n",
+        );
+    }
+
+    if method == Method::POST {
+        let content_type = req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let (_parts, body) = req.into_parts();
+        let body = match to_bytes(body, MAX_TERMINAL_COMMAND_BYTES + 1024).await {
+            Ok(body) => body,
+            Err(error) => {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    format!("terminal payload could not be read: {error}"),
+                );
+            }
+        };
+        let command = match parse_terminal_command_payload(content_type.as_deref(), &body) {
+            Ok(command) => command,
+            Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
+        };
+
+        return Json(execute_root_terminal_command(command).await).into_response();
+    }
+
+    let websocket_token = request_bearer_token(&req);
+    let info = root_terminal_info_response().await;
+    html_response(
+        &method,
+        render_root_terminal(&info, websocket_token.as_deref(), device_hostname),
+    )
+}
+
 async fn serve_server_home(
     req: Request<Body>,
     config: &LatitudeConfig,
@@ -539,6 +596,20 @@ async fn serve_server_home(
     }
 
     html_response(req.method(), render_server_home(config, device_hostname))
+}
+
+fn root_terminal_remainder(path: &str) -> Option<&str> {
+    let root_terminal_path = format!("/{TERMINAL_ROUTE_SEGMENT}");
+    if path == root_terminal_path {
+        return Some("/");
+    }
+
+    let root_terminal_prefix = format!("{root_terminal_path}/");
+    path.strip_prefix(&root_terminal_prefix).map(
+        |remainder| {
+            if remainder.is_empty() { "/" } else { remainder }
+        },
+    )
 }
 
 fn html_response(method: &Method, html: String) -> Response<Body> {

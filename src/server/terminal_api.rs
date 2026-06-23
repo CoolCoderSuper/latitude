@@ -8,12 +8,12 @@ use axum::extract::ws::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
 use tokio::{fs, process::Command, sync::broadcast, time::timeout};
 
-use crate::terminal::{TerminalSession, TerminalSessionSummary};
+use crate::terminal::{TerminalSession, TerminalSessionSummary, root_terminal_cwd};
 
 use super::{
     constants::{
         MAX_TERMINAL_COMMAND_BYTES, MAX_TERMINAL_OUTPUT_BYTES, PUBLIC_API_PROJECTS_PATH,
-        TERMINAL_COMMAND_TIMEOUT,
+        PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH, TERMINAL_COMMAND_TIMEOUT,
     },
     page::{content_type_media_type, is_json_media_type},
     paths::display_path,
@@ -105,14 +105,41 @@ pub(super) async fn terminal_info_response(
     project: &str,
     project_dir: &Path,
 ) -> PublicTerminalInfoResponse {
-    let cwd = terminal_cwd(project_dir).await;
+    scoped_terminal_info_response(
+        project_dir,
+        format!("{PUBLIC_API_PROJECTS_PATH}/{project}/terminal/sessions"),
+    )
+    .await
+}
+
+pub(super) async fn root_terminal_info_response() -> PublicTerminalInfoResponse {
+    let root_dir = root_terminal_cwd();
+    scoped_terminal_info_response(
+        &root_dir,
+        PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH.to_string(),
+    )
+    .await
+}
+
+async fn scoped_terminal_info_response(
+    terminal_dir: &Path,
+    sessions_href: String,
+) -> PublicTerminalInfoResponse {
+    let cwd = terminal_cwd(terminal_dir).await;
     PublicTerminalInfoResponse {
         cwd: display_path(&cwd),
         shell: terminal_shell_name(),
         timeout_seconds: TERMINAL_COMMAND_TIMEOUT.as_secs(),
         max_output_bytes: MAX_TERMINAL_OUTPUT_BYTES,
-        sessions_href: format!("{PUBLIC_API_PROJECTS_PATH}/{project}/terminal/sessions"),
+        sessions_href,
     }
+}
+
+pub(super) async fn execute_root_terminal_command(
+    command_text: String,
+) -> PublicTerminalCommandResponse {
+    let root_dir = root_terminal_cwd();
+    execute_terminal_command(&root_dir, command_text).await
 }
 
 pub(super) async fn execute_terminal_command(

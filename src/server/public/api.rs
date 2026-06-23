@@ -27,13 +27,14 @@ use super::{
         },
         response::{ApiError, json_error, plain_response},
         terminal_api::{
-            PublicTerminalSessionListResponse, TerminalWsQuery, execute_terminal_command,
-            parse_terminal_command_payload, terminal_info_response, terminal_websocket_session,
+            PublicTerminalSessionListResponse, TerminalWsQuery, execute_root_terminal_command,
+            execute_terminal_command, parse_terminal_command_payload, root_terminal_info_response,
+            terminal_info_response, terminal_websocket_session,
         },
     },
     models::{
         PublicLoginPayload, PublicLoginResponse, PublicProjectListResponse, PublicSessionResponse,
-        public_project_detail, public_project_summary,
+        public_project_detail, public_project_summary, public_root_terminal_link,
     },
 };
 
@@ -96,6 +97,7 @@ pub(in crate::server) async fn public_api_session(
     Json(PublicSessionResponse {
         authenticated,
         projects_href: authenticated.then(|| PUBLIC_API_PROJECTS_PATH.to_string()),
+        root_terminal: authenticated.then(public_root_terminal_link),
         device_hostname: state.device_hostname().to_string(),
     })
 }
@@ -126,6 +128,7 @@ pub(in crate::server) async fn public_api_login(
             token,
             max_age_seconds: AUTH_COOKIE_MAX_AGE_SECONDS,
             projects_href: PUBLIC_API_PROJECTS_PATH.to_string(),
+            root_terminal: public_root_terminal_link(),
             device_hostname: state.device_hostname().to_string(),
         }),
     ))
@@ -149,6 +152,7 @@ pub(in crate::server) async fn public_api_list_projects(
 
     Json(PublicProjectListResponse {
         device_hostname: state.device_hostname().to_string(),
+        root_terminal: public_root_terminal_link(),
         projects,
     })
     .into_response()
@@ -327,6 +331,100 @@ pub(in crate::server) async fn public_api_post_project_terminal(
     Json(execute_terminal_command(&project_config.project_dir, command).await).into_response()
 }
 
+pub(in crate::server) async fn public_api_get_root_terminal(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    Json(root_terminal_info_response().await).into_response()
+}
+
+pub(in crate::server) async fn public_api_post_root_terminal(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    let content_type = req
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let (_parts, body) = req.into_parts();
+    let body = match to_bytes(body, MAX_TERMINAL_COMMAND_BYTES + 1024).await {
+        Ok(body) => body,
+        Err(error) => {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                format!("terminal payload could not be read: {error}"),
+            );
+        }
+    };
+    let command = match parse_terminal_command_payload(content_type.as_deref(), &body) {
+        Ok(command) => command,
+        Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
+    };
+
+    Json(execute_root_terminal_command(command).await).into_response()
+}
+
+pub(in crate::server) async fn public_api_list_root_terminal_sessions(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    Json(PublicTerminalSessionListResponse {
+        sessions: state.terminal_sessions().list_root().await,
+    })
+    .into_response()
+}
+
+pub(in crate::server) async fn public_api_create_root_terminal_session(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    match state.terminal_sessions().create_root_session().await {
+        Ok(session) => Json(session.summary()).into_response(),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+pub(in crate::server) async fn public_api_delete_root_terminal_session(
+    AxumPath(session): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    if state.terminal_sessions().close_root_session(&session).await {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        json_error(
+            StatusCode::NOT_FOUND,
+            format!("terminal session '{session}' was not found"),
+        )
+    }
+}
+
 pub(in crate::server) async fn public_api_list_terminal_sessions(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
@@ -463,6 +561,38 @@ pub(in crate::server) async fn public_terminal_ws(
             .create_session(&project, &project_config.project_dir)
             .await
         {
+            Ok(session) => session,
+            Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+        }
+    };
+
+    ws.on_upgrade(move |socket| terminal_websocket_session(socket, session))
+}
+
+pub(in crate::server) async fn public_root_terminal_ws(
+    Query(query): Query<TerminalWsQuery>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_headers_are_authenticated(&state, &config, &headers, query.token.as_deref()) {
+        return public_api_auth_challenge();
+    }
+
+    let terminal_sessions = state.terminal_sessions();
+    let session = if let Some(session_id) = query.session.as_deref() {
+        match terminal_sessions.get_root_session(session_id).await {
+            Some(session) => session,
+            None => {
+                return json_error(
+                    StatusCode::NOT_FOUND,
+                    format!("terminal session '{session_id}' was not found"),
+                );
+            }
+        }
+    } else {
+        match terminal_sessions.create_root_session().await {
             Ok(session) => session,
             Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
         }

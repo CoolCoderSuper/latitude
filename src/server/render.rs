@@ -151,6 +151,37 @@ pub(super) fn render_project_terminal(
     )
 }
 
+pub(super) fn render_root_terminal(
+    info: &PublicTerminalInfoResponse,
+    websocket_token: Option<&str>,
+    device_hostname: &str,
+) -> String {
+    let websocket_path = format!("/{TERMINAL_ROUTE_SEGMENT}/{TERMINAL_WS_SUFFIX}");
+
+    html_page::document(
+        "Root terminal - Latitude",
+        device_hostname,
+        TERMINAL_VIEWER_STYLE,
+        html! {
+            link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css";
+        },
+        html! {
+            main {
+                header {
+                    a href="/" { "Back to projects" }
+                    h1 { "Root Terminal" }
+                    p { "User directory on " (device_hostname) }
+                    p class="project-path" { (&info.cwd) }
+                }
+                (terminal::terminal_workspace(info, &websocket_path, websocket_token))
+                script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" {}
+                script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" {}
+                script { (PreEscaped(TERMINAL_VIEWER_SCRIPT)) }
+            }
+        },
+    )
+}
+
 pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostname: &str) -> String {
     html_page::document(
         "Sign in - Latitude",
@@ -183,6 +214,7 @@ pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str)
         .iter()
         .filter(|project| project.enabled)
         .collect::<Vec<_>>();
+    let no_enabled_projects = enabled_projects.is_empty();
 
     html_page::document(
         "Latitude Projects",
@@ -193,18 +225,23 @@ pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str)
             main {
                 h1 { "Latitude" }
                 p { "Available projects on " (device_hostname) }
-                @if enabled_projects.is_empty() {
-                    div class="empty" { "No enabled projects yet." }
-                } @else {
-                    ul {
-                        @for project in enabled_projects {
-                            li {
-                                a href=(format!("/{}", project.name)) {
-                                    strong { (&project.name) }
-                                    span { (project_summary(project)) }
-                                }
+                ul {
+                    li {
+                        a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {
+                            strong { "Root Terminal" }
+                            span { "Run commands in your user directory" }
+                        }
+                    }
+                    @for project in enabled_projects {
+                        li {
+                            a href=(format!("/{}", project.name)) {
+                                strong { (&project.name) }
+                                span { (project_summary(project)) }
                             }
                         }
+                    }
+                    @if no_enabled_projects {
+                        li class="empty" { "No enabled projects yet." }
                     }
                 }
             }

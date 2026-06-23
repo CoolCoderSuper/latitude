@@ -78,6 +78,13 @@ impl FileSectionKind {
             Self::Staged => diff.label == "Staged",
         }
     }
+
+    pub(in crate::server) fn data_key(self) -> &'static str {
+        match self {
+            Self::Unstaged => "unstaged",
+            Self::Staged => "staged",
+        }
+    }
 }
 
 #[derive(Debug)]

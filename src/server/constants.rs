@@ -7,8 +7,13 @@ pub(super) const DIFF_ROUTE_SEGMENT: &str = "_diff";
 pub(super) const TERMINAL_ROUTE_SEGMENT: &str = "_terminal";
 pub(super) const TERMINAL_WS_SUFFIX: &str = "ws";
 pub(super) const LOGIN_PATH: &str = "/__latitude/login";
+pub(super) const PUBLIC_ROOT_TERMINAL_WS_PATH: &str = "/_terminal/ws";
 pub(super) const PUBLIC_TERMINAL_WS_PATH: &str = "/{project}/_terminal/ws";
 pub(super) const PUBLIC_API_SESSION_PATH: &str = "/__latitude/api/session";
+pub(super) const PUBLIC_API_ROOT_TERMINAL_PATH: &str = "/__latitude/api/terminal";
+pub(super) const PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH: &str = "/__latitude/api/terminal/sessions";
+pub(super) const PUBLIC_API_ROOT_TERMINAL_SESSION_PATH: &str =
+    "/__latitude/api/terminal/sessions/{session}";
 pub(super) const PUBLIC_API_PROJECTS_PATH: &str = "/__latitude/api/projects";
 pub(super) const PUBLIC_API_PROJECT_PATH: &str = "/__latitude/api/projects/{project}";
 pub(super) const PUBLIC_API_PROJECT_DIFF_PATH: &str = "/__latitude/api/projects/{project}/diff";

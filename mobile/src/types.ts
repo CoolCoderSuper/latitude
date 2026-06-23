@@ -8,12 +8,14 @@ export type LoginResponse = {
   token: string;
   max_age_seconds: number;
   projects_href: string;
+  root_terminal: RootTerminalLink;
   device_hostname: string;
 };
 
 export type SessionResponse = {
   authenticated: boolean;
   projects_href: string | null;
+  root_terminal: RootTerminalLink | null;
   device_hostname: string;
 };
 
@@ -27,6 +29,7 @@ export type ProjectSummary = {
 
 export type ProjectListResponse = {
   device_hostname: string;
+  root_terminal: RootTerminalLink;
   projects: ProjectSummary[];
 };
 
@@ -48,12 +51,15 @@ export type ProjectDiffLink = {
   description: string;
 };
 
-export type ProjectTerminalLink = {
+export type TerminalLink = {
   href: string;
   api_href: string;
   label: string;
   description: string;
 };
+
+export type ProjectTerminalLink = TerminalLink;
+export type RootTerminalLink = TerminalLink;
 
 export type ProjectDetail = {
   name: string;
@@ -143,7 +149,8 @@ export type TerminalInfoResponse = {
 
 export type TerminalSessionSummary = {
   id: string;
-  project: string;
+  scope: string;
+  project?: string | null;
   title: string;
   cwd: string;
   created_at_ms: number;

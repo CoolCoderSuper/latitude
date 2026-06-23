@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    env,
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -17,6 +18,7 @@ use tokio::sync::{RwLock, broadcast};
 const DEFAULT_TERMINAL_ROWS: u16 = 28;
 const DEFAULT_TERMINAL_COLS: u16 = 100;
 const TERMINAL_HISTORY_BYTES: usize = 512 * 1024;
+const ROOT_TERMINAL_SCOPE: &str = "root";
 
 #[derive(Default)]
 pub struct TerminalSessionManager {
@@ -26,7 +28,8 @@ pub struct TerminalSessionManager {
 #[derive(Clone, Debug, Serialize)]
 pub struct TerminalSessionSummary {
     pub id: String,
-    pub project: String,
+    pub scope: String,
+    pub project: Option<String>,
     pub title: String,
     pub cwd: String,
     pub created_at_ms: u128,
@@ -36,7 +39,8 @@ pub struct TerminalSessionSummary {
 
 pub struct TerminalSession {
     id: String,
-    project: String,
+    scope: String,
+    project: Option<String>,
     title: String,
     cwd: PathBuf,
     created_at_ms: u128,
@@ -56,15 +60,27 @@ struct TerminalHistory {
 }
 
 impl TerminalSessionManager {
+    pub async fn list_root(&self) -> Vec<TerminalSessionSummary> {
+        self.list_scope(ROOT_TERMINAL_SCOPE).await
+    }
+
     pub async fn list_project(&self, project: &str) -> Vec<TerminalSessionSummary> {
+        self.list_scope(&project_terminal_scope(project)).await
+    }
+
+    async fn list_scope(&self, scope: &str) -> Vec<TerminalSessionSummary> {
         let sessions = self.sessions.read().await;
         let mut summaries = sessions
             .values()
-            .filter(|session| session.project == project)
+            .filter(|session| session.scope == scope)
             .map(|session| session.summary())
             .collect::<Vec<_>>();
         summaries.sort_by_key(|summary| summary.created_at_ms);
         summaries
+    }
+
+    pub async fn get_root_session(&self, id: &str) -> Option<Arc<TerminalSession>> {
+        self.get_scope_session(ROOT_TERMINAL_SCOPE, id).await
     }
 
     pub async fn get_project_session(
@@ -72,11 +88,26 @@ impl TerminalSessionManager {
         project: &str,
         id: &str,
     ) -> Option<Arc<TerminalSession>> {
+        self.get_scope_session(&project_terminal_scope(project), id)
+            .await
+    }
+
+    async fn get_scope_session(&self, scope: &str, id: &str) -> Option<Arc<TerminalSession>> {
         let sessions = self.sessions.read().await;
         sessions
             .get(id)
-            .filter(|session| session.project == project)
+            .filter(|session| session.scope == scope)
             .cloned()
+    }
+
+    pub async fn create_root_session(&self) -> Result<Arc<TerminalSession>, String> {
+        self.create_scoped_session(
+            ROOT_TERMINAL_SCOPE.to_string(),
+            None,
+            "Root Terminal",
+            root_terminal_cwd(),
+        )
+        .await
     }
 
     pub async fn create_session(
@@ -84,17 +115,32 @@ impl TerminalSessionManager {
         project: &str,
         project_dir: &Path,
     ) -> Result<Arc<TerminalSession>, String> {
+        self.create_scoped_session(
+            project_terminal_scope(project),
+            Some(project.to_string()),
+            "Terminal",
+            terminal_cwd(project_dir),
+        )
+        .await
+    }
+
+    async fn create_scoped_session(
+        &self,
+        scope: String,
+        project: Option<String>,
+        title_prefix: &str,
+        cwd: PathBuf,
+    ) -> Result<Arc<TerminalSession>, String> {
         let title = {
             let sessions = self.sessions.read().await;
             let count = sessions
                 .values()
-                .filter(|session| session.project == project)
+                .filter(|session| session.scope == scope)
                 .count();
-            format!("Terminal {}", count + 1)
+            format!("{title_prefix} {}", count + 1)
         };
 
-        let session =
-            TerminalSession::spawn(project.to_string(), title, terminal_cwd(project_dir))?;
+        let session = TerminalSession::spawn(scope, project, title, cwd)?;
         self.sessions
             .write()
             .await
@@ -102,12 +148,21 @@ impl TerminalSessionManager {
         Ok(session)
     }
 
+    pub async fn close_root_session(&self, id: &str) -> bool {
+        self.close_scope_session(ROOT_TERMINAL_SCOPE, id).await
+    }
+
     pub async fn close_project_session(&self, project: &str, id: &str) -> bool {
+        self.close_scope_session(&project_terminal_scope(project), id)
+            .await
+    }
+
+    async fn close_scope_session(&self, scope: &str, id: &str) -> bool {
         let removed = {
             let mut sessions = self.sessions.write().await;
             if sessions
                 .get(id)
-                .is_some_and(|session| session.project == project)
+                .is_some_and(|session| session.scope == scope)
             {
                 sessions.remove(id)
             } else {
@@ -125,7 +180,12 @@ impl TerminalSessionManager {
 }
 
 impl TerminalSession {
-    fn spawn(project: String, title: String, cwd: PathBuf) -> Result<Arc<Self>, String> {
+    fn spawn(
+        scope: String,
+        project: Option<String>,
+        title: String,
+        cwd: PathBuf,
+    ) -> Result<Arc<Self>, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -157,6 +217,7 @@ impl TerminalSession {
         let alive = Arc::new(AtomicBool::new(true));
         let session = Arc::new(Self {
             id: terminal_session_id(),
+            scope,
             project,
             title,
             cwd,
@@ -183,6 +244,7 @@ impl TerminalSession {
     pub fn summary(&self) -> TerminalSessionSummary {
         TerminalSessionSummary {
             id: self.id.clone(),
+            scope: self.scope.clone(),
             project: self.project.clone(),
             title: self.title.clone(),
             cwd: display_path(&self.cwd),
@@ -271,8 +333,45 @@ impl TerminalSession {
     }
 }
 
-fn terminal_cwd(project_dir: &Path) -> PathBuf {
+pub fn root_terminal_cwd() -> PathBuf {
+    terminal_cwd(&user_home_dir())
+}
+
+pub fn terminal_cwd(project_dir: &Path) -> PathBuf {
     std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf())
+}
+
+fn project_terminal_scope(project: &str) -> String {
+    format!("project:{project}")
+}
+
+fn user_home_dir() -> PathBuf {
+    if cfg!(windows) {
+        if let Some(profile) = non_empty_var("USERPROFILE") {
+            return PathBuf::from(profile);
+        }
+
+        if let (Some(drive), Some(path)) =
+            (non_empty_string("HOMEDRIVE"), non_empty_string("HOMEPATH"))
+        {
+            return PathBuf::from(format!("{drive}{path}"));
+        }
+    }
+
+    if let Some(home) = non_empty_var("HOME") {
+        return PathBuf::from(home);
+    }
+
+    env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn non_empty_var(name: &str) -> Option<std::ffi::OsString> {
+    let value = env::var_os(name)?;
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn non_empty_string(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.is_empty())
 }
 
 fn terminal_pty_command(cwd: &Path) -> CommandBuilder {

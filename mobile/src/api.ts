@@ -115,6 +115,10 @@ export class LatitudePublicApi {
     );
   }
 
+  async rootTerminal(): Promise<TerminalInfoResponse> {
+    return this.get<TerminalInfoResponse>(`${PUBLIC_API_PREFIX}/terminal`);
+  }
+
   async runTerminalCommand(
     projectName: string,
     payload: TerminalCommandPayload,
@@ -131,9 +135,30 @@ export class LatitudePublicApi {
     );
   }
 
+  async runRootTerminalCommand(
+    payload: TerminalCommandPayload,
+  ): Promise<TerminalCommandResponse> {
+    return this.request<TerminalCommandResponse>(
+      `${PUBLIC_API_PREFIX}/terminal`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+  }
+
   async terminalSessions(projectName: string): Promise<TerminalSessionListResponse> {
     return this.get<TerminalSessionListResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/terminal/sessions`,
+    );
+  }
+
+  async rootTerminalSessions(): Promise<TerminalSessionListResponse> {
+    return this.get<TerminalSessionListResponse>(
+      `${PUBLIC_API_PREFIX}/terminal/sessions`,
     );
   }
 
@@ -144,9 +169,23 @@ export class LatitudePublicApi {
     );
   }
 
+  async createRootTerminalSession(): Promise<TerminalSessionSummary> {
+    return this.request<TerminalSessionSummary>(
+      `${PUBLIC_API_PREFIX}/terminal/sessions`,
+      { method: 'POST' },
+    );
+  }
+
   async closeTerminalSession(projectName: string, sessionId: string): Promise<void> {
     await this.request<void>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/terminal/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    );
+  }
+
+  async closeRootTerminalSession(sessionId: string): Promise<void> {
+    await this.request<void>(
+      `${PUBLIC_API_PREFIX}/terminal/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
     );
   }
