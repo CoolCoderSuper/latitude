@@ -1,0 +1,514 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f7f8fb;
+  color: #1c2433;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+main {
+  box-sizing: border-box;
+  width: min(100%, 1180px);
+  margin: 0 auto;
+  padding: 32px 18px 56px;
+}
+
+header {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 3.4rem);
+  line-height: 1.08;
+}
+
+h2 {
+  font-size: 1rem;
+}
+
+p {
+  color: #526173;
+}
+
+a {
+  color: #0f766e;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  min-height: 40px;
+  border: 1px solid #b7c1cf;
+  border-radius: 6px;
+  padding: 0 14px;
+  color: #1c2433;
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #0f766e;
+}
+
+input {
+  min-width: min(360px, 100%);
+  min-height: 40px;
+  box-sizing: border-box;
+  border: 1px solid #b7c1cf;
+  border-radius: 6px;
+  padding: 0 12px;
+  color: inherit;
+  background: #fff;
+}
+
+.project-path {
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92rem;
+}
+
+.action-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+.diff-workspace {
+  display: grid;
+  gap: 16px;
+}
+
+.diff-workspace .action-panel {
+  margin: 0;
+}
+
+.diff-workspace[aria-busy="true"] button,
+.diff-workspace[aria-busy="true"] input {
+  opacity: 0.72;
+}
+
+.action-status {
+  border: 1px solid #a8d0c9;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #0f766e;
+  background: #ecfdf3;
+}
+
+.action-status[hidden] {
+  display: none;
+}
+
+.file-panel {
+  border: 1px solid #d7dde8;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.file-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.file-card {
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.file-card[open] {
+  border-color: #a8d0c9;
+}
+
+.file-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.file-summary::-webkit-details-marker {
+  display: none;
+}
+
+.file-summary::before {
+  content: ">";
+  color: #64748b;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.file-card[open] .file-summary::before {
+  content: "v";
+}
+
+.status-code {
+  min-width: 2.4rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  color: #64748b;
+}
+
+.file-path {
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.92rem;
+}
+
+.file-path span {
+  color: #64748b;
+}
+
+.file-count {
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.file-content {
+  border-top: 1px solid #e6ebf2;
+}
+
+.file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e6ebf2;
+}
+
+.file-diff {
+  border-top: 1px solid #e6ebf2;
+}
+
+.file-diff:first-child {
+  border-top: 0;
+}
+
+.commit-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #d7dde8;
+}
+
+.section-heading code {
+  color: #64748b;
+  font-size: 0.78rem;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.empty,
+.error {
+  padding: 14px;
+  color: #64748b;
+}
+
+.error {
+  color: #991b1b;
+  background: #fff1f2;
+}
+
+.action-status.error {
+  border-color: #fecdd3;
+  color: #991b1b;
+  background: #fff1f2;
+}
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 14px 0;
+  background: #fbfcfe;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.file-diff-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #e6ebf2;
+  color: #526173;
+  font-size: 0.82rem;
+}
+
+.file-diff-title code {
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.line {
+  display: block;
+  min-width: max-content;
+  padding: 0 14px;
+  white-space: pre;
+}
+
+.line.file {
+  color: #334155;
+  font-weight: 700;
+}
+
+.line.hunk {
+  color: #1d4ed8;
+}
+
+.line.add {
+  color: #166534;
+  background: #ecfdf3;
+}
+
+.line.remove {
+  color: #991b1b;
+  background: #fff1f2;
+}
+
+.tok-keyword {
+  color: #7c3aed;
+  font-weight: 700;
+}
+
+.tok-string {
+  color: #a16207;
+}
+
+.tok-comment {
+  color: #64748b;
+  font-style: italic;
+}
+
+.tok-number {
+  color: #0f766e;
+}
+
+.tok-type {
+  color: #0369a1;
+}
+
+.tok-property {
+  color: #be123c;
+}
+
+.tok-punctuation {
+  color: #64748b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #10141d;
+    color: #dbe4ef;
+  }
+
+  p,
+  .empty,
+  .section-heading code {
+    color: #aeb9c7;
+  }
+
+  .file-panel {
+    border-color: #2f3a4a;
+    background: #151c28;
+  }
+
+  .action-status {
+    border-color: #367064;
+    color: #bbf7d0;
+    background: #123421;
+  }
+
+  .action-status.error {
+    border-color: #7f1d1d;
+    color: #fecdd3;
+    background: #3f151b;
+  }
+
+  .file-card {
+    border-color: #2f3a4a;
+    background: #151c28;
+  }
+
+  .file-card[open] {
+    border-color: #367064;
+  }
+
+  .file-content,
+  .file-actions,
+  .file-diff,
+  .file-diff-title {
+    border-color: #2f3a4a;
+  }
+
+  .status-code,
+  .file-path span,
+  .file-count,
+  .file-diff-title {
+    color: #aeb9c7;
+  }
+
+  button,
+  input {
+    border-color: #2f3a4a;
+    background: #151c28;
+    color: #dbe4ef;
+  }
+
+  .section-heading {
+    border-bottom-color: #2f3a4a;
+  }
+
+  pre {
+    background: #111827;
+  }
+
+  .line.file {
+    color: #dbe4ef;
+  }
+
+  .line.hunk {
+    color: #93c5fd;
+  }
+
+  .line.add {
+    color: #bbf7d0;
+    background: #123421;
+  }
+
+  .line.remove {
+    color: #fecdd3;
+    background: #3f151b;
+  }
+
+  .tok-keyword {
+    color: #c4b5fd;
+  }
+
+  .tok-string {
+    color: #fde68a;
+  }
+
+  .tok-comment {
+    color: #94a3b8;
+  }
+
+  .tok-number {
+    color: #67e8f9;
+  }
+
+  .tok-type {
+    color: #93c5fd;
+  }
+
+  .tok-property {
+    color: #fda4af;
+  }
+
+  .tok-punctuation {
+    color: #94a3b8;
+  }
+
+  .error {
+    color: #fecdd3;
+    background: #3f151b;
+  }
+}
+
+@media (max-width: 720px) {
+  main {
+    padding: 20px 10px 44px;
+  }
+
+  header {
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    font-size: 2rem;
+  }
+
+  .action-panel,
+  .commit-form {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .action-panel form,
+  .commit-form input,
+  button {
+    width: 100%;
+  }
+
+  .section-heading,
+  .file-diff-title {
+    display: grid;
+    gap: 6px;
+  }
+
+  .section-heading code,
+  .file-diff-title code {
+    text-align: left;
+  }
+
+  .file-list {
+    padding: 8px;
+  }
+
+  .file-summary {
+    grid-template-columns: auto 1fr;
+  }
+
+  .file-count {
+    grid-column: 2;
+  }
+
+  .file-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  pre {
+    font-size: 0.78rem;
+  }
+
+  .line {
+    padding: 0 10px;
+  }
+}

@@ -3,6 +3,7 @@ mod auth;
 mod command;
 mod constants;
 mod git;
+mod html;
 mod page;
 mod paths;
 mod public;

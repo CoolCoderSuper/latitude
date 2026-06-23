@@ -1,4 +1,5 @@
 use axum::http::{HeaderMap, StatusCode};
+use maud::{PreEscaped, html};
 use pulldown_cmark::{Options, Parser, html::push_html};
 use serde::Deserialize;
 
@@ -7,7 +8,7 @@ use crate::config::PageFormat;
 use super::{
     assets::PAGE_STYLE,
     constants::{DEFAULT_PAGE_TITLE, LATITUDE_THEME_HEADER},
-    render::escape_html_text,
+    html as html_page,
     response::ApiError,
 };
 
@@ -145,24 +146,17 @@ fn render_markdown(content: &str) -> String {
 }
 
 fn wrap_page_document(title: &str, body_html: &str, theme: Option<&str>) -> String {
-    let mut output = String::new();
-    output.push_str("<!doctype html>\n<html lang=\"en\"");
-    if let Some(theme) = theme.and_then(clean_page_theme) {
-        output.push_str(" data-latitude-theme=\"");
-        output.push_str(theme);
-        output.push('"');
-    }
-    output.push_str(">\n<head>\n");
-    output.push_str("<meta charset=\"utf-8\" />\n");
-    output.push_str("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n");
-    output.push_str("<title>");
-    output.push_str(&escape_html_text(title));
-    output.push_str("</title>\n<style>\n");
-    output.push_str(PAGE_STYLE);
-    output.push_str("\n</style>\n</head>\n<body>\n<main class=\"latitude-page\">\n");
-    output.push_str(body_html);
-    output.push_str("\n</main>\n</body>\n</html>\n");
-    output
+    html_page::document_with_theme(
+        title,
+        PAGE_STYLE,
+        theme.and_then(clean_page_theme),
+        html! {},
+        html! {
+            main class="latitude-page" {
+                (PreEscaped(body_html))
+            }
+        },
+    )
 }
 
 fn resolved_page_title<'a>(explicit: Option<&'a str>, derived: Option<&'a str>) -> &'a str {

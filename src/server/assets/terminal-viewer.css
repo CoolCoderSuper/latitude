@@ -1,0 +1,285 @@
+:root {
+  color-scheme: light dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f4f7f6;
+  color: #1c2433;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+main {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  padding: 12px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid #d7dfdc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+p {
+  margin: 0;
+}
+
+h1 {
+  margin: 0;
+  color: #18201f;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+p {
+  color: #52615e;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+a {
+  color: #0f766e;
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.project-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  text-align: right;
+}
+
+.terminal-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  border: 1px solid #1b2624;
+  border-radius: 8px;
+  background: #101514;
+}
+
+.terminal-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border-bottom: 1px solid #2e3936;
+  padding: 8px;
+  background: #171d1b;
+}
+
+.terminal-session-list {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.terminal-session-item {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.terminal-session-chip,
+.terminal-session-close,
+.terminal-new-button {
+  border: 1px solid #2e3936;
+  border-radius: 8px;
+  color: #edf4f1;
+  background: #101514;
+  cursor: pointer;
+  font: inherit;
+}
+
+.terminal-session-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  min-height: 36px;
+  padding: 0 11px;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.terminal-session-chip.active {
+  border-color: #2aa79c;
+  color: #061210;
+  background: #2aa79c;
+}
+
+.terminal-session-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-session-close,
+.terminal-new-button {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 1.2rem;
+  font-weight: 900;
+}
+
+.terminal-new-button {
+  border-color: #2aa79c;
+  color: #061210;
+  background: #2aa79c;
+}
+
+.terminal-session-chip:hover,
+.terminal-session-close:hover,
+.terminal-new-button:hover {
+  filter: brightness(1.08);
+}
+
+.terminal-session-chip:disabled,
+.terminal-session-close:disabled,
+.terminal-new-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.terminal-stack {
+  position: relative;
+  min-height: 0;
+  background: #101514;
+}
+
+.terminal-view {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.terminal-view.active {
+  z-index: 1;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.terminal-surface {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 10px;
+}
+
+.terminal-empty {
+  padding: 28px;
+  color: #aeb9c7;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.action-status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  max-width: min(420px, calc(100% - 24px));
+  border: 1px solid #367064;
+  border-radius: 8px;
+  padding: 9px 12px;
+  color: #bbf7d0;
+  background: rgba(18, 52, 33, 0.96);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.action-status.error {
+  border-color: #7f1d1d;
+  color: #fecdd3;
+  background: rgba(63, 21, 27, 0.96);
+}
+
+.action-status[hidden] {
+  display: none;
+}
+
+.xterm {
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  overflow-y: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    background: #101514;
+    color: #edf4f1;
+  }
+
+  header {
+    border-color: #2e3936;
+    background: #171d1b;
+  }
+
+  h1 {
+    color: #edf4f1;
+  }
+
+  p {
+    color: #aeb9c7;
+  }
+}
+
+@media (max-width: 720px) {
+  main {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  header {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 10px;
+  }
+
+  .project-path {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .terminal-surface {
+    padding: 6px;
+  }
+
+  .terminal-session-chip {
+    max-width: 142px;
+  }
+}
