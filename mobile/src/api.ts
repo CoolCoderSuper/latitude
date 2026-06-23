@@ -173,18 +173,18 @@ export class LatitudePublicApi {
       Object.assign(headers, authHeaders(this.token));
     }
 
+    const url = absoluteUrl(this.baseUrl, path);
     let response: Response;
     try {
-      response = await fetch(absoluteUrl(this.baseUrl, path), {
+      response = await fetch(url, {
         ...options,
         headers,
       });
     } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Could not reach Latitude.';
       throw new LatitudeApiError(
         0,
-        error instanceof Error
-          ? error.message
-          : 'Could not reach Latitude.',
+        `Could not reach ${this.baseUrl}. ${reason}`,
       );
     }
 

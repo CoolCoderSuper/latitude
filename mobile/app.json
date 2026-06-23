@@ -10,6 +10,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.joseph.latitude",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -23,7 +24,8 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-video"
+      "expo-video",
+      "./plugins/withCleartextTraffic"
     ]
   }
 }

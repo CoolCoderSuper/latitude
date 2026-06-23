@@ -80,7 +80,6 @@ export function ConnectScreen({
             </View>
             <View>
               <Text style={styles.appName}>Latitude</Text>
-              <Text style={styles.appSubhead}>Native client</Text>
             </View>
           </View>
           {onCancel && (
@@ -105,9 +104,9 @@ export function ConnectScreen({
             value={baseUrl}
           />
           <View style={styles.quickRow}>
-            <Chip label="Localhost" onPress={() => setBaseUrl(DEFAULT_BASE_URL)} />
+            <Chip label="This PC" onPress={() => setBaseUrl(DEFAULT_BASE_URL)} />
             <Chip
-              label="Android"
+              label="Emulator"
               onPress={() => setBaseUrl(ANDROID_EMULATOR_URL)}
             />
           </View>
