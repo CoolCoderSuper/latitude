@@ -1,0 +1,135 @@
+use serde::Serialize;
+
+use crate::config::{ApplicationConfig, ProjectConfig};
+
+use super::super::{
+    constants::{DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH, TERMINAL_ROUTE_SEGMENT},
+    render::{
+        deployment_home_label, deployment_kind, deployment_page_title, enabled_deployment_count,
+        project_summary,
+    },
+};
+
+#[derive(Debug, serde::Deserialize)]
+pub(in crate::server) struct PublicLoginPayload {
+    pub(in crate::server) password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicSessionResponse {
+    pub(in crate::server) authenticated: bool,
+    pub(in crate::server) projects_href: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicLoginResponse {
+    pub(in crate::server) token: String,
+    pub(in crate::server) max_age_seconds: u64,
+    pub(in crate::server) projects_href: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicProjectListResponse {
+    pub(in crate::server) projects: Vec<PublicProjectSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicProjectSummary {
+    pub(in crate::server) name: String,
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) summary: String,
+    pub(in crate::server) deployment_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicProjectDetail {
+    pub(in crate::server) name: String,
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) summary: String,
+    pub(in crate::server) deployment_count: usize,
+    pub(in crate::server) diff: PublicProjectDiffLink,
+    pub(in crate::server) terminal: PublicProjectTerminalLink,
+    pub(in crate::server) deployments: Vec<PublicDeploymentSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicProjectDiffLink {
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) label: &'static str,
+    pub(in crate::server) description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicProjectTerminalLink {
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) label: &'static str,
+    pub(in crate::server) description: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicDeploymentSummary {
+    pub(in crate::server) name: String,
+    pub(in crate::server) href: String,
+    pub(in crate::server) kind: &'static str,
+    pub(in crate::server) label: &'static str,
+    pub(in crate::server) title: Option<String>,
+}
+
+pub(in crate::server::public) fn public_project_summary(
+    project: &ProjectConfig,
+) -> PublicProjectSummary {
+    let deployment_count = enabled_deployment_count(project);
+    PublicProjectSummary {
+        name: project.name.clone(),
+        href: format!("/{}", project.name),
+        api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
+        summary: project_summary(project),
+        deployment_count,
+    }
+}
+
+pub(in crate::server) fn public_project_detail(project: &ProjectConfig) -> PublicProjectDetail {
+    let deployments = project
+        .deployments
+        .iter()
+        .filter(|deployment| deployment.enabled)
+        .map(public_deployment_summary(project))
+        .collect::<Vec<_>>();
+
+    PublicProjectDetail {
+        name: project.name.clone(),
+        href: format!("/{}", project.name),
+        api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
+        summary: project_summary(project),
+        deployment_count: deployments.len(),
+        diff: PublicProjectDiffLink {
+            href: format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+            api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}/diff", project.name),
+            label: "Code changes",
+            description: "Review staged and unstaged files",
+        },
+        terminal: PublicProjectTerminalLink {
+            href: format!("/{}/{}", project.name, TERMINAL_ROUTE_SEGMENT),
+            api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}/terminal", project.name),
+            label: "Terminal",
+            description: "Run commands in the project directory",
+        },
+        deployments,
+    }
+}
+
+fn public_deployment_summary(
+    project: &ProjectConfig,
+) -> impl Fn(&ApplicationConfig) -> PublicDeploymentSummary + '_ {
+    |deployment| PublicDeploymentSummary {
+        name: deployment.name.clone(),
+        href: format!("/{}/{}", project.name, deployment.name),
+        kind: deployment_kind(deployment),
+        label: deployment_home_label(deployment),
+        title: deployment_page_title(deployment).map(str::to_string),
+    }
+}
