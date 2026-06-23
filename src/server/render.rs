@@ -11,7 +11,10 @@ pub(super) use syntax::{
 
 use maud::{PreEscaped, html};
 
-use crate::config::{ApplicationConfig, ApplicationTarget, LatitudeConfig, ProjectConfig};
+use crate::config::{
+    ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig,
+    is_binary_document_media_type,
+};
 
 use super::{
     assets::{
@@ -21,7 +24,6 @@ use super::{
     constants::{DIFF_ROUTE_SEGMENT, LOGIN_PATH, TERMINAL_ROUTE_SEGMENT, TERMINAL_WS_SUFFIX},
     git::GitDiffReport,
     html as html_page,
-    paths::display_path,
     terminal_api::PublicTerminalInfoResponse,
 };
 
@@ -90,7 +92,6 @@ pub(super) fn render_project_diff(project: &ProjectConfig, report: &GitDiffRepor
                     a href=(format!("/{}", project.name)) { "Back to project" }
                     h1 { "Code changes" }
                     p { (&project.name) }
-                    p class="project-path" { (display_path(&report.repo_dir)) }
                 }
                 div class="diff-workspace" data-diff-workspace data-action-url=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
                     (PreEscaped(workspace_html))
@@ -222,7 +223,33 @@ pub(super) fn deployment_kind(deployment: &ApplicationConfig) -> &'static str {
 pub(super) fn deployment_home_label(deployment: &ApplicationConfig) -> &'static str {
     match &deployment.target {
         ApplicationTarget::ReverseProxy { .. } => "Website",
+        ApplicationTarget::Static { index_file, .. } if is_static_image_deployment(index_file) => {
+            "Image document"
+        }
+        ApplicationTarget::Static { index_file, .. } if is_static_video_deployment(index_file) => {
+            "Video document"
+        }
         ApplicationTarget::Static { .. } => "Static website",
+        ApplicationTarget::Page {
+            format: PageFormat::Binary,
+            media_type,
+            ..
+        } if media_type.as_deref().is_some_and(is_image_media_type) => "Image document",
+        ApplicationTarget::Page {
+            format: PageFormat::Binary,
+            media_type,
+            ..
+        } if media_type.as_deref().is_some_and(is_video_media_type) => "Video document",
+        ApplicationTarget::Page {
+            format: PageFormat::Binary,
+            media_type,
+            ..
+        } if media_type
+            .as_deref()
+            .is_some_and(is_binary_document_media_type) =>
+        {
+            "Media document"
+        }
         ApplicationTarget::Page { .. } => "Page",
     }
 }
@@ -232,4 +259,39 @@ pub(super) fn deployment_page_title(deployment: &ApplicationConfig) -> Option<&s
         ApplicationTarget::Page { title, .. } => title.as_deref(),
         _ => None,
     }
+}
+
+pub(super) fn deployment_media_type(deployment: &ApplicationConfig) -> Option<String> {
+    match &deployment.target {
+        ApplicationTarget::Page {
+            format: PageFormat::Binary,
+            media_type,
+            ..
+        } => media_type.clone(),
+        ApplicationTarget::Static { index_file, .. } => static_media_type(index_file),
+        _ => None,
+    }
+}
+
+fn static_media_type(index_file: &str) -> Option<String> {
+    mime_guess::from_path(index_file)
+        .first()
+        .map(|mime| mime.essence_str().to_string())
+        .filter(|media_type| is_binary_document_media_type(media_type))
+}
+
+fn is_static_image_deployment(index_file: &str) -> bool {
+    static_media_type(index_file).is_some_and(|media_type| is_image_media_type(&media_type))
+}
+
+fn is_static_video_deployment(index_file: &str) -> bool {
+    static_media_type(index_file).is_some_and(|media_type| is_video_media_type(&media_type))
+}
+
+fn is_image_media_type(media_type: &str) -> bool {
+    media_type.starts_with("image/")
+}
+
+fn is_video_media_type(media_type: &str) -> bool {
+    media_type.starts_with("video/")
 }

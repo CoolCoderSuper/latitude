@@ -38,6 +38,7 @@ The preferred agent interface is the Latitude CLI. It talks to the command API o
 cargo run -- health
 cargo run -- project ensure demo --project-dir .
 cargo run -- publish page demo report --file report.md --title "Agent Report" --format markdown
+cargo run -- publish page demo snapshot --file screenshot.png --title "Latest Screenshot"
 cargo run -- deploy static demo mock --root ./sites/mock --spa-fallback
 cargo run -- deploy proxy demo frontend --upstream http://127.0.0.1:5173
 ```
@@ -57,5 +58,13 @@ Invoke-RestMethod `
 ```
 
 Then open `http://127.0.0.1:8080/demo/report`.
+
+Markdown and HTML documents are rendered as pages. Image and video files up to 25 MiB can also be published as documents; the CLI infers `image/*` and `video/*` content types from the file extension and serves the original bytes:
+
+```powershell
+cargo run -- publish page demo walkthrough --file walkthrough.mp4
+```
+
+Direct API callers can do the same by sending a raw body with an `image/*` or `video/*` `Content-Type`.
 
 See [skills/latitude-command-api/SKILL.md](skills/latitude-command-api/SKILL.md) for the agent-facing command API skill and [docs/RUNNING_WITH_CLOUDFLARE.md](docs/RUNNING_WITH_CLOUDFLARE.md) for Cloudflare Tunnel setup.

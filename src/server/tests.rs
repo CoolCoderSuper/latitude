@@ -1,12 +1,16 @@
 use std::path::{Path, PathBuf};
 
 use axum::{
-    body::Body,
-    http::{HeaderValue, Request, header},
+    body::{Body, to_bytes},
+    extract::State,
+    http::{HeaderValue, Request, StatusCode, header},
 };
 
 use crate::{
-    config::{ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig},
+    config::{
+        ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig,
+        decode_page_binary_content, encode_page_binary_content,
+    },
     state::AppState,
 };
 
@@ -17,12 +21,12 @@ use super::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
         parse_git_action_form, parse_porcelain_status, parse_public_git_action_payload,
     },
-    page::{parse_page_payload, render_page_content},
+    page::{parse_page_payload, render_page_content, render_project_page_content},
     paths::{
         ProjectPath, display_path, filtered_cookie_header, join_upstream_url, resolve_project_path,
         sanitized_relative_path, split_project_path,
     },
-    public::public_project_detail,
+    public::{public_entry, public_project_detail},
     render::{
         SyntaxLanguage, diff_line_class, render_diff_code_output, render_diff_workspace_fragment,
         render_project_diff, render_project_home, render_project_terminal, render_server_home,
@@ -188,6 +192,31 @@ fn parses_json_page_payload() {
 }
 
 #[test]
+fn parses_raw_image_page_payload() {
+    let payload = parse_page_payload(Some("image/png"), b"\x89PNG\r\n").unwrap();
+
+    assert_eq!(payload.format, PageFormat::Binary);
+    assert_eq!(payload.media_type.as_deref(), Some("image/png"));
+    assert_eq!(
+        decode_page_binary_content(&payload.content).unwrap(),
+        b"\x89PNG\r\n"
+    );
+    assert_eq!(payload.title, None);
+}
+
+#[test]
+fn parses_raw_video_page_payload() {
+    let payload = parse_page_payload(Some("video/mp4"), b"mp4 bytes").unwrap();
+
+    assert_eq!(payload.format, PageFormat::Binary);
+    assert_eq!(payload.media_type.as_deref(), Some("video/mp4"));
+    assert_eq!(
+        decode_page_binary_content(&payload.content).unwrap(),
+        b"mp4 bytes"
+    );
+}
+
+#[test]
 fn infers_html_for_raw_html_payload() {
     let payload = parse_page_payload(None, b"<section><h1>Hello</h1></section>").unwrap();
 
@@ -207,6 +236,40 @@ fn renders_markdown_as_html_document() {
     assert!(rendered.contains("<title>Agent Report</title>"));
     assert!(rendered.contains("<h1>Agent Report</h1>"));
     assert!(rendered.contains("<li>Done</li>"));
+}
+
+#[test]
+fn renders_project_markdown_document_with_back_to_project_shell() {
+    let rendered = render_project_page_content(
+        "demo",
+        None,
+        PageFormat::Markdown,
+        None,
+        "# Agent Report\n\n- Done",
+        Some("dark"),
+    );
+
+    assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"dark\">"));
+    assert!(rendered.contains("<title>Agent Report</title>"));
+    assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<h1>Agent Report</h1>"));
+}
+
+#[test]
+fn renders_video_page_document_with_back_to_project_shell() {
+    let rendered = render_project_page_content(
+        "demo",
+        Some("Launch Clip"),
+        PageFormat::Binary,
+        Some("video/mp4"),
+        "",
+        Some("light"),
+    );
+
+    assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"light\">"));
+    assert!(rendered.contains("<title>Launch Clip</title>"));
+    assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<video controls preload=\"metadata\" src=\"?raw=1\">"));
 }
 
 #[test]
@@ -231,6 +294,7 @@ fn renders_project_home_with_enabled_deployments() {
                 target: ApplicationTarget::Page {
                     content: "# Report".to_string(),
                     format: PageFormat::Markdown,
+                    media_type: None,
                     title: Some("Weekly Report".to_string()),
                 },
             },
@@ -240,6 +304,7 @@ fn renders_project_home_with_enabled_deployments() {
                 target: ApplicationTarget::Page {
                     content: "# Draft".to_string(),
                     format: PageFormat::Markdown,
+                    media_type: None,
                     title: None,
                 },
             },
@@ -255,6 +320,304 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("href=\"/demo/report\""));
     assert!(rendered.contains("Page: Weekly Report"));
     assert!(!rendered.contains("/demo/draft"));
+}
+
+#[tokio::test]
+async fn serves_binary_page_document_shell_by_default() {
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "snapshot".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: encode_page_binary_content(b"png bytes"),
+                    format: PageFormat::Binary,
+                    media_type: Some("image/png".to_string()),
+                    title: None,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/snapshot")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<img src=\"?raw=1\" alt=\"Latitude Page\">"));
+    assert!(!rendered.contains("png bytes"));
+}
+
+#[tokio::test]
+async fn serves_binary_page_document_shell_for_media_accept_requests() {
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "snapshot".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: encode_page_binary_content(b"png bytes"),
+                    format: PageFormat::Binary,
+                    media_type: Some("image/png".to_string()),
+                    title: Some("Build Snapshot".to_string()),
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/snapshot")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::ACCEPT, "image/avif,image/webp,image/png,*/*;q=0.8")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<img src=\"?raw=1\" alt=\"Build Snapshot\">"));
+    assert!(!rendered.contains("png bytes"));
+}
+
+#[tokio::test]
+async fn serves_binary_page_document_raw_query_with_media_type() {
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "snapshot".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: encode_page_binary_content(b"png bytes"),
+                    format: PageFormat::Binary,
+                    media_type: Some("image/png".to_string()),
+                    title: Some("Build Snapshot".to_string()),
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/snapshot?raw=1")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::ACCEPT, "text/html")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    assert_eq!(&body[..], b"png bytes");
+}
+
+#[tokio::test]
+async fn serves_static_media_document_shell_by_default() {
+    let root = std::env::temp_dir().join(format!(
+        "latitude-static-media-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
+
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "snapshot".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Static {
+                    root: root.clone(),
+                    index_file: "snapshot.png".to_string(),
+                    spa_fallback: false,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/snapshot")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<img src=\"?raw=1\" alt=\"snapshot\">"));
+    assert!(!rendered.contains("png bytes"));
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn serves_static_media_document_raw_query_with_media_type() {
+    let root = std::env::temp_dir().join(format!(
+        "latitude-static-media-raw-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
+
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "snapshot".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Static {
+                    root: root.clone(),
+                    index_file: "snapshot.png".to_string(),
+                    spa_fallback: false,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/snapshot?raw=1")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+    assert_eq!(&body[..], b"png bytes");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn serves_static_site_without_document_shell() {
+    let root = std::env::temp_dir().join(format!(
+        "latitude-static-site-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("index.html"), b"<!doctype html><h1>Site</h1>").unwrap();
+
+    let config = LatitudeConfig {
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "website".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Static {
+                    root: root.clone(),
+                    index_file: "index.html".to_string(),
+                    spa_fallback: false,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/demo/website")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert_eq!(rendered, "<!doctype html><h1>Site</h1>");
+    assert!(!rendered.contains("Back to project"));
+
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]
@@ -623,7 +986,27 @@ fn builds_public_project_detail_with_enabled_deployments() {
                 target: ApplicationTarget::Page {
                     content: "# Report".to_string(),
                     format: PageFormat::Markdown,
+                    media_type: None,
                     title: Some("Weekly Report".to_string()),
+                },
+            },
+            ApplicationConfig {
+                name: "clip".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: encode_page_binary_content(b"mp4 bytes"),
+                    format: PageFormat::Binary,
+                    media_type: Some("video/mp4".to_string()),
+                    title: Some("Demo Clip".to_string()),
+                },
+            },
+            ApplicationConfig {
+                name: "recording".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Static {
+                    root: PathBuf::from("videos"),
+                    index_file: "Screen Recording.mp4".to_string(),
+                    spa_fallback: false,
                 },
             },
             ApplicationConfig {
@@ -639,7 +1022,7 @@ fn builds_public_project_detail_with_enabled_deployments() {
     });
 
     assert_eq!(detail.name, "demo");
-    assert_eq!(detail.deployment_count, 2);
+    assert_eq!(detail.deployment_count, 4);
     assert_eq!(detail.diff.api_href, "/__latitude/api/projects/demo/diff");
     assert_eq!(
         detail.terminal.api_href,
@@ -650,6 +1033,19 @@ fn builds_public_project_detail_with_enabled_deployments() {
     assert_eq!(
         detail.deployments[1].title.as_deref(),
         Some("Weekly Report")
+    );
+    assert_eq!(detail.deployments[1].media_type, None);
+    assert_eq!(detail.deployments[2].kind, "page");
+    assert_eq!(detail.deployments[2].label, "Video document");
+    assert_eq!(
+        detail.deployments[2].media_type.as_deref(),
+        Some("video/mp4")
+    );
+    assert_eq!(detail.deployments[3].kind, "static");
+    assert_eq!(detail.deployments[3].label, "Video document");
+    assert_eq!(
+        detail.deployments[3].media_type.as_deref(),
+        Some("video/mp4")
     );
 }
 

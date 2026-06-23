@@ -1,6 +1,6 @@
 ---
 name: latitude-command-api
-description: "Operate Latitude through its CLI first, with direct local command API requests as the fallback. Use when an agent needs to publish a one-page HTML or Markdown document, create or update Latitude projects, configure reverse proxy or static deployments, inspect or replace Latitude config, or verify local Latitude health."
+description: "Operate Latitude through its CLI first, with direct local command API requests as the fallback. Use when an agent needs to publish an HTML, Markdown, image, or video document, create or update Latitude projects, configure reverse proxy or static deployments, inspect or replace Latitude config, or verify local Latitude health."
 ---
 
 # Latitude CLI And Command API
@@ -40,6 +40,7 @@ latitude project ensure demo --project-dir .
 
 ```bash
 latitude publish page demo report --file report.md --title "Agent Report" --format markdown
+latitude publish page demo snapshot --file screenshot.png --title "Latest Screenshot"
 latitude deploy static demo mock --root ./sites/mock --spa-fallback
 latitude deploy proxy demo frontend --upstream http://127.0.0.1:5173
 ```
@@ -91,12 +92,14 @@ latitude project ensure demo --project-dir .
 
 `project ensure` creates the project only if it is missing, so it does not erase existing deployments.
 
-### Publish A Markdown Or HTML Page
+### Publish A Document
 
-Use this for status reports, handoff notes, generated documentation, and quick agent output.
+Use this for status reports, handoff notes, generated documentation, quick agent output, screenshots, and short video artifacts.
 
 ```bash
 latitude publish page demo report --file report.md --title "Agent Report" --format markdown
+latitude publish page demo snapshot --file screenshot.png --title "Latest Screenshot"
+latitude publish page demo walkthrough --file walkthrough.mp4
 ```
 
 If the project may not exist yet:
@@ -105,13 +108,14 @@ If the project may not exist yet:
 latitude publish page demo report --file report.md --project-dir . --title "Agent Report" --format markdown
 ```
 
-Page payload rules:
+Document payload rules:
 
 - `--format markdown` publishes Markdown.
 - `--format html` publishes HTML.
-- `--format auto` infers from the file extension and content.
+- `--format auto` infers Markdown/HTML from the file extension and content, and infers image/video documents from `image/*` or `video/*` file extensions.
 - Omit `--file` or pass `--file -` to read content from stdin.
-- Page content must be UTF-8 and at most 2 MiB.
+- Markdown and HTML content must be UTF-8 and at most 2 MiB.
+- Image and video documents are served as the original bytes and must be at most 25 MiB.
 - Titles are trimmed and must be at most 160 characters.
 - Full HTML documents are served as-is. HTML fragments and Markdown are wrapped in Latitude's page shell.
 
@@ -184,7 +188,32 @@ curl -X PUT \
 
 The public URL is `http://127.0.0.1:8080/demo/report`.
 
-To include a title, send JSON:
+### Publish An Image Or Video Document
+
+```bash
+curl -X PUT \
+  -H "Content-Type: image/png" \
+  --data-binary @screenshot.png \
+  http://127.0.0.1:7600/api/projects/demo/pages/snapshot
+```
+
+Use the real media type, such as `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, or `video/webm`. Latitude stores the bytes in the page deployment and serves them back with the same media type.
+
+For a titled image or video through the direct API, send JSON with base64 content:
+
+```bash
+curl -X PUT \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Latest Screenshot",
+    "format": "binary",
+    "media_type": "image/png",
+    "content": "<base64 image bytes>"
+  }' \
+  http://127.0.0.1:7600/api/projects/demo/pages/snapshot
+```
+
+For a titled Markdown or HTML page, send JSON:
 
 ```bash
 curl -X PUT \
@@ -283,7 +312,7 @@ The config shape is:
 | `GET` | `/api/projects/{project}/deployments/{name}` | Read one deployment. |
 | `PUT` | `/api/projects/{project}/deployments/{name}` | Create or replace one deployment. |
 | `DELETE` | `/api/projects/{project}/deployments/{name}` | Delete one deployment. |
-| `PUT` or `POST` | `/api/projects/{project}/pages/{name}` | Create or replace a page deployment from raw text or JSON. |
+| `PUT` or `POST` | `/api/projects/{project}/pages/{name}` | Create or replace a page deployment from raw text, raw image/video bytes, or JSON. |
 
 ## Errors
 

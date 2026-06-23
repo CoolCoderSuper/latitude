@@ -5,8 +5,8 @@ use crate::config::{ApplicationConfig, ProjectConfig};
 use super::super::{
     constants::{DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH, TERMINAL_ROUTE_SEGMENT},
     render::{
-        deployment_home_label, deployment_kind, deployment_page_title, enabled_deployment_count,
-        project_summary,
+        deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
+        enabled_deployment_count, project_summary,
     },
 };
 
@@ -76,6 +76,7 @@ pub(in crate::server) struct PublicDeploymentSummary {
     pub(in crate::server) href: String,
     pub(in crate::server) kind: &'static str,
     pub(in crate::server) label: &'static str,
+    pub(in crate::server) media_type: Option<String>,
     pub(in crate::server) title: Option<String>,
 }
 
@@ -130,6 +131,7 @@ fn public_deployment_summary(
         href: format!("/{}/{}", project.name, deployment.name),
         kind: deployment_kind(deployment),
         label: deployment_home_label(deployment),
+        media_type: deployment_media_type(deployment),
         title: deployment_page_title(deployment).map(str::to_string),
     }
 }

@@ -10,7 +10,10 @@ use reqwest::{Client as HttpClient, Method, Response, StatusCode, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::config::{ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig};
+use crate::config::{
+    ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig, encode_page_binary_content,
+    is_binary_document_media_type,
+};
 
 const DEFAULT_COMMAND_URL: &str = "http://127.0.0.1:7600";
 
@@ -97,7 +100,7 @@ pub struct ProjectEnsureArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum PublishCommand {
-    /// Publish a one-page Markdown or HTML document.
+    /// Publish a Markdown, HTML, image, or video document.
     Page(PublishPageArgs),
 }
 
@@ -189,6 +192,8 @@ struct PageJsonPayload<'a> {
     content: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     format: Option<PageFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media_type: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     title: Option<&'a str>,
 }
@@ -305,22 +310,52 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
 async fn publish_page(client: &CommandClient, args: &PublishPageArgs) -> Result<()> {
     maybe_ensure_project(client, &args.project, args.project_dir.as_deref()).await?;
 
-    let content = read_text_input(args.file.as_deref())?;
+    let input = read_input_bytes(args.file.as_deref())?;
+    let content_type = args
+        .format
+        .content_type()
+        .map(str::to_string)
+        .unwrap_or_else(|| infer_page_content_type(args.file.as_deref().map(Path::new), &input));
+    let media_type = content_type_media_type(&content_type);
+    let is_binary_document = media_type
+        .as_deref()
+        .is_some_and(is_binary_document_media_type);
     let path = format!("/api/projects/{}/pages/{}", args.project, args.name);
-    let deployment: ApplicationConfig = if args.title.is_some() {
-        let payload = PageJsonPayload {
-            content: &content,
-            format: args.format.page_format(),
-            title: args.title.as_deref(),
-        };
-        client.send_json(Method::PUT, &path, &payload).await?
+    let deployment: ApplicationConfig = if is_binary_document {
+        if args.title.is_some() {
+            let encoded_content = encode_page_binary_content(&input);
+            let payload = PageJsonPayload {
+                content: &encoded_content,
+                format: Some(PageFormat::Binary),
+                media_type: media_type.as_deref(),
+                title: args.title.as_deref(),
+            };
+            client.send_json(Method::PUT, &path, &payload).await?
+        } else {
+            client
+                .send_raw(Method::PUT, &path, &content_type, input)
+                .await?
+        }
     } else {
-        let content_type = args.format.content_type().unwrap_or_else(|| {
-            infer_page_content_type(args.file.as_deref().map(Path::new), &content)
-        });
-        client
-            .send_raw(Method::PUT, &path, content_type, content)
-            .await?
+        let content = String::from_utf8(input).with_context(|| {
+            let source = args.file.as_deref().unwrap_or("stdin");
+            format!(
+                "page content from {source} must be UTF-8 text unless the file extension maps to an image/* or video/* media type"
+            )
+        })?;
+        if args.title.is_some() {
+            let payload = PageJsonPayload {
+                content: &content,
+                format: args.format.page_format(),
+                media_type: None,
+                title: args.title.as_deref(),
+            };
+            client.send_json(Method::PUT, &path, &payload).await?
+        } else {
+            client
+                .send_raw(Method::PUT, &path, &content_type, content)
+                .await?
+        }
     };
     let public_url = client.public_url(&args.project, &args.name).await;
 
@@ -460,7 +495,7 @@ impl CommandClient {
         &self,
         method: Method,
         path: &str,
-        content_type: &'static str,
+        content_type: &str,
         body: B,
     ) -> Result<T>
     where
@@ -547,17 +582,18 @@ where
     Ok(())
 }
 
-fn read_text_input(file: Option<&str>) -> Result<String> {
+fn read_input_bytes(file: Option<&str>) -> Result<Vec<u8>> {
     match file {
         Some("-") | None => {
-            let mut content = String::new();
+            let mut content = Vec::new();
             io::stdin()
-                .read_to_string(&mut content)
+                .read_to_end(&mut content)
                 .context("failed to read page content from stdin")?;
             Ok(content)
         }
-        Some(file) => std::fs::read_to_string(file)
-            .with_context(|| format!("failed to read page content from {file}")),
+        Some(file) => {
+            std::fs::read(file).with_context(|| format!("failed to read page content from {file}"))
+        }
     }
 }
 
@@ -579,30 +615,49 @@ impl PageInputFormat {
     }
 }
 
-fn infer_page_content_type(file: Option<&Path>, content: &str) -> &'static str {
+fn infer_page_content_type(file: Option<&Path>, content: &[u8]) -> String {
     if let Some(extension) = file
         .and_then(Path::extension)
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase)
     {
+        if let Some(media_type) = file
+            .and_then(|file| mime_guess::from_path(file).first())
+            .map(|mime| mime.essence_str().to_string())
+            .filter(|media_type| is_binary_document_media_type(media_type))
+        {
+            return media_type;
+        }
         if matches!(extension.as_str(), "html" | "htm") {
-            return "text/html";
+            return "text/html".to_string();
         }
         if matches!(extension.as_str(), "md" | "markdown" | "mdown") {
-            return "text/markdown";
+            return "text/markdown".to_string();
         }
     }
 
+    let Ok(content) = std::str::from_utf8(content) else {
+        return "application/octet-stream".to_string();
+    };
     let trimmed = content.trim_start().to_ascii_lowercase();
     if trimmed.starts_with("<!doctype html")
         || trimmed.starts_with("<html")
         || trimmed.starts_with("<section")
         || trimmed.starts_with("<article")
     {
-        "text/html"
+        "text/html".to_string()
     } else {
-        "text/markdown"
+        "text/markdown".to_string()
     }
+}
+
+fn content_type_media_type(content_type: &str) -> Option<String> {
+    content_type
+        .split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase)
 }
 
 fn command_bind_to_url(command_bind: &str) -> String {
@@ -649,6 +704,22 @@ mod tests {
         assert_eq!(
             local_public_url("0.0.0.0:8080", "demo", "report").as_deref(),
             Some("http://127.0.0.1:8080/demo/report")
+        );
+    }
+
+    #[test]
+    fn infers_image_page_content_type_from_file_extension() {
+        assert_eq!(
+            infer_page_content_type(Some(Path::new("snapshot.png")), b"not utf8 \xFF"),
+            "image/png"
+        );
+    }
+
+    #[test]
+    fn infers_video_page_content_type_from_file_extension() {
+        assert_eq!(
+            infer_page_content_type(Some(Path::new("clip.mp4")), b"mp4 bytes"),
+            "video/mp4"
         );
     }
 }

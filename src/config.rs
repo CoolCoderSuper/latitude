@@ -4,12 +4,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::fs;
 use url::Url;
 
 pub const MAX_PAGE_CONTENT_BYTES: usize = 2 * 1024 * 1024;
+pub const MAX_PAGE_BINARY_CONTENT_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_PAGE_TITLE_CHARS: usize = 160;
 pub const DEFAULT_PUBLIC_PASSWORD: &str = "test";
 
@@ -66,6 +68,8 @@ pub enum ApplicationTarget {
         #[serde(default)]
         format: PageFormat,
         #[serde(default)]
+        media_type: Option<String>,
+        #[serde(default)]
         title: Option<String>,
     },
 }
@@ -76,6 +80,7 @@ pub enum PageFormat {
     #[default]
     Html,
     Markdown,
+    Binary,
 }
 
 #[derive(Debug, Error)]
@@ -223,12 +228,51 @@ impl ApplicationConfig {
                     )));
                 }
             }
-            ApplicationTarget::Page { content, title, .. } => {
-                if content.len() > MAX_PAGE_CONTENT_BYTES {
-                    return Err(ConfigError::Invalid(format!(
-                        "application '{}' page content must be at most {} bytes",
-                        self.name, MAX_PAGE_CONTENT_BYTES
-                    )));
+            ApplicationTarget::Page {
+                content,
+                format,
+                media_type,
+                title,
+            } => {
+                if *format == PageFormat::Binary {
+                    let Some(media_type) = media_type.as_deref() else {
+                        return Err(ConfigError::Invalid(format!(
+                            "application '{}' binary page content must include media_type",
+                            self.name
+                        )));
+                    };
+                    if !is_binary_document_media_type(media_type) {
+                        return Err(ConfigError::Invalid(format!(
+                            "application '{}' binary page media_type must be an image/* or video/* type",
+                            self.name
+                        )));
+                    }
+
+                    let bytes = decode_page_binary_content(content).map_err(|error| {
+                        ConfigError::Invalid(format!(
+                            "application '{}' binary page content must be base64: {error}",
+                            self.name
+                        ))
+                    })?;
+                    if bytes.len() > MAX_PAGE_BINARY_CONTENT_BYTES {
+                        return Err(ConfigError::Invalid(format!(
+                            "application '{}' binary page content must be at most {} bytes",
+                            self.name, MAX_PAGE_BINARY_CONTENT_BYTES
+                        )));
+                    }
+                } else {
+                    if media_type.is_some() {
+                        return Err(ConfigError::Invalid(format!(
+                            "application '{}' page media_type is only supported for binary content",
+                            self.name
+                        )));
+                    }
+                    if content.len() > MAX_PAGE_CONTENT_BYTES {
+                        return Err(ConfigError::Invalid(format!(
+                            "application '{}' page content must be at most {} bytes",
+                            self.name, MAX_PAGE_CONTENT_BYTES
+                        )));
+                    }
                 }
 
                 if let Some(title) = title
@@ -251,6 +295,25 @@ fn is_valid_url_segment(name: &str) -> bool {
         && name
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+pub fn is_binary_document_media_type(media_type: &str) -> bool {
+    let media_type = media_type
+        .split(';')
+        .next()
+        .unwrap_or(media_type)
+        .trim()
+        .to_ascii_lowercase();
+
+    media_type.starts_with("image/") || media_type.starts_with("video/")
+}
+
+pub fn encode_page_binary_content(bytes: &[u8]) -> String {
+    BASE64_STANDARD.encode(bytes)
+}
+
+pub fn decode_page_binary_content(content: &str) -> Result<Vec<u8>, base64::DecodeError> {
+    BASE64_STANDARD.decode(content)
 }
 
 fn default_public_bind() -> String {
@@ -398,6 +461,7 @@ mod tests {
                     target: ApplicationTarget::Page {
                         content: "# Agent Note".to_string(),
                         format: PageFormat::Markdown,
+                        media_type: None,
                         title: Some("Agent Note".to_string()),
                     },
                 }],
@@ -421,6 +485,55 @@ mod tests {
                     target: ApplicationTarget::Page {
                         content: "x".repeat(MAX_PAGE_CONTENT_BYTES + 1),
                         format: PageFormat::Html,
+                        media_type: None,
+                        title: None,
+                    },
+                }],
+            }],
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_binary_image_page_application() {
+        let config = LatitudeConfig {
+            projects: vec![ProjectConfig {
+                name: "demo".to_string(),
+                enabled: true,
+                project_dir: PathBuf::from("."),
+                deployments: vec![ApplicationConfig {
+                    name: "snapshot".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Page {
+                        content: encode_page_binary_content(b"png bytes"),
+                        format: PageFormat::Binary,
+                        media_type: Some("image/png".to_string()),
+                        title: Some("Snapshot".to_string()),
+                    },
+                }],
+            }],
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_media_binary_page_application() {
+        let config = LatitudeConfig {
+            projects: vec![ProjectConfig {
+                name: "demo".to_string(),
+                enabled: true,
+                project_dir: PathBuf::from("."),
+                deployments: vec![ApplicationConfig {
+                    name: "asset".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Page {
+                        content: encode_page_binary_content(b"pdf bytes"),
+                        format: PageFormat::Binary,
+                        media_type: Some("application/pdf".to_string()),
                         title: None,
                     },
                 }],

@@ -277,6 +277,7 @@ pub(super) async fn upsert_project_page(
         target: ApplicationTarget::Page {
             content: page.content,
             format: page.format,
+            media_type: page.media_type,
             title: page.title,
         },
     };

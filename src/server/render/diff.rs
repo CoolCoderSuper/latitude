@@ -20,13 +20,17 @@ fn diff_workspace_inner(report: &GitDiffReport) -> Markup {
 fn git_action_panel() -> Markup {
     html! {
         section class="action-panel" {
-            (git_action_button("stage_all", "Stage all"))
-            (git_action_button("unstage_all", "Unstage all"))
+            div class="action-group" {
+                (git_action_button("stage_all", "Stage all"))
+                (git_action_button("unstage_all", "Unstage all"))
+            }
             div class="commit-form" {
                 input data-commit-message type="text" required placeholder="Commit message";
                 button type="button" data-git-action="commit" { "Commit staged" }
             }
-            (git_action_button("push", "Push"))
+            div class="action-group action-group-push" {
+                (git_action_button("push", "Push"))
+            }
         }
     }
 }

@@ -33,6 +33,7 @@ export type DeploymentSummary = {
   href: string;
   kind: DeploymentKind;
   label: string;
+  media_type: string | null;
   title: string | null;
 };
 

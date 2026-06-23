@@ -1,9 +1,9 @@
 use axum::http::{HeaderMap, StatusCode};
-use maud::{PreEscaped, html};
+use maud::{Markup, PreEscaped, html};
 use pulldown_cmark::{Options, Parser, html::push_html};
 use serde::Deserialize;
 
-use crate::config::PageFormat;
+use crate::config::{PageFormat, encode_page_binary_content, is_binary_document_media_type};
 
 use super::{
     assets::PAGE_STYLE,
@@ -12,10 +12,17 @@ use super::{
     response::ApiError,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub(super) struct PageDocumentShell<'a> {
+    pub(super) project_name: &'a str,
+    pub(super) raw_href: Option<&'a str>,
+}
+
 #[derive(Debug)]
 pub(super) struct PagePayload {
     pub(super) content: String,
     pub(super) format: PageFormat,
+    pub(super) media_type: Option<String>,
     pub(super) title: Option<String>,
 }
 
@@ -24,6 +31,8 @@ pub(super) struct JsonPagePayload {
     pub(super) content: String,
     #[serde(default)]
     pub(super) format: Option<PageFormat>,
+    #[serde(default)]
+    pub(super) media_type: Option<String>,
     #[serde(default)]
     pub(super) title: Option<String>,
 }
@@ -42,14 +51,28 @@ pub(super) fn parse_page_payload(
             )
         })?;
         let title = clean_page_title(payload.title);
+        let media_type = clean_page_media_type(payload.media_type);
         let format = payload
             .format
-            .unwrap_or_else(|| infer_page_format(None, &payload.content));
+            .unwrap_or_else(|| infer_page_format(media_type.as_deref(), &payload.content));
 
         return Ok(PagePayload {
             content: payload.content,
             format,
+            media_type,
             title,
+        });
+    }
+
+    if let Some(media_type) = media_type
+        .as_deref()
+        .filter(|media_type| is_binary_document_media_type(media_type))
+    {
+        return Ok(PagePayload {
+            content: encode_page_binary_content(body),
+            format: PageFormat::Binary,
+            media_type: Some(media_type.to_string()),
+            title: None,
         });
     }
 
@@ -66,6 +89,7 @@ pub(super) fn parse_page_payload(
     Ok(PagePayload {
         content,
         format,
+        media_type: None,
         title: None,
     })
 }
@@ -88,8 +112,13 @@ fn clean_page_title(title: Option<String>) -> Option<String> {
         .filter(|title| !title.is_empty())
 }
 
+fn clean_page_media_type(media_type: Option<String>) -> Option<String> {
+    media_type.and_then(|media_type| content_type_media_type(Some(&media_type)))
+}
+
 fn infer_page_format(media_type: Option<&str>, content: &str) -> PageFormat {
     match media_type {
+        Some(media_type) if is_binary_document_media_type(media_type) => PageFormat::Binary,
         Some("text/html") | Some("application/xhtml+xml") => PageFormat::Html,
         Some("text/markdown") | Some("text/x-markdown") | Some("text/md") => PageFormat::Markdown,
         _ if looks_like_html(content) => PageFormat::Html,
@@ -97,21 +126,69 @@ fn infer_page_format(media_type: Option<&str>, content: &str) -> PageFormat {
     }
 }
 
+#[cfg(test)]
 pub(super) fn render_page_content(
     title: Option<&str>,
     format: PageFormat,
     content: &str,
     theme: Option<&str>,
 ) -> String {
+    render_page_document(title, format, None, content, theme, None)
+}
+
+pub(super) fn render_project_page_content(
+    project_name: &str,
+    title: Option<&str>,
+    format: PageFormat,
+    media_type: Option<&str>,
+    content: &str,
+    theme: Option<&str>,
+) -> String {
+    render_page_document(
+        title,
+        format,
+        media_type,
+        content,
+        theme,
+        Some(PageDocumentShell {
+            project_name,
+            raw_href: (format == PageFormat::Binary).then_some("?raw=1"),
+        }),
+    )
+}
+
+fn render_page_document(
+    title: Option<&str>,
+    format: PageFormat,
+    media_type: Option<&str>,
+    content: &str,
+    theme: Option<&str>,
+    shell: Option<PageDocumentShell<'_>>,
+) -> String {
     match format {
         PageFormat::Html if is_full_html_document(content) => content.to_string(),
-        PageFormat::Html => wrap_page_document(resolved_page_title(title, None), content, theme),
+        PageFormat::Html => wrap_page_document(
+            resolved_page_title(title, None),
+            html! { (PreEscaped(content)) },
+            theme,
+            shell,
+        ),
         PageFormat::Markdown => {
             let html = render_markdown(content);
             wrap_page_document(
                 resolved_page_title(title, markdown_heading_title(content)),
-                &html,
+                html! { (PreEscaped(html)) },
                 theme,
+                shell,
+            )
+        }
+        PageFormat::Binary => {
+            let title = resolved_page_title(title, None);
+            wrap_page_document(
+                title,
+                render_binary_document(title, media_type, shell.and_then(|shell| shell.raw_href)),
+                theme,
+                shell,
             )
         }
     }
@@ -145,15 +222,51 @@ fn render_markdown(content: &str) -> String {
     output
 }
 
-fn wrap_page_document(title: &str, body_html: &str, theme: Option<&str>) -> String {
+fn render_binary_document(title: &str, media_type: Option<&str>, raw_href: Option<&str>) -> Markup {
+    let Some(raw_href) = raw_href else {
+        return html! {};
+    };
+
+    match media_type {
+        Some(media_type) if is_image_media_type(media_type) => html! {
+            figure class="latitude-media-document" {
+                img src=(raw_href) alt=(title);
+            }
+        },
+        Some(media_type) if is_video_media_type(media_type) => html! {
+            figure class="latitude-media-document" {
+                video controls preload="metadata" src=(raw_href) {
+                    "Your browser cannot play this video."
+                }
+            }
+        },
+        _ => html! {
+            p {
+                a href=(raw_href) { "Open media document" }
+            }
+        },
+    }
+}
+
+fn wrap_page_document(
+    title: &str,
+    body: Markup,
+    theme: Option<&str>,
+    shell: Option<PageDocumentShell<'_>>,
+) -> String {
     html_page::document_with_theme(
         title,
         PAGE_STYLE,
         theme.and_then(clean_page_theme),
         html! {},
         html! {
+            @if let Some(shell) = shell {
+                header class="latitude-page-header" {
+                    a href=(format!("/{}", shell.project_name)) { "Back to project" }
+                }
+            }
             main class="latitude-page" {
-                (PreEscaped(body_html))
+                (body)
             }
         },
     )
@@ -190,4 +303,12 @@ fn is_full_html_document(content: &str) -> bool {
 fn looks_like_html(content: &str) -> bool {
     let trimmed = content.trim_start();
     trimmed.starts_with('<') && trimmed.contains('>')
+}
+
+fn is_image_media_type(media_type: &str) -> bool {
+    media_type.starts_with("image/")
+}
+
+fn is_video_media_type(media_type: &str) -> bool {
+    media_type.starts_with("video/")
 }

@@ -7,17 +7,20 @@ import {
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import {
   ArrowLeft,
   CheckCircle2,
   ChevronRight,
   Download,
   ExternalLink,
+  Film,
   FileText,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   Globe2,
+  Image as ImageIcon,
   LogOut,
   Moon,
   Plus,
@@ -93,6 +96,7 @@ type ViewerState = {
   title: string;
   href: string;
   kind?: DeploymentKind;
+  mediaType?: string | null;
 };
 
 type ProjectTab = 'deployments' | 'code' | 'terminal';
@@ -362,6 +366,7 @@ function AppContent() {
                   navigation.navigate('Viewer', {
                     href: deployment.href,
                     kind: deployment.kind,
+                    mediaType: deployment.media_type,
                     title: deployment.title ?? deployment.name,
                   })
                 }
@@ -866,7 +871,7 @@ function DeploymentsPanel({
               ]}
             >
               <View style={styles.cardIcon}>
-                {kindIcon(deployment.kind, colors)}
+                {deploymentIcon(deployment, colors)}
               </View>
               <View style={styles.cardBody}>
                 <Text style={styles.cardTitle}>{deployment.name}</Text>
@@ -897,9 +902,63 @@ function DeploymentViewer({
   viewer: ViewerState;
 }) {
   const { colors, mode, styles } = useTheme();
+  const uri = absoluteUrl(baseUrl, viewer.href);
+  const mediaType = normalizeMediaType(viewer.mediaType);
+
+  if (isVideoMediaType(mediaType)) {
+    return (
+      <NativeVideoViewer
+        title={viewer.title}
+        token={token}
+        uri={uri}
+        onBack={onBack}
+      />
+    );
+  }
+
+  if (isImageMediaType(mediaType)) {
+    return (
+      <NativeImageViewer
+        title={viewer.title}
+        token={token}
+        uri={uri}
+        onBack={onBack}
+      />
+    );
+  }
+
+  return (
+    <WebDeploymentViewer
+      colors={colors}
+      mode={mode}
+      onBack={onBack}
+      styles={styles}
+      token={token}
+      uri={uri}
+      viewer={viewer}
+    />
+  );
+}
+
+function WebDeploymentViewer({
+  colors,
+  mode,
+  onBack,
+  styles,
+  token,
+  uri,
+  viewer,
+}: {
+  colors: ThemeColors;
+  mode: ThemeMode;
+  onBack: () => void;
+  styles: AppStyles;
+  token: string;
+  uri: string;
+  viewer: ViewerState;
+}) {
   const webViewRef = useRef<WebView>(null);
   const shouldThemePage = viewer.kind === 'page';
-  const uri = absoluteUrl(baseUrl, viewer.href);
   const themeScript = useMemo(
     () => (shouldThemePage ? deploymentThemeScript(mode, colors) : 'true;'),
     [colors, mode, shouldThemePage],
@@ -941,6 +1000,182 @@ function DeploymentViewer({
       />
     </View>
   );
+}
+
+function NativeVideoViewer({
+  onBack,
+  title,
+  token,
+  uri,
+}: {
+  onBack: () => void;
+  title: string;
+  token: string;
+  uri: string;
+}) {
+  const { colors, styles } = useTheme();
+  const source = useMemo(
+    () => ({
+      uri,
+      headers: authHeaders(token),
+    }),
+    [token, uri],
+  );
+  const player = useVideoPlayer(source, (nextPlayer) => {
+    nextPlayer.loop = false;
+    nextPlayer.play();
+  });
+
+  return (
+    <View style={styles.flex}>
+      <ScreenHeader
+        eyebrow={uri}
+        left={
+          <IconButton
+            accessibilityLabel="Back"
+            icon={<ArrowLeft color={colors.text} size={22} />}
+            onPress={onBack}
+          />
+        }
+        title={title}
+      />
+      <View style={styles.videoViewer}>
+        <VideoView
+          allowsPictureInPicture
+          contentFit="contain"
+          fullscreenOptions={{ enable: true }}
+          nativeControls
+          player={player}
+          style={styles.videoPlayer}
+        />
+      </View>
+    </View>
+  );
+}
+
+function NativeImageViewer({
+  onBack,
+  title,
+  token,
+  uri,
+}: {
+  onBack: () => void;
+  title: string;
+  token: string;
+  uri: string;
+}) {
+  const { colors, styles } = useTheme();
+  const html = useMemo(() => imageViewerHtml(uri, token), [token, uri]);
+
+  return (
+    <View style={styles.flex}>
+      <ScreenHeader
+        eyebrow={uri}
+        left={
+          <IconButton
+            accessibilityLabel="Back"
+            icon={<ArrowLeft color={colors.text} size={22} />}
+            onPress={onBack}
+          />
+        }
+        title={title}
+      />
+      <View style={styles.imageViewer}>
+        <WebView
+          javaScriptEnabled
+          originWhitelist={['http://*', 'https://*']}
+          source={{ html, baseUrl: uri }}
+          startInLoadingState
+          style={styles.imageWebView}
+        />
+      </View>
+    </View>
+  );
+}
+
+function imageViewerHtml(uri: string, token: string): string {
+  const uriJson = JSON.stringify(uri);
+  const tokenJson = JSON.stringify(token);
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, user-scalable=yes">
+    <style>
+      html, body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+        background: #050505;
+        color: #f8fafc;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        overflow: auto;
+      }
+      img {
+        display: block;
+        max-width: 100vw;
+        max-height: 100vh;
+        width: auto;
+        height: auto;
+        object-fit: contain;
+      }
+      .status {
+        padding: 18px;
+        color: #cbd5e1;
+        font-size: 14px;
+        font-weight: 700;
+        text-align: center;
+      }
+      .error {
+        color: #fecaca;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="status" id="status">Loading image</div>
+    <img id="image" alt="" hidden>
+    <script>
+      const imageUrl = ${uriJson};
+      const token = ${tokenJson};
+      const status = document.getElementById('status');
+      const image = document.getElementById('image');
+
+      fetch(imageUrl, {
+        headers: {
+          Authorization: 'Bearer ' + token
+        }
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('Image request failed with ' + response.status);
+          }
+          return response.blob();
+        })
+        .then((blob) => {
+          const objectUrl = URL.createObjectURL(blob);
+          image.onload = () => {
+            status.hidden = true;
+            image.hidden = false;
+          };
+          image.onerror = () => {
+            status.hidden = false;
+            status.className = 'status error';
+            status.textContent = 'Could not decode this image.';
+            URL.revokeObjectURL(objectUrl);
+          };
+          image.src = objectUrl;
+        })
+        .catch((error) => {
+          status.className = 'status error';
+          status.textContent = error && error.message ? error.message : 'Could not load this image.';
+        });
+    </script>
+  </body>
+</html>`;
 }
 
 function deploymentThemeScript(mode: ThemeMode, colors: ThemeColors): string {
@@ -2103,8 +2338,15 @@ function EmptyState({ title }: { title: string }) {
   );
 }
 
-function kindIcon(kind: DeploymentKind, colors: ThemeColors) {
-  switch (kind) {
+function deploymentIcon(deployment: DeploymentSummary, colors: ThemeColors) {
+  if (isVideoMediaType(deployment.media_type)) {
+    return <Film color={colors.coral} size={21} />;
+  }
+  if (isImageMediaType(deployment.media_type)) {
+    return <ImageIcon color={colors.gold} size={21} />;
+  }
+
+  switch (deployment.kind) {
     case 'reverse_proxy':
       return <Globe2 color={colors.accent} size={21} />;
     case 'static':
@@ -2112,6 +2354,19 @@ function kindIcon(kind: DeploymentKind, colors: ThemeColors) {
     case 'page':
       return <FileText color={colors.coral} size={21} />;
   }
+}
+
+function normalizeMediaType(mediaType?: string | null): string | null {
+  const normalized = mediaType?.split(';')[0]?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function isImageMediaType(mediaType?: string | null): boolean {
+  return normalizeMediaType(mediaType)?.startsWith('image/') ?? false;
+}
+
+function isVideoMediaType(mediaType?: string | null): boolean {
+  return normalizeMediaType(mediaType)?.startsWith('video/') ?? false;
 }
 
 function errorMessage(error: unknown): string {
@@ -2900,6 +3155,22 @@ function createStyles(colors: ThemeColors) {
   webView: {
     flex: 1,
     backgroundColor: colors.surface,
+  },
+  videoViewer: {
+    flex: 1,
+    backgroundColor: '#050505',
+  },
+  videoPlayer: {
+    flex: 1,
+    backgroundColor: '#050505',
+  },
+  imageViewer: {
+    flex: 1,
+    backgroundColor: '#050505',
+  },
+  imageWebView: {
+    flex: 1,
+    backgroundColor: '#050505',
   },
   terminalPanel: {
     flex: 1,

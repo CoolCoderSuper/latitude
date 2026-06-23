@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::config::MAX_PAGE_CONTENT_BYTES;
+use crate::config::MAX_PAGE_BINARY_CONTENT_BYTES;
 
 pub(super) const DEFAULT_PAGE_TITLE: &str = "Latitude Page";
 pub(super) const DIFF_ROUTE_SEGMENT: &str = "_diff";
@@ -27,4 +27,5 @@ pub(super) const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const MAX_TERMINAL_COMMAND_BYTES: usize = 8 * 1024;
 pub(super) const MAX_TERMINAL_OUTPUT_BYTES: usize = 128 * 1024;
 pub(super) const TERMINAL_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-pub(super) const MAX_PAGE_PAYLOAD_BYTES: usize = MAX_PAGE_CONTENT_BYTES + 4096;
+pub(super) const MAX_PAGE_PAYLOAD_BYTES: usize =
+    ((MAX_PAGE_BINARY_CONTENT_BYTES / 3) + 1) * 4 + 8192;

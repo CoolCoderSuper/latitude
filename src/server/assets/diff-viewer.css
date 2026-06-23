@@ -12,7 +12,7 @@ body {
 
 main {
   box-sizing: border-box;
-  width: min(100%, 1180px);
+  width: 100%;
   margin: 0 auto;
   padding: 32px 18px 56px;
 }
@@ -82,18 +82,22 @@ input {
   background: #fff;
 }
 
-.project-path {
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 0.92rem;
+.action-panel {
+  display: grid;
+  grid-template-columns: auto minmax(280px, 520px) auto;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0;
 }
 
-.action-panel {
+.action-group {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
   gap: 10px;
-  margin: 20px 0;
+}
+
+.action-group-push {
+  justify-content: flex-end;
 }
 
 .diff-workspace {
@@ -212,9 +216,14 @@ input {
 
 .commit-form {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.commit-form input {
+  flex: 1;
+  min-width: 0;
 }
 
 .section-heading {
@@ -470,10 +479,15 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .action-group,
   .action-panel form,
   .commit-form input,
   button {
     width: 100%;
+  }
+
+  .action-group-push {
+    justify-content: stretch;
   }
 
   .section-heading,

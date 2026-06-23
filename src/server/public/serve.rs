@@ -11,7 +11,10 @@ use tokio::fs;
 use tracing::error;
 
 use crate::{
-    config::{ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig},
+    config::{
+        ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig, decode_page_binary_content,
+        is_binary_document_media_type,
+    },
     state::AppState,
 };
 
@@ -21,7 +24,7 @@ use super::super::{
         AUTH_COOKIE_NAME, DIFF_ROUTE_SEGMENT, MAX_TERMINAL_COMMAND_BYTES, TERMINAL_ROUTE_SEGMENT,
     },
     git::{GitActionResponse, collect_project_diff, handle_git_action_request},
-    page::{page_theme_from_headers, render_page_content},
+    page::{page_theme_from_headers, render_project_page_content},
     paths::{
         ProjectPath, filtered_cookie_header, is_hop_by_hop_header, join_upstream_url,
         resolve_project_path, sanitized_relative_path, split_project_path,
@@ -109,13 +112,34 @@ pub(in crate::server) async fn public_entry(
             spa_fallback,
         } => {
             let root = resolve_project_path(&project.project_dir, root);
-            serve_static(req, &root, index_file, *spa_fallback, remainder.as_str()).await
+            serve_static(
+                req,
+                &project.name,
+                &app.name,
+                &root,
+                index_file,
+                *spa_fallback,
+                remainder.as_str(),
+            )
+            .await
         }
         ApplicationTarget::Page {
             content,
             format,
+            media_type,
             title,
-        } => serve_page(req, title.as_deref(), *format, content, remainder.as_str()).await,
+        } => {
+            serve_page(
+                req,
+                &project.name,
+                title.as_deref(),
+                *format,
+                media_type.as_deref(),
+                content,
+                remainder.as_str(),
+            )
+            .await
+        }
     }
 }
 
@@ -203,6 +227,8 @@ async fn proxy_request(
 
 async fn serve_static(
     req: Request<Body>,
+    project_name: &str,
+    deployment_name: &str,
     root: &Path,
     index_file: &str,
     spa_fallback: bool,
@@ -212,6 +238,23 @@ async fn serve_static(
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
             "static deployments support GET and HEAD\n",
+        );
+    }
+
+    if remainder == "/"
+        && !page_raw_requested(req.uri().query())
+        && let Some(media_type) = static_document_media_type(index_file)
+    {
+        return html_response(
+            req.method(),
+            render_project_page_content(
+                project_name,
+                Some(deployment_name),
+                PageFormat::Binary,
+                Some(&media_type),
+                "",
+                page_theme_from_headers(req.headers()),
+            ),
         );
     }
 
@@ -273,8 +316,10 @@ async fn serve_static(
 
 async fn serve_page(
     req: Request<Body>,
+    project_name: &str,
     title: Option<&str>,
     format: PageFormat,
+    media_type: Option<&str>,
     content: &str,
     remainder: &str,
 ) -> Response<Body> {
@@ -292,15 +337,72 @@ async fn serve_page(
         );
     }
 
+    if format == PageFormat::Binary && page_raw_requested(req.uri().query()) {
+        return binary_document_response(req.method(), media_type, content);
+    }
+
     html_response(
         req.method(),
-        render_page_content(
+        render_project_page_content(
+            project_name,
             title,
             format,
+            media_type,
             content,
             page_theme_from_headers(req.headers()),
         ),
     )
+}
+
+fn binary_document_response(
+    method: &Method,
+    media_type: Option<&str>,
+    content: &str,
+) -> Response<Body> {
+    let Some(media_type) = media_type else {
+        return plain_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "binary page media_type is missing\n",
+        );
+    };
+    let bytes = match decode_page_binary_content(content) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return plain_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("binary page content could not be decoded: {error}\n"),
+            );
+        }
+    };
+    let builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, media_type)
+        .header(header::CONTENT_LENGTH, bytes.len());
+
+    if method == Method::HEAD {
+        builder
+            .body(Body::empty())
+            .unwrap_or_else(internal_response)
+    } else {
+        builder
+            .body(Body::from(bytes))
+            .unwrap_or_else(internal_response)
+    }
+}
+
+fn page_raw_requested(query: Option<&str>) -> bool {
+    query.is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes()).any(|(name, value)| {
+            name.eq_ignore_ascii_case("raw") && value != "0" && !value.eq_ignore_ascii_case("false")
+        })
+    })
+}
+
+fn static_document_media_type(index_file: &str) -> Option<String> {
+    mime_guess::from_path(index_file)
+        .first()
+        .map(|mime| mime.essence_str().to_string())
+        .filter(|media_type| is_binary_document_media_type(media_type))
 }
 
 async fn serve_project_home(req: Request<Body>, project: &ProjectConfig) -> Response<Body> {
