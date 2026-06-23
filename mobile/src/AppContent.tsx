@@ -25,7 +25,9 @@ import {
   loadSession,
   loadSessions,
   removeSession,
+  requireSessionLogin,
   saveBaseUrl,
+  saveSessionOrder,
   saveSession,
 } from './storage';
 import { useTheme } from './theme';
@@ -54,21 +56,6 @@ export function AppContent() {
     activeBaseUrlRef.current = session?.baseUrl ?? null;
   }, [session]);
 
-  const signOut = useCallback(async (): Promise<SessionRecord | null> => {
-    if (!session) {
-      return null;
-    }
-
-    const signedOutBaseUrl = session.baseUrl;
-    const nextState = await removeSession(signedOutBaseUrl);
-    setSessions(nextState.sessions);
-    setSession(nextState.activeSession);
-    setRememberedBaseUrl(nextState.activeSession?.baseUrl ?? signedOutBaseUrl);
-    setProjects([]);
-    setError(null);
-    return nextState.activeSession;
-  }, [session]);
-
   const loadProjects = useCallback(async () => {
     if (!session) {
       return;
@@ -80,6 +67,17 @@ export function AppContent() {
       const response = await api.projects();
       if (activeBaseUrlRef.current === session.baseUrl) {
         setProjects(response.projects);
+        if (
+          response.device_hostname &&
+          session.deviceHostname !== response.device_hostname
+        ) {
+          const nextSession = {
+            ...session,
+            deviceHostname: response.device_hostname,
+          };
+          setSession(nextSession);
+          setSessions(await saveSession(nextSession));
+        }
       }
     } catch (loadError) {
       if (activeBaseUrlRef.current !== session.baseUrl) {
@@ -87,10 +85,11 @@ export function AppContent() {
       }
 
       if (loadError instanceof LatitudeApiError && loadError.status === 401) {
-        const nextSession = await signOut();
-        if (!nextSession) {
-          setError('Sign in again to continue.');
-        }
+        setSessions(await requireSessionLogin(session));
+        setRememberedBaseUrl(session.baseUrl);
+        setSession(null);
+        setProjects([]);
+        setError('Sign in again to continue.');
       } else {
         setError(errorMessage(loadError));
       }
@@ -100,7 +99,7 @@ export function AppContent() {
         setBooting(false);
       }
     }
-  }, [api, session, signOut]);
+  }, [api, session]);
 
   useEffect(() => {
     let mounted = true;
@@ -145,6 +144,7 @@ export function AppContent() {
     const nextSession = {
       baseUrl: normalizedBaseUrl,
       token: response.token,
+      deviceHostname: response.device_hostname,
     };
     const nextSessions = await saveSession(nextSession);
     setSessions(nextSessions);
@@ -181,6 +181,10 @@ export function AppContent() {
     },
     [session?.baseUrl],
   );
+
+  const handleReorderServers = useCallback(async (nextSessions: SessionRecord[]) => {
+    setSessions(await saveSessionOrder(nextSessions));
+  }, []);
 
   if (booting) {
     return <Shell><LoadingScreen /></Shell>;
@@ -220,6 +224,7 @@ export function AppContent() {
             {({ navigation }) => (
               <HomeScreen
                 baseUrl={session.baseUrl}
+                deviceHostname={session.deviceHostname}
                 error={error}
                 loading={projectsLoading}
                 projects={projects}
@@ -230,9 +235,6 @@ export function AppContent() {
                   void loadProjects();
                 }}
                 onSwitchServer={handleSwitchServer}
-                onSignOut={() => {
-                  void signOut();
-                }}
               />
             )}
           </Stack.Screen>
@@ -240,6 +242,7 @@ export function AppContent() {
             {({ navigation, route }) => (
               <ProjectRoute
                 api={api}
+                deviceHostname={session.deviceHostname}
                 initialTab={route.params.initialTab ?? 'deployments'}
                 projectName={route.params.name}
                 session={session}
@@ -259,9 +262,11 @@ export function AppContent() {
             {({ navigation }) => (
               <ServersScreen
                 activeBaseUrl={session.baseUrl}
+                deviceHostname={session.deviceHostname}
                 sessions={sessions}
                 onAddServer={() => navigation.navigate('Connect')}
                 onBack={() => navigation.goBack()}
+                onReorderServers={handleReorderServers}
                 onRemoveServer={handleRemoveServer}
                 onSwitchServer={handleSwitchServer}
               />
@@ -282,6 +287,7 @@ export function AppContent() {
             {({ navigation, route }) => (
               <DeploymentViewer
                 baseUrl={session.baseUrl}
+                deviceHostname={session.deviceHostname}
                 token={session.token}
                 viewer={route.params}
                 onBack={() => navigation.goBack()}

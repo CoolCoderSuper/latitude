@@ -19,6 +19,7 @@ pub(in crate::server) struct PublicLoginPayload {
 pub(in crate::server) struct PublicSessionResponse {
     pub(in crate::server) authenticated: bool,
     pub(in crate::server) projects_href: Option<String>,
+    pub(in crate::server) device_hostname: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -26,10 +27,12 @@ pub(in crate::server) struct PublicLoginResponse {
     pub(in crate::server) token: String,
     pub(in crate::server) max_age_seconds: u64,
     pub(in crate::server) projects_href: String,
+    pub(in crate::server) device_hostname: String,
 }
 
 #[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicProjectListResponse {
+    pub(in crate::server) device_hostname: String,
     pub(in crate::server) projects: Vec<PublicProjectSummary>,
 }
 
@@ -45,6 +48,7 @@ pub(in crate::server) struct PublicProjectSummary {
 #[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicProjectDetail {
     pub(in crate::server) name: String,
+    pub(in crate::server) device_hostname: String,
     pub(in crate::server) href: String,
     pub(in crate::server) api_href: String,
     pub(in crate::server) summary: String,
@@ -93,7 +97,10 @@ pub(in crate::server::public) fn public_project_summary(
     }
 }
 
-pub(in crate::server) fn public_project_detail(project: &ProjectConfig) -> PublicProjectDetail {
+pub(in crate::server) fn public_project_detail(
+    project: &ProjectConfig,
+    device_hostname: &str,
+) -> PublicProjectDetail {
     let deployments = project
         .deployments
         .iter()
@@ -103,6 +110,7 @@ pub(in crate::server) fn public_project_detail(project: &ProjectConfig) -> Publi
 
     PublicProjectDetail {
         name: project.name.clone(),
+        device_hostname: device_hostname.to_string(),
         href: format!("/{}", project.name),
         api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
         summary: project_summary(project),

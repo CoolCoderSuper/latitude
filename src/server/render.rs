@@ -31,7 +31,7 @@ use super::{
     terminal_api::PublicTerminalInfoResponse,
 };
 
-pub(super) fn render_project_home(project: &ProjectConfig) -> String {
+pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str) -> String {
     let page_title = format!("{} - Latitude Project", project.name);
     let enabled_deployments = project
         .deployments
@@ -41,6 +41,7 @@ pub(super) fn render_project_home(project: &ProjectConfig) -> String {
 
     html_page::document(
         &page_title,
+        device_hostname,
         PROJECT_HOME_STYLE,
         html! {},
         html! {
@@ -48,7 +49,7 @@ pub(super) fn render_project_home(project: &ProjectConfig) -> String {
                 header {
                     a class="back-link" href="/" { "Back to projects" }
                     h1 { (&project.name) }
-                    p { "Project tools and deployments" }
+                    p { "Project tools and deployments on " (device_hostname) }
                 }
                 ul {
                     li {
@@ -85,12 +86,17 @@ pub(super) fn render_project_home(project: &ProjectConfig) -> String {
     )
 }
 
-pub(super) fn render_project_diff(project: &ProjectConfig, report: &GitDiffReport) -> String {
+pub(super) fn render_project_diff(
+    project: &ProjectConfig,
+    report: &GitDiffReport,
+    device_hostname: &str,
+) -> String {
     let page_title = format!("{} code changes - Latitude", project.name);
     let workspace_html = diff::render_diff_workspace_fragment(report);
 
     html_page::document(
         &page_title,
+        device_hostname,
         DIFF_VIEWER_STYLE,
         html! {},
         html! {
@@ -98,7 +104,7 @@ pub(super) fn render_project_diff(project: &ProjectConfig, report: &GitDiffRepor
                 header {
                     a href=(format!("/{}", project.name)) { "Back to project" }
                     h1 { "Code changes" }
-                    p { (&project.name) }
+                    p { (&project.name) " on " (device_hostname) }
                 }
                 div class="diff-workspace" data-diff-workspace data-action-url=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
                     (PreEscaped(workspace_html))
@@ -113,6 +119,7 @@ pub(super) fn render_project_terminal(
     project: &ProjectConfig,
     info: &PublicTerminalInfoResponse,
     websocket_token: Option<&str>,
+    device_hostname: &str,
 ) -> String {
     let page_title = format!("{} terminal - Latitude", project.name);
     let websocket_path = format!(
@@ -122,6 +129,7 @@ pub(super) fn render_project_terminal(
 
     html_page::document(
         &page_title,
+        device_hostname,
         TERMINAL_VIEWER_STYLE,
         html! {
             link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css";
@@ -131,7 +139,7 @@ pub(super) fn render_project_terminal(
                 header {
                     a href=(format!("/{}", project.name)) { "Back to project" }
                     h1 { "Terminal" }
-                    p { (&project.name) }
+                    p { (&project.name) " on " (device_hostname) }
                     p class="project-path" { (&info.cwd) }
                 }
                 (terminal::terminal_workspace(info, &websocket_path, websocket_token))
@@ -143,15 +151,16 @@ pub(super) fn render_project_terminal(
     )
 }
 
-pub(super) fn render_public_login(next: &str, login_failed: bool) -> String {
+pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostname: &str) -> String {
     html_page::document(
         "Sign in - Latitude",
+        device_hostname,
         AUTH_PAGE_STYLE,
         html! {},
         html! {
             main {
                 h1 { "Latitude" }
-                p { "Sign in to continue" }
+                p { "Sign in to " (device_hostname) }
                 @if login_failed {
                     div class="error" { "Incorrect password." }
                 }
@@ -168,7 +177,7 @@ pub(super) fn render_public_login(next: &str, login_failed: bool) -> String {
     )
 }
 
-pub(super) fn render_server_home(config: &LatitudeConfig) -> String {
+pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str) -> String {
     let enabled_projects = config
         .projects
         .iter()
@@ -177,12 +186,13 @@ pub(super) fn render_server_home(config: &LatitudeConfig) -> String {
 
     html_page::document(
         "Latitude Projects",
+        device_hostname,
         PROJECT_HOME_STYLE,
         html! {},
         html! {
             main {
                 h1 { "Latitude" }
-                p { "Available projects" }
+                p { "Available projects on " (device_hostname) }
                 @if enabled_projects.is_empty() {
                     div class="empty" { "No enabled projects yet." }
                 } @else {

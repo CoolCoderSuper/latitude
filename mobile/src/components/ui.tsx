@@ -1,6 +1,13 @@
 import { CheckCircle2, Moon, Sun, XCircle } from 'lucide-react-native';
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { useTheme } from '../theme';
 
@@ -110,25 +117,29 @@ export function AppButton({
 
 export function IconButton({
   accessibilityLabel,
+  disabled = false,
   icon,
   onPress,
   style,
 }: {
   accessibilityLabel: string;
+  disabled?: boolean;
   icon: ReactNode;
   onPress: () => void;
-  style?: object;
+  style?: StyleProp<ViewStyle>;
 }) {
   const { styles } = useTheme();
 
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
+      disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
         styles.iconButton,
         style,
-        pressed && styles.pressed,
+        disabled && styles.buttonDisabled,
+        pressed && !disabled && styles.pressed,
       ]}
     >
       {icon}

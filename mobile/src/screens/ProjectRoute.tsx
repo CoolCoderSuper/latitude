@@ -15,9 +15,11 @@ import { ProjectScreen } from './ProjectScreen';
 import { useRefreshControl, useTheme } from '../theme';
 import type { DeploymentSummary, ProjectDetail, SessionRecord } from '../types';
 import { errorMessage } from '../utils/errors';
+import { appendDeviceHostname } from '../utils/headers';
 
 export function ProjectRoute({
   api,
+  deviceHostname,
   initialTab,
   onBack,
   onOpenViewer,
@@ -25,6 +27,7 @@ export function ProjectRoute({
   session,
 }: {
   api: LatitudePublicApi;
+  deviceHostname?: string;
   initialTab: ProjectTab;
   onBack: () => void;
   onOpenViewer: (deployment: DeploymentSummary) => void;
@@ -59,7 +62,10 @@ export function ProjectRoute({
     return (
       <View style={styles.flex}>
         <ScreenHeader
-          eyebrow={projectLoading ? 'Loading project' : 'Project unavailable'}
+          eyebrow={appendDeviceHostname(
+            projectLoading ? 'Loading project' : 'Project unavailable',
+            deviceHostname,
+          )}
           left={
             <IconButton
               accessibilityLabel="Back"
@@ -92,6 +98,7 @@ export function ProjectRoute({
       projectLoading={projectLoading}
       session={session}
       tab={tab}
+      deviceHostname={deviceHostname ?? project.device_hostname}
       onBack={onBack}
       onOpenViewer={onOpenViewer}
       onRefresh={loadProject}

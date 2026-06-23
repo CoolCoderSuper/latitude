@@ -353,6 +353,16 @@ function createStyles(colors: ThemeColors) {
   serverManagerRowActive: {
     borderColor: colors.accent,
   },
+  serverManagerRowDropTarget: {
+    borderColor: colors.accent,
+    backgroundColor: colors.panel,
+  },
+  serverManagerRowDragging: {
+    zIndex: 10,
+    elevation: 6,
+    borderColor: colors.accent,
+    opacity: 0.94,
+  },
   serverManagerIcon: {
     width: 38,
     height: 38,
@@ -380,7 +390,9 @@ function createStyles(colors: ThemeColors) {
     fontWeight: '700',
   },
   serverManagerActions: {
+    width: 150,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'flex-end',
     gap: 8,

@@ -46,11 +46,12 @@ pub(in crate::server) async fn public_entry(
     let original_path = req.uri().path().to_string();
     let config = state.config_snapshot().await;
     if !public_request_is_authenticated(&state, &config, &req) {
-        return public_auth_challenge(&req, false);
+        return public_auth_challenge(&state, &req, false);
     }
+    let device_hostname = state.device_hostname().to_string();
 
     if original_path == "/" {
-        return serve_server_home(req, &config).await;
+        return serve_server_home(req, &config, &device_hostname).await;
     }
 
     let Some(public_path) = split_project_path(&original_path) else {
@@ -79,14 +80,14 @@ pub(in crate::server) async fn public_entry(
         ..
     } = public_path
     else {
-        return serve_project_home(req, &project).await;
+        return serve_project_home(req, &project, &device_hostname).await;
     };
 
     if app_mount == DIFF_ROUTE_SEGMENT {
-        return serve_project_diff(req, &project, remainder.as_str()).await;
+        return serve_project_diff(req, &project, remainder.as_str(), &device_hostname).await;
     }
     if app_mount == TERMINAL_ROUTE_SEGMENT {
-        return serve_project_terminal(req, &project, remainder.as_str()).await;
+        return serve_project_terminal(req, &project, remainder.as_str(), &device_hostname).await;
     }
 
     let Some(app) = project
@@ -120,6 +121,7 @@ pub(in crate::server) async fn public_entry(
                 index_file,
                 *spa_fallback,
                 remainder.as_str(),
+                &device_hostname,
             )
             .await
         }
@@ -137,6 +139,7 @@ pub(in crate::server) async fn public_entry(
                 media_type.as_deref(),
                 content,
                 remainder.as_str(),
+                &device_hostname,
             )
             .await
         }
@@ -233,6 +236,7 @@ async fn serve_static(
     index_file: &str,
     spa_fallback: bool,
     remainder: &str,
+    device_hostname: &str,
 ) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
         return plain_response(
@@ -254,6 +258,7 @@ async fn serve_static(
                 Some(&media_type),
                 "",
                 page_theme_from_headers(req.headers()),
+                device_hostname,
             ),
         );
     }
@@ -322,6 +327,7 @@ async fn serve_page(
     media_type: Option<&str>,
     content: &str,
     remainder: &str,
+    device_hostname: &str,
 ) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
         return plain_response(
@@ -350,6 +356,7 @@ async fn serve_page(
             media_type,
             content,
             page_theme_from_headers(req.headers()),
+            device_hostname,
         ),
     )
 }
@@ -405,7 +412,11 @@ fn static_document_media_type(index_file: &str) -> Option<String> {
         .filter(|media_type| is_binary_document_media_type(media_type))
 }
 
-async fn serve_project_home(req: Request<Body>, project: &ProjectConfig) -> Response<Body> {
+async fn serve_project_home(
+    req: Request<Body>,
+    project: &ProjectConfig,
+    device_hostname: &str,
+) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -413,13 +424,14 @@ async fn serve_project_home(req: Request<Body>, project: &ProjectConfig) -> Resp
         );
     }
 
-    html_response(req.method(), render_project_home(project))
+    html_response(req.method(), render_project_home(project, device_hostname))
 }
 
 async fn serve_project_diff(
     req: Request<Body>,
     project: &ProjectConfig,
     remainder: &str,
+    device_hostname: &str,
 ) -> Response<Body> {
     let method = req.method().clone();
     if method != Method::GET && method != Method::HEAD && method != Method::PATCH {
@@ -455,13 +467,17 @@ async fn serve_project_diff(
     }
 
     let report = collect_project_diff(&project.project_dir).await;
-    html_response(&method, render_project_diff(project, &report))
+    html_response(
+        &method,
+        render_project_diff(project, &report, device_hostname),
+    )
 }
 
 async fn serve_project_terminal(
     req: Request<Body>,
     project: &ProjectConfig,
     remainder: &str,
+    device_hostname: &str,
 ) -> Response<Body> {
     let method = req.method().clone();
     if method != Method::GET && method != Method::HEAD && method != Method::POST {
@@ -506,11 +522,15 @@ async fn serve_project_terminal(
     let info = terminal_info_response(&project.name, &project.project_dir).await;
     html_response(
         &method,
-        render_project_terminal(project, &info, websocket_token.as_deref()),
+        render_project_terminal(project, &info, websocket_token.as_deref(), device_hostname),
     )
 }
 
-async fn serve_server_home(req: Request<Body>, config: &LatitudeConfig) -> Response<Body> {
+async fn serve_server_home(
+    req: Request<Body>,
+    config: &LatitudeConfig,
+    device_hostname: &str,
+) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -518,7 +538,7 @@ async fn serve_server_home(req: Request<Body>, config: &LatitudeConfig) -> Respo
         );
     }
 
-    html_response(req.method(), render_server_home(config))
+    html_response(req.method(), render_server_home(config, device_hostname))
 }
 
 fn html_response(method: &Method, html: String) -> Response<Body> {

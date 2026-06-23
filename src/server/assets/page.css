@@ -38,6 +38,13 @@ body {
   text-decoration: underline;
 }
 
+.latitude-page-hostname {
+  margin: 8px 0 0;
+  color: var(--latitude-page-muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
 .latitude-page {
   box-sizing: border-box;
   width: min(100%, 920px);

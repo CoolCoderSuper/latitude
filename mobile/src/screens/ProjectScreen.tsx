@@ -16,9 +16,11 @@ import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import type { ProjectTab } from '../navigationTypes';
 import { useTheme } from '../theme';
 import type { DeploymentSummary, ProjectDetail, SessionRecord } from '../types';
+import { appendDeviceHostname } from '../utils/headers';
 
 export function ProjectScreen({
   api,
+  deviceHostname,
   onBack,
   onOpenViewer,
   onRefresh,
@@ -29,6 +31,7 @@ export function ProjectScreen({
   tab,
 }: {
   api: LatitudePublicApi;
+  deviceHostname?: string;
   onBack: () => void;
   onOpenViewer: (deployment: DeploymentSummary) => void;
   onRefresh: () => void | Promise<void>;
@@ -96,7 +99,7 @@ export function ProjectScreen({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={project.summary}
+        eyebrow={appendDeviceHostname(project.summary, deviceHostname)}
         left={
           <IconButton
             accessibilityLabel="Back"

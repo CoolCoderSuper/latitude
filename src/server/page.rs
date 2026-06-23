@@ -132,8 +132,9 @@ pub(super) fn render_page_content(
     format: PageFormat,
     content: &str,
     theme: Option<&str>,
+    device_hostname: &str,
 ) -> String {
-    render_page_document(title, format, None, content, theme, None)
+    render_page_document(title, format, None, content, theme, None, device_hostname)
 }
 
 pub(super) fn render_project_page_content(
@@ -143,6 +144,7 @@ pub(super) fn render_project_page_content(
     media_type: Option<&str>,
     content: &str,
     theme: Option<&str>,
+    device_hostname: &str,
 ) -> String {
     render_page_document(
         title,
@@ -154,6 +156,7 @@ pub(super) fn render_project_page_content(
             project_name,
             raw_href: (format == PageFormat::Binary).then_some("?raw=1"),
         }),
+        device_hostname,
     )
 }
 
@@ -164,6 +167,7 @@ fn render_page_document(
     content: &str,
     theme: Option<&str>,
     shell: Option<PageDocumentShell<'_>>,
+    device_hostname: &str,
 ) -> String {
     match format {
         PageFormat::Html if is_full_html_document(content) => content.to_string(),
@@ -172,6 +176,7 @@ fn render_page_document(
             html! { (PreEscaped(content)) },
             theme,
             shell,
+            device_hostname,
         ),
         PageFormat::Markdown => {
             let html = render_markdown(content);
@@ -180,6 +185,7 @@ fn render_page_document(
                 html! { (PreEscaped(html)) },
                 theme,
                 shell,
+                device_hostname,
             )
         }
         PageFormat::Binary => {
@@ -189,6 +195,7 @@ fn render_page_document(
                 render_binary_document(title, media_type, shell.and_then(|shell| shell.raw_href)),
                 theme,
                 shell,
+                device_hostname,
             )
         }
     }
@@ -253,9 +260,11 @@ fn wrap_page_document(
     body: Markup,
     theme: Option<&str>,
     shell: Option<PageDocumentShell<'_>>,
+    device_hostname: &str,
 ) -> String {
     html_page::document_with_theme(
         title,
+        device_hostname,
         PAGE_STYLE,
         theme.and_then(clean_page_theme),
         html! {},
@@ -263,6 +272,7 @@ fn wrap_page_document(
             @if let Some(shell) = shell {
                 header class="latitude-page-header" {
                     a href=(format!("/{}", shell.project_name)) { "Back to project" }
+                    p class="latitude-page-hostname" { (shell.project_name) " on " (device_hostname) }
                 }
             }
             main class="latitude-page" {

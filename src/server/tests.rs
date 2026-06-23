@@ -36,6 +36,8 @@ use super::{
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
 
+const TEST_HOSTNAME: &str = "test-host";
+
 #[test]
 fn splits_project_home_and_deployment_paths() {
     assert_eq!(
@@ -231,10 +233,11 @@ fn renders_markdown_as_html_document() {
         PageFormat::Markdown,
         "# Agent Report\n\n- Done",
         Some("dark"),
+        TEST_HOSTNAME,
     );
 
     assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"dark\">"));
-    assert!(rendered.contains("<title>Agent Report</title>"));
+    assert!(rendered.contains("<title>Agent Report - test-host</title>"));
     assert!(rendered.contains("<h1>Agent Report</h1>"));
     assert!(rendered.contains("<li>Done</li>"));
 }
@@ -248,11 +251,13 @@ fn renders_project_markdown_document_with_back_to_project_shell() {
         None,
         "# Agent Report\n\n- Done",
         Some("dark"),
+        TEST_HOSTNAME,
     );
 
     assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"dark\">"));
-    assert!(rendered.contains("<title>Agent Report</title>"));
+    assert!(rendered.contains("<title>Agent Report - test-host</title>"));
     assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
+    assert!(rendered.contains("<p class=\"latitude-page-hostname\">demo on test-host</p>"));
     assert!(rendered.contains("<h1>Agent Report</h1>"));
 }
 
@@ -265,54 +270,60 @@ fn renders_video_page_document_with_back_to_project_shell() {
         Some("video/mp4"),
         "",
         Some("light"),
+        TEST_HOSTNAME,
     );
 
     assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"light\">"));
-    assert!(rendered.contains("<title>Launch Clip</title>"));
+    assert!(rendered.contains("<title>Launch Clip - test-host</title>"));
     assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
     assert!(rendered.contains("<video controls preload=\"metadata\" src=\"?raw=1\">"));
 }
 
 #[test]
 fn renders_project_home_with_enabled_deployments() {
-    let rendered = render_project_home(&ProjectConfig {
-        name: "demo".to_string(),
-        enabled: true,
-        project_dir: PathBuf::from("."),
-        deployments: vec![
-            ApplicationConfig {
-                name: "website".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Static {
-                    root: PathBuf::from("."),
-                    index_file: "index.html".to_string(),
-                    spa_fallback: true,
+    let rendered = render_project_home(
+        &ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![
+                ApplicationConfig {
+                    name: "website".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Static {
+                        root: PathBuf::from("."),
+                        index_file: "index.html".to_string(),
+                        spa_fallback: true,
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "report".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: "# Report".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: Some("Weekly Report".to_string()),
+                ApplicationConfig {
+                    name: "report".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Page {
+                        content: "# Report".to_string(),
+                        format: PageFormat::Markdown,
+                        media_type: None,
+                        title: Some("Weekly Report".to_string()),
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "draft".to_string(),
-                enabled: false,
-                target: ApplicationTarget::Page {
-                    content: "# Draft".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: None,
+                ApplicationConfig {
+                    name: "draft".to_string(),
+                    enabled: false,
+                    target: ApplicationTarget::Page {
+                        content: "# Draft".to_string(),
+                        format: PageFormat::Markdown,
+                        media_type: None,
+                        title: None,
+                    },
                 },
-            },
-        ],
-    });
+            ],
+        },
+        TEST_HOSTNAME,
+    );
 
+    assert!(rendered.contains("<title>demo - Latitude Project - test-host</title>"));
     assert!(rendered.contains("href=\"/\">Back to projects</a>"));
+    assert!(rendered.contains("Project tools and deployments on test-host"));
     assert!(rendered.contains("href=\"/demo/_diff\""));
     assert!(rendered.contains("Code changes"));
     assert!(rendered.contains("href=\"/demo/_terminal\""));
@@ -656,10 +667,11 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
             },
         ],
     };
-    let rendered = render_project_diff(&project, &report);
+    let rendered = render_project_diff(&project, &report, TEST_HOSTNAME);
 
-    assert!(rendered.contains("<title>demo code changes - Latitude</title>"));
+    assert!(rendered.contains("<title>demo code changes - Latitude - test-host</title>"));
     assert!(rendered.contains("href=\"/demo\""));
+    assert!(rendered.contains("<p>demo on test-host</p>"));
     assert!(rendered.contains("<h2>Unstaged files</h2>"));
     assert!(rendered.contains("<h2>Staged files</h2>"));
     assert!(rendered.contains("data-diff-workspace"));
@@ -838,9 +850,10 @@ fn renders_project_terminal_page() {
         max_output_bytes: 1024,
         sessions_href: "/__latitude/api/projects/demo/terminal/sessions".to_string(),
     };
-    let rendered = render_project_terminal(&project, &info, Some("signed-token"));
+    let rendered = render_project_terminal(&project, &info, Some("signed-token"), TEST_HOSTNAME);
 
-    assert!(rendered.contains("<title>demo terminal - Latitude</title>"));
+    assert!(rendered.contains("<title>demo terminal - Latitude - test-host</title>"));
+    assert!(rendered.contains("<p>demo on test-host</p>"));
     assert!(rendered.contains("data-terminal-workspace"));
     assert!(
         rendered.contains("data-sessions-path=\"/__latitude/api/projects/demo/terminal/sessions\"")
@@ -1040,33 +1053,37 @@ fn trims_windows_extended_path_prefix_for_display() {
 
 #[test]
 fn renders_server_home_with_enabled_projects() {
-    let rendered = render_server_home(&LatitudeConfig {
-        projects: vec![
-            ProjectConfig {
-                name: "mock".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![ApplicationConfig {
-                    name: "website".to_string(),
+    let rendered = render_server_home(
+        &LatitudeConfig {
+            projects: vec![
+                ProjectConfig {
+                    name: "mock".to_string(),
                     enabled: true,
-                    target: ApplicationTarget::Static {
-                        root: PathBuf::from("."),
-                        index_file: "index.html".to_string(),
-                        spa_fallback: true,
-                    },
-                }],
-            },
-            ProjectConfig {
-                name: "hidden".to_string(),
-                enabled: false,
-                project_dir: PathBuf::from("."),
-                deployments: Vec::new(),
-            },
-        ],
-        ..LatitudeConfig::default()
-    });
+                    project_dir: PathBuf::from("."),
+                    deployments: vec![ApplicationConfig {
+                        name: "website".to_string(),
+                        enabled: true,
+                        target: ApplicationTarget::Static {
+                            root: PathBuf::from("."),
+                            index_file: "index.html".to_string(),
+                            spa_fallback: true,
+                        },
+                    }],
+                },
+                ProjectConfig {
+                    name: "hidden".to_string(),
+                    enabled: false,
+                    project_dir: PathBuf::from("."),
+                    deployments: Vec::new(),
+                },
+            ],
+            ..LatitudeConfig::default()
+        },
+        TEST_HOSTNAME,
+    );
 
-    assert!(rendered.contains("<title>Latitude Projects</title>"));
+    assert!(rendered.contains("<title>Latitude Projects - test-host</title>"));
+    assert!(rendered.contains("Available projects on test-host"));
     assert!(rendered.contains("href=\"/mock\""));
     assert!(rendered.contains("1 deployment"));
     assert!(!rendered.contains("href=\"/hidden\""));
@@ -1074,61 +1091,65 @@ fn renders_server_home_with_enabled_projects() {
 
 #[test]
 fn builds_public_project_detail_with_enabled_deployments() {
-    let detail = public_project_detail(&ProjectConfig {
-        name: "demo".to_string(),
-        enabled: true,
-        project_dir: PathBuf::from("."),
-        deployments: vec![
-            ApplicationConfig {
-                name: "website".to_string(),
-                enabled: true,
-                target: ApplicationTarget::ReverseProxy {
-                    upstream: "http://127.0.0.1:3000".to_string(),
-                    strip_prefix: true,
+    let detail = public_project_detail(
+        &ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![
+                ApplicationConfig {
+                    name: "website".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::ReverseProxy {
+                        upstream: "http://127.0.0.1:3000".to_string(),
+                        strip_prefix: true,
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "report".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: "# Report".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: Some("Weekly Report".to_string()),
+                ApplicationConfig {
+                    name: "report".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Page {
+                        content: "# Report".to_string(),
+                        format: PageFormat::Markdown,
+                        media_type: None,
+                        title: Some("Weekly Report".to_string()),
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "clip".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: encode_page_binary_content(b"mp4 bytes"),
-                    format: PageFormat::Binary,
-                    media_type: Some("video/mp4".to_string()),
-                    title: Some("Demo Clip".to_string()),
+                ApplicationConfig {
+                    name: "clip".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Page {
+                        content: encode_page_binary_content(b"mp4 bytes"),
+                        format: PageFormat::Binary,
+                        media_type: Some("video/mp4".to_string()),
+                        title: Some("Demo Clip".to_string()),
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "recording".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Static {
-                    root: PathBuf::from("videos"),
-                    index_file: "Screen Recording.mp4".to_string(),
-                    spa_fallback: false,
+                ApplicationConfig {
+                    name: "recording".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Static {
+                        root: PathBuf::from("videos"),
+                        index_file: "Screen Recording.mp4".to_string(),
+                        spa_fallback: false,
+                    },
                 },
-            },
-            ApplicationConfig {
-                name: "draft".to_string(),
-                enabled: false,
-                target: ApplicationTarget::Static {
-                    root: PathBuf::from("."),
-                    index_file: "index.html".to_string(),
-                    spa_fallback: false,
+                ApplicationConfig {
+                    name: "draft".to_string(),
+                    enabled: false,
+                    target: ApplicationTarget::Static {
+                        root: PathBuf::from("."),
+                        index_file: "index.html".to_string(),
+                        spa_fallback: false,
+                    },
                 },
-            },
-        ],
-    });
+            ],
+        },
+        TEST_HOSTNAME,
+    );
 
     assert_eq!(detail.name, "demo");
+    assert_eq!(detail.device_hostname, TEST_HOSTNAME);
     assert_eq!(detail.deployment_count, 4);
     assert_eq!(detail.diff.api_href, "/__latitude/api/projects/demo/diff");
     assert_eq!(
@@ -1161,7 +1182,7 @@ fn serves_full_html_document_without_wrapping() {
     let html = "<!doctype html><html><head><title>X</title></head><body>Hi</body></html>";
 
     assert_eq!(
-        render_page_content(None, PageFormat::Html, html, Some("dark")),
+        render_page_content(None, PageFormat::Html, html, Some("dark"), TEST_HOSTNAME),
         html
     );
 }

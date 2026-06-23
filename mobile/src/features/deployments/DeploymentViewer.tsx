@@ -15,6 +15,7 @@ import { IconButton, ScreenHeader } from '../../components/ui';
 import type { ViewerState } from '../../navigationTypes';
 import { useTheme } from '../../theme';
 import type { AppStyles, ThemeColors, ThemeMode } from '../../theme';
+import { prependDeviceHostname } from '../../utils/headers';
 import {
   isImageMediaType,
   isVideoMediaType,
@@ -23,11 +24,13 @@ import {
 
 export function DeploymentViewer({
   baseUrl,
+  deviceHostname,
   onBack,
   token,
   viewer,
 }: {
   baseUrl: string;
+  deviceHostname?: string;
   onBack: () => void;
   token: string;
   viewer: ViewerState;
@@ -40,6 +43,7 @@ export function DeploymentViewer({
     return (
       <NativeVideoViewer
         mediaUri={rawMediaUrl(uri)}
+        deviceHostname={deviceHostname}
         title={viewer.title}
         token={token}
         uri={uri}
@@ -52,6 +56,7 @@ export function DeploymentViewer({
     return (
       <NativeImageViewer
         mediaUri={rawMediaUrl(uri)}
+        deviceHostname={deviceHostname}
         title={viewer.title}
         token={token}
         uri={uri}
@@ -63,6 +68,7 @@ export function DeploymentViewer({
   return (
     <WebDeploymentViewer
       colors={colors}
+      deviceHostname={deviceHostname}
       mode={mode}
       onBack={onBack}
       styles={styles}
@@ -75,6 +81,7 @@ export function DeploymentViewer({
 
 function WebDeploymentViewer({
   colors,
+  deviceHostname,
   mode,
   onBack,
   styles,
@@ -83,6 +90,7 @@ function WebDeploymentViewer({
   viewer,
 }: {
   colors: ThemeColors;
+  deviceHostname?: string;
   mode: ThemeMode;
   onBack: () => void;
   styles: AppStyles;
@@ -104,7 +112,7 @@ function WebDeploymentViewer({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={uri}
+        eyebrow={prependDeviceHostname(uri, deviceHostname)}
         left={
           <IconButton
             accessibilityLabel="Back"
@@ -136,12 +144,14 @@ function WebDeploymentViewer({
 }
 
 function NativeVideoViewer({
+  deviceHostname,
   mediaUri,
   onBack,
   title,
   token,
   uri,
 }: {
+  deviceHostname?: string;
   mediaUri: string;
   onBack: () => void;
   title: string;
@@ -176,7 +186,7 @@ function NativeVideoViewer({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={uri}
+        eyebrow={prependDeviceHostname(uri, deviceHostname)}
         left={
           <IconButton
             accessibilityLabel="Back"
@@ -206,12 +216,14 @@ function NativeVideoViewer({
 }
 
 function NativeImageViewer({
+  deviceHostname,
   mediaUri,
   onBack,
   title,
   token,
   uri,
 }: {
+  deviceHostname?: string;
   mediaUri: string;
   onBack: () => void;
   title: string;
@@ -233,7 +245,7 @@ function NativeImageViewer({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={uri}
+        eyebrow={prependDeviceHostname(uri, deviceHostname)}
         left={
           <IconButton
             accessibilityLabel="Back"

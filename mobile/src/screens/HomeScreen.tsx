@@ -1,7 +1,6 @@
 import {
   ChevronRight,
   FolderOpen,
-  LogOut,
   Server,
 } from 'lucide-react-native';
 import { useCallback, useMemo } from 'react';
@@ -16,27 +15,28 @@ import {
 } from '../components/ui';
 import { useRefreshControl, useTheme } from '../theme';
 import type { ProjectSummary, SessionRecord } from '../types';
+import { prependDeviceHostname } from '../utils/headers';
 
 export function HomeScreen({
   baseUrl,
+  deviceHostname,
   error,
   loading,
   onManageServers,
   onOpenProject,
   onRefresh,
   onSwitchServer,
-  onSignOut,
   projects,
   serverSessions,
 }: {
   baseUrl: string;
+  deviceHostname?: string;
   error: string | null;
   loading: boolean;
   onManageServers: () => void;
   onOpenProject: (name: string) => void;
   onRefresh: () => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
-  onSignOut: () => void | Promise<void>;
   projects: ProjectSummary[];
   serverSessions: SessionRecord[];
 }) {
@@ -89,20 +89,13 @@ export function HomeScreen({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={baseUrl}
+        eyebrow={prependDeviceHostname(baseUrl, deviceHostname)}
         right={
           <>
             <IconButton
               accessibilityLabel="Manage servers"
               icon={<Server color={colors.text} size={20} />}
               onPress={onManageServers}
-            />
-            <IconButton
-              accessibilityLabel="Sign out"
-              icon={<LogOut color={colors.text} size={20} />}
-              onPress={() => {
-                void onSignOut();
-              }}
             />
           </>
         }
@@ -121,9 +114,10 @@ export function HomeScreen({
           >
             {serverSessions.map((serverSession) => {
               const active = serverSession.baseUrl === baseUrl;
+              const label = serverLabel(serverSession);
               return (
                 <Pressable
-                  accessibilityLabel={`Switch to ${serverSession.baseUrl}`}
+                  accessibilityLabel={`Switch to ${label}`}
                   disabled={active}
                   key={serverSession.baseUrl}
                   onPress={() => {
@@ -146,7 +140,7 @@ export function HomeScreen({
                       active && styles.serverPillTextActive,
                     ]}
                   >
-                    {serverLabel(serverSession.baseUrl)}
+                    {label}
                   </Text>
                 </Pressable>
               );
@@ -186,10 +180,15 @@ export function HomeScreen({
   );
 }
 
-function serverLabel(baseUrl: string): string {
+function serverLabel(session: SessionRecord): string {
+  const hostname = session.deviceHostname?.trim();
+  if (hostname) {
+    return hostname;
+  }
+
   try {
-    return new URL(baseUrl).host;
+    return new URL(session.baseUrl).host;
   } catch {
-    return baseUrl;
+    return session.baseUrl;
   }
 }

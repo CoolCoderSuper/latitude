@@ -47,7 +47,11 @@ pub(super) fn public_api_auth_challenge() -> Response<Body> {
     json_error(StatusCode::UNAUTHORIZED, "authentication required")
 }
 
-pub(super) fn public_auth_challenge(req: &Request<Body>, login_failed: bool) -> Response<Body> {
+pub(super) fn public_auth_challenge(
+    state: &AppState,
+    req: &Request<Body>,
+    login_failed: bool,
+) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD || request_wants_json(req) {
         return json_error(StatusCode::UNAUTHORIZED, "authentication required");
     }
@@ -62,6 +66,7 @@ pub(super) fn public_auth_challenge(req: &Request<Body>, login_failed: bool) -> 
         &next,
         login_failed,
         req.method() == Method::HEAD,
+        state.device_hostname(),
     )
 }
 
@@ -132,8 +137,9 @@ pub(super) fn public_login_response(
     next: &str,
     login_failed: bool,
     head: bool,
+    device_hostname: &str,
 ) -> Response<Body> {
-    let html = render_public_login(next, login_failed);
+    let html = render_public_login(next, login_failed, device_hostname);
     let content_length = html.len();
     let body = if head {
         Body::empty()

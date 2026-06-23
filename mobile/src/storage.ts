@@ -4,6 +4,7 @@ import type { SessionRecord } from './types';
 
 const BASE_URL_KEY = 'latitude.baseUrl';
 const ACTIVE_BASE_URL_KEY = 'latitude.activeBaseUrl';
+const REAUTH_BASE_URL_KEY = 'latitude.reauthBaseUrl';
 const SESSIONS_KEY = 'latitude.sessions';
 const THEME_MODE_KEY = 'latitude.themeMode';
 const TOKEN_KEY = 'latitude.token';
@@ -50,6 +51,15 @@ function normalizeStoredBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
 }
 
+function normalizeStoredHostname(hostname: unknown): string | undefined {
+  if (typeof hostname !== 'string') {
+    return undefined;
+  }
+
+  const normalized = hostname.trim();
+  return normalized ? normalized : undefined;
+}
+
 function sanitizeSession(value: unknown): SessionRecord | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -69,7 +79,13 @@ function sanitizeSession(value: unknown): SessionRecord | null {
     return null;
   }
 
-  return { baseUrl, token };
+  const deviceHostname = normalizeStoredHostname(candidate.deviceHostname);
+
+  return {
+    baseUrl,
+    token,
+    ...(deviceHostname ? { deviceHostname } : {}),
+  };
 }
 
 function mergeSessions(sessions: SessionRecord[]): SessionRecord[] {
@@ -80,6 +96,27 @@ function mergeSessions(sessions: SessionRecord[]): SessionRecord[] {
   }
 
   return Array.from(byBaseUrl.values());
+}
+
+function upsertSession(
+  sessions: SessionRecord[],
+  session: SessionRecord,
+): SessionRecord[] {
+  let replaced = false;
+  const nextSessions = sessions.flatMap((item) => {
+    if (item.baseUrl !== session.baseUrl) {
+      return [item];
+    }
+
+    if (replaced) {
+      return [];
+    }
+
+    replaced = true;
+    return [session];
+  });
+
+  return replaced ? nextSessions : [...nextSessions, session];
 }
 
 function parseSessions(rawSessions: string | null): SessionRecord[] {
@@ -149,13 +186,19 @@ export async function loadSessions(): Promise<SessionRecord[]> {
 }
 
 export async function loadSession(): Promise<SessionRecord | null> {
-  const [sessions, activeBaseUrl, rememberedBaseUrl] = await Promise.all([
-    loadSessions(),
-    getItem(ACTIVE_BASE_URL_KEY),
-    getItem(BASE_URL_KEY),
-  ]);
+  const [sessions, activeBaseUrl, rememberedBaseUrl, reauthBaseUrl] =
+    await Promise.all([
+      loadSessions(),
+      getItem(ACTIVE_BASE_URL_KEY),
+      getItem(BASE_URL_KEY),
+      getItem(REAUTH_BASE_URL_KEY),
+    ]);
 
   if (sessions.length === 0) {
+    return null;
+  }
+
+  if (normalizeStoredBaseUrl(reauthBaseUrl ?? '')) {
     return null;
   }
 
@@ -183,18 +226,42 @@ export async function saveSession(session: SessionRecord): Promise<SessionRecord
     return loadSessions();
   }
 
-  const sessions = mergeSessions([
-    ...(await loadSessions()).filter(
-      (item) => item.baseUrl !== normalizedSession.baseUrl,
-    ),
-    normalizedSession,
-  ]);
+  const sessions = upsertSession(await loadSessions(), normalizedSession);
 
   await Promise.all([
     saveSessionList(sessions),
     saveActiveSession(normalizedSession),
+    deleteItem(REAUTH_BASE_URL_KEY),
   ]);
   return sessions;
+}
+
+export async function requireSessionLogin(
+  session: SessionRecord,
+): Promise<SessionRecord[]> {
+  const sessions = upsertSession(await loadSessions(), session);
+
+  await Promise.all([
+    saveSessionList(sessions),
+    saveActiveSession(null),
+    setItem(BASE_URL_KEY, session.baseUrl),
+    setItem(REAUTH_BASE_URL_KEY, session.baseUrl),
+  ]);
+
+  return sessions;
+}
+
+export async function saveSessionOrder(
+  sessions: SessionRecord[],
+): Promise<SessionRecord[]> {
+  const orderedSessions = mergeSessions(
+    sessions
+      .map((session) => sanitizeSession(session))
+      .filter((session): session is SessionRecord => Boolean(session)),
+  );
+
+  await saveSessionList(orderedSessions);
+  return orderedSessions;
 }
 
 export async function activateSession(
@@ -228,10 +295,17 @@ export async function removeSession(baseUrl: string): Promise<{
     ? currentSession
     : remainingSessions[0] ?? null;
 
-  await Promise.all([
+  const pendingWrites: Promise<void>[] = [
     saveSessionList(remainingSessions),
     saveActiveSession(activeSession),
-  ]);
+  ];
+  if (
+    normalizeStoredBaseUrl((await getItem(REAUTH_BASE_URL_KEY)) ?? '') ===
+    normalizedBaseUrl
+  ) {
+    pendingWrites.push(deleteItem(REAUTH_BASE_URL_KEY));
+  }
+  await Promise.all(pendingWrites);
   if (!activeSession) {
     await setItem(BASE_URL_KEY, normalizedBaseUrl);
   }

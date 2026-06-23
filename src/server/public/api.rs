@@ -37,9 +37,18 @@ use super::{
     },
 };
 
-pub(in crate::server) async fn get_public_login(req: Request<Body>) -> Response<Body> {
+pub(in crate::server) async fn get_public_login(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
     let next = clean_next_path(public_login_next_from_query(req.uri().query()));
-    public_login_response(StatusCode::OK, &next, false, req.method() == Method::HEAD)
+    public_login_response(
+        StatusCode::OK,
+        &next,
+        false,
+        req.method() == Method::HEAD,
+        state.device_hostname(),
+    )
 }
 
 pub(in crate::server) async fn post_public_login(
@@ -68,7 +77,13 @@ pub(in crate::server) async fn post_public_login(
         );
     }
 
-    public_login_response(StatusCode::UNAUTHORIZED, &next, true, false)
+    public_login_response(
+        StatusCode::UNAUTHORIZED,
+        &next,
+        true,
+        false,
+        state.device_hostname(),
+    )
 }
 
 pub(in crate::server) async fn public_api_session(
@@ -81,6 +96,7 @@ pub(in crate::server) async fn public_api_session(
     Json(PublicSessionResponse {
         authenticated,
         projects_href: authenticated.then(|| PUBLIC_API_PROJECTS_PATH.to_string()),
+        device_hostname: state.device_hostname().to_string(),
     })
 }
 
@@ -110,6 +126,7 @@ pub(in crate::server) async fn public_api_login(
             token,
             max_age_seconds: AUTH_COOKIE_MAX_AGE_SECONDS,
             projects_href: PUBLIC_API_PROJECTS_PATH.to_string(),
+            device_hostname: state.device_hostname().to_string(),
         }),
     ))
 }
@@ -130,7 +147,11 @@ pub(in crate::server) async fn public_api_list_projects(
         .map(public_project_summary)
         .collect();
 
-    Json(PublicProjectListResponse { projects }).into_response()
+    Json(PublicProjectListResponse {
+        device_hostname: state.device_hostname().to_string(),
+        projects,
+    })
+    .into_response()
 }
 
 pub(in crate::server) async fn public_api_get_project(
@@ -154,7 +175,7 @@ pub(in crate::server) async fn public_api_get_project(
         );
     };
 
-    Json(public_project_detail(project)).into_response()
+    Json(public_project_detail(project, state.device_hostname())).into_response()
 }
 
 pub(in crate::server) async fn public_api_get_project_diff(

@@ -1,17 +1,20 @@
 export type SessionRecord = {
   baseUrl: string;
   token: string;
+  deviceHostname?: string;
 };
 
 export type LoginResponse = {
   token: string;
   max_age_seconds: number;
   projects_href: string;
+  device_hostname: string;
 };
 
 export type SessionResponse = {
   authenticated: boolean;
   projects_href: string | null;
+  device_hostname: string;
 };
 
 export type ProjectSummary = {
@@ -23,6 +26,7 @@ export type ProjectSummary = {
 };
 
 export type ProjectListResponse = {
+  device_hostname: string;
   projects: ProjectSummary[];
 };
 
@@ -53,6 +57,7 @@ export type ProjectTerminalLink = {
 
 export type ProjectDetail = {
   name: string;
+  device_hostname: string;
   href: string;
   api_href: string;
   summary: string;

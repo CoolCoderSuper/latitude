@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod device;
 mod server;
 mod state;
 mod terminal;

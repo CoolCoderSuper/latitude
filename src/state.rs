@@ -8,6 +8,7 @@ use tokio::sync::RwLock;
 
 use crate::{
     config::{ConfigError, LatitudeConfig},
+    device::current_hostname,
     terminal::TerminalSessionManager,
 };
 
@@ -22,6 +23,7 @@ struct AppStateInner {
     config_path: PathBuf,
     config: RwLock<LatitudeConfig>,
     client: Client,
+    device_hostname: String,
     public_auth_secret: [u8; 32],
     terminal_sessions: Arc<TerminalSessionManager>,
 }
@@ -38,6 +40,7 @@ impl AppState {
                 config_path,
                 config: RwLock::new(config),
                 client,
+                device_hostname: current_hostname(),
                 public_auth_secret: random(),
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
             }),
@@ -46,6 +49,10 @@ impl AppState {
 
     pub fn client(&self) -> &Client {
         &self.inner.client
+    }
+
+    pub fn device_hostname(&self) -> &str {
+        &self.inner.device_hostname
     }
 
     pub fn terminal_sessions(&self) -> Arc<TerminalSessionManager> {
