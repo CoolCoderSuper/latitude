@@ -1,3 +1,4 @@
+mod desktop;
 mod diff;
 mod syntax;
 mod terminal;
@@ -19,13 +20,17 @@ use crate::config::{
     ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig,
     is_binary_document_media_type,
 };
+use crate::desktop::DesktopInfoResponse;
 
 use super::{
     assets::{
-        AUTH_PAGE_STYLE, DIFF_VIEWER_SCRIPT, DIFF_VIEWER_STYLE, PROJECT_HOME_STYLE,
-        TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
+        AUTH_PAGE_STYLE, DESKTOP_VIEWER_SCRIPT, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_SCRIPT,
+        DIFF_VIEWER_STYLE, PROJECT_HOME_STYLE, TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
     },
-    constants::{DIFF_ROUTE_SEGMENT, LOGIN_PATH, TERMINAL_ROUTE_SEGMENT, TERMINAL_WS_SUFFIX},
+    constants::{
+        DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, LOGIN_PATH, TERMINAL_ROUTE_SEGMENT,
+        TERMINAL_WS_SUFFIX,
+    },
     git::GitDiffReport,
     html as html_page,
     terminal_api::PublicTerminalInfoResponse,
@@ -182,6 +187,33 @@ pub(super) fn render_root_terminal(
     )
 }
 
+pub(super) fn render_root_desktop(
+    info: &DesktopInfoResponse,
+    websocket_token: Option<&str>,
+    device_hostname: &str,
+) -> String {
+    let target = format!("{}:{}", info.host, info.port);
+
+    html_page::document(
+        &format!("{} - Latitude", info.label),
+        device_hostname,
+        DESKTOP_VIEWER_STYLE,
+        html! {},
+        html! {
+            main {
+                header {
+                    a href="/" { "Back to projects" }
+                    h1 { (&info.label) }
+                    p { "Desktop on " (device_hostname) }
+                    p class="desktop-target-label" { (&target) }
+                }
+                (desktop::desktop_workspace(info, websocket_token))
+                script type="module" { (PreEscaped(DESKTOP_VIEWER_SCRIPT)) }
+            }
+        },
+    )
+}
+
 pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostname: &str) -> String {
     html_page::document(
         "Sign in - Latitude",
@@ -190,8 +222,10 @@ pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostnam
         html! {},
         html! {
             main {
-                h1 { "Latitude" }
-                p { "Sign in to " (device_hostname) }
+                header {
+                    h1 { "Latitude" }
+                    p { "Sign in to " (device_hostname) }
+                }
                 @if login_failed {
                     div class="error" { "Incorrect password." }
                 }
@@ -223,9 +257,19 @@ pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str)
         html! {},
         html! {
             main {
-                h1 { "Latitude" }
-                p { "Available projects on " (device_hostname) }
+                header {
+                    h1 { "Latitude" }
+                    p { "Available projects on " (device_hostname) }
+                }
                 ul {
+                    @if config.desktop.enabled {
+                        li {
+                            a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
+                                strong { (&config.desktop.label) }
+                                span { "View the desktop over VNC" }
+                            }
+                        }
+                    }
                     li {
                         a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {
                             strong { "Root Terminal" }

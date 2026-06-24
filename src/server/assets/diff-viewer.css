@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #f7f8fb;
   color: #1c2433;
@@ -335,129 +335,127 @@ pre {
   color: #64748b;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    background: #10141d;
-    color: #dbe4ef;
-  }
+:root[data-latitude-theme="dark"] {
+  background: #10141d;
+  color: #dbe4ef;
+}
 
-  p,
-  .empty,
-  .section-heading code {
-    color: #aeb9c7;
-  }
+:root[data-latitude-theme="dark"] p,
+:root[data-latitude-theme="dark"] .empty,
+:root[data-latitude-theme="dark"] .section-heading code {
+  color: #aeb9c7;
+}
 
-  .file-panel {
-    border-color: #2f3a4a;
-    background: #151c28;
-  }
+:root[data-latitude-theme="dark"] .file-panel {
+  border-color: #2f3a4a;
+  background: #151c28;
+}
 
-  .action-status {
-    border-color: #367064;
-    color: #bbf7d0;
-    background: #123421;
-  }
+:root[data-latitude-theme="dark"] .action-status {
+  border-color: #367064;
+  color: #bbf7d0;
+  background: #123421;
+}
 
-  .action-status.error {
-    border-color: #7f1d1d;
-    color: #fecdd3;
-    background: #3f151b;
-  }
+:root[data-latitude-theme="dark"] .action-status.error {
+  border-color: #7f1d1d;
+  color: #fecdd3;
+  background: #3f151b;
+}
 
-  .file-card {
-    border-color: #2f3a4a;
-    background: #151c28;
-  }
+:root[data-latitude-theme="dark"] .file-card {
+  border-color: #2f3a4a;
+  background: #151c28;
+}
 
-  .file-card[open] {
-    border-color: #367064;
-  }
+:root[data-latitude-theme="dark"] .file-card[open] {
+  border-color: #367064;
+}
 
-  .file-content,
-  .file-diff {
-    border-color: #2f3a4a;
-  }
+:root[data-latitude-theme="dark"] .file-content,
+:root[data-latitude-theme="dark"] .file-diff {
+  border-color: #2f3a4a;
+}
 
-  .status-code,
-  .file-path span {
-    color: #aeb9c7;
-  }
+:root[data-latitude-theme="dark"] .status-code,
+:root[data-latitude-theme="dark"] .file-path span {
+  color: #aeb9c7;
+}
 
-  button,
-  input {
-    border-color: #2f3a4a;
-    background: #151c28;
-    color: #dbe4ef;
-  }
+:root[data-latitude-theme="dark"] button,
+:root[data-latitude-theme="dark"] input {
+  border-color: #2f3a4a;
+  background: #151c28;
+  color: #dbe4ef;
+}
 
-  button.danger-button {
-    border-color: #7f1d1d;
-    color: #fecdd3;
-    background: #3f151b;
-  }
+:root[data-latitude-theme="dark"] button.danger-button {
+  border-color: #7f1d1d;
+  color: #fecdd3;
+  background: #3f151b;
+}
 
-  button.danger-button:hover {
-    border-color: #fecdd3;
-  }
+:root[data-latitude-theme="dark"] button.danger-button:hover {
+  border-color: #fecdd3;
+}
 
-  .section-heading {
-    border-bottom-color: #2f3a4a;
-  }
+:root[data-latitude-theme="dark"] .section-heading {
+  border-bottom-color: #2f3a4a;
+}
 
-  pre {
-    background: #111827;
-  }
+:root[data-latitude-theme="dark"] pre {
+  background: #111827;
+}
 
-  .line.file {
-    color: #dbe4ef;
-  }
+:root[data-latitude-theme="dark"] .line.file {
+  color: #dbe4ef;
+}
 
-  .line.hunk {
-    color: #93c5fd;
-  }
+:root[data-latitude-theme="dark"] .line.hunk {
+  color: #93c5fd;
+}
 
-  .line.add {
-    color: #bbf7d0;
-    background: #123421;
-  }
+:root[data-latitude-theme="dark"] .line.add {
+  color: #bbf7d0;
+  background: #123421;
+}
 
-  .line.remove {
-    color: #fecdd3;
-    background: #3f151b;
-  }
+:root[data-latitude-theme="dark"] .line.remove {
+  color: #fecdd3;
+  background: #3f151b;
+}
 
-  .tok-keyword {
-    color: #c4b5fd;
-  }
+:root[data-latitude-theme="dark"] .tok-keyword {
+  color: #c4b5fd;
+}
 
-  .tok-string {
-    color: #fde68a;
-  }
+:root[data-latitude-theme="dark"] .tok-string {
+  color: #fde68a;
+}
 
-  .tok-comment {
-    color: #94a3b8;
-  }
+:root[data-latitude-theme="dark"] .tok-comment {
+  color: #94a3b8;
+}
 
-  .tok-number {
-    color: #67e8f9;
-  }
+:root[data-latitude-theme="dark"] .tok-number {
+  color: #67e8f9;
+}
 
-  .tok-type {
-    color: #93c5fd;
-  }
+:root[data-latitude-theme="dark"] .tok-type {
+  color: #93c5fd;
+}
 
-  .tok-property {
-    color: #fda4af;
-  }
+:root[data-latitude-theme="dark"] .tok-property {
+  color: #fda4af;
+}
 
-  .tok-punctuation {
-    color: #94a3b8;
-  }
+:root[data-latitude-theme="dark"] .tok-punctuation {
+  color: #94a3b8;
+}
 
-  .error {
-    color: #fecdd3;
-    background: #3f151b;
-  }
+:root[data-latitude-theme="dark"] .error {
+  color: #fecdd3;
+  background: #3f151b;
 }
 
 @media (max-width: 720px) {

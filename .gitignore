@@ -5,3 +5,5 @@
 latitude.json
 .codex-remote-attachments/
 logs/
+/tools/ultravnc/*
+!/tools/ultravnc/README.md

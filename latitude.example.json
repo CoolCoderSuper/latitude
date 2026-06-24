@@ -2,6 +2,17 @@
   "public_bind": "0.0.0.0:8080",
   "command_bind": "127.0.0.1:7600",
   "public_password": "test",
+  "desktop": {
+    "enabled": false,
+    "label": "Desktop",
+    "mode": "external",
+    "managed_provider": "ultra_vnc",
+    "managed_executable": "tools/ultravnc/winvnc.exe",
+    "vnc_host": "127.0.0.1",
+    "vnc_port": 5900,
+    "view_only": true,
+    "allow_non_loopback": false
+  },
   "projects": [
     {
       "name": "demo",

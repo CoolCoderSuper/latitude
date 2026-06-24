@@ -7,7 +7,7 @@ use crate::config::{PageFormat, encode_page_binary_content, is_binary_document_m
 
 use super::{
     assets::PAGE_STYLE,
-    constants::{DEFAULT_PAGE_TITLE, LATITUDE_THEME_HEADER},
+    constants::{DEFAULT_PAGE_TITLE, LATITUDE_THEME_COOKIE, LATITUDE_THEME_HEADER},
     html as html_page,
     response::ApiError,
 };
@@ -206,6 +206,7 @@ pub(super) fn page_theme_from_headers(headers: &HeaderMap) -> Option<&'static st
         .get(LATITUDE_THEME_HEADER)
         .and_then(|value| value.to_str().ok())
         .and_then(clean_page_theme)
+        .or_else(|| page_theme_from_cookie_header(headers))
 }
 
 pub(super) fn clean_page_theme(theme: &str) -> Option<&'static str> {
@@ -214,6 +215,19 @@ pub(super) fn clean_page_theme(theme: &str) -> Option<&'static str> {
         "dark" => Some("dark"),
         _ => None,
     }
+}
+
+fn page_theme_from_cookie_header(headers: &HeaderMap) -> Option<&'static str> {
+    let cookie = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|value| value.to_str().ok())?;
+
+    cookie.split(';').find_map(|part| {
+        let (name, value) = part.trim().split_once('=')?;
+        (name == LATITUDE_THEME_COOKIE)
+            .then(|| clean_page_theme(value))
+            .flatten()
+    })
 }
 
 fn render_markdown(content: &str) -> String {
@@ -271,8 +285,10 @@ fn wrap_page_document(
         html! {
             @if let Some(shell) = shell {
                 header class="latitude-page-header" {
-                    a href=(format!("/{}", shell.project_name)) { "Back to project" }
-                    p class="latitude-page-hostname" { (shell.project_name) " on " (device_hostname) }
+                    div class="latitude-page-header-copy" {
+                        a href=(format!("/{}", shell.project_name)) { "Back to project" }
+                        p class="latitude-page-hostname" { (shell.project_name) " on " (device_hostname) }
+                    }
                 }
             }
             main class="latitude-page" {

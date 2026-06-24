@@ -15,13 +15,15 @@ use crate::{
         ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig, decode_page_binary_content,
         is_binary_document_media_type,
     },
+    desktop::desktop_info_response,
     state::AppState,
 };
 
 use super::super::{
     auth::{public_auth_challenge, public_request_is_authenticated, request_bearer_token},
     constants::{
-        AUTH_COOKIE_NAME, DIFF_ROUTE_SEGMENT, MAX_TERMINAL_COMMAND_BYTES, TERMINAL_ROUTE_SEGMENT,
+        AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, MAX_TERMINAL_COMMAND_BYTES,
+        PUBLIC_ROOT_DESKTOP_WS_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     git::{GitActionResponse, collect_project_diff, handle_git_action_request},
     page::{page_theme_from_headers, render_project_page_content},
@@ -31,7 +33,7 @@ use super::super::{
     },
     render::{
         render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_root_terminal, render_server_home,
+        render_project_terminal, render_root_desktop, render_root_terminal, render_server_home,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
@@ -57,6 +59,10 @@ pub(in crate::server) async fn public_entry(
 
     if let Some(remainder) = root_terminal_remainder(&original_path) {
         return serve_root_terminal(req, remainder, &device_hostname).await;
+    }
+
+    if let Some(remainder) = root_desktop_remainder(&original_path) {
+        return serve_root_desktop(req, &state, &config, remainder, &device_hostname).await;
     }
 
     let Some(public_path) = split_project_path(&original_path) else {
@@ -583,6 +589,54 @@ async fn serve_root_terminal(
     )
 }
 
+async fn serve_root_desktop(
+    req: Request<Body>,
+    state: &AppState,
+    config: &LatitudeConfig,
+    remainder: &str,
+    device_hostname: &str,
+) -> Response<Body> {
+    let method = req.method().clone();
+    if method != Method::GET && method != Method::HEAD {
+        return plain_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "desktop viewers support GET and HEAD\n",
+        );
+    }
+
+    if remainder != "/" {
+        return plain_response(
+            StatusCode::NOT_FOUND,
+            "desktop viewers only serve one document\n",
+        );
+    }
+
+    if !config.desktop.enabled {
+        return plain_response(StatusCode::NOT_FOUND, "desktop is not enabled\n");
+    }
+
+    let target = match state.desktop_manager().target_for(&config.desktop).await {
+        Ok(target) => target,
+        Err(error) => {
+            return plain_response(
+                StatusCode::BAD_GATEWAY,
+                format!("desktop target could not be prepared: {error}\n"),
+            );
+        }
+    };
+
+    let websocket_token = request_bearer_token(&req);
+    let info = desktop_info_response(
+        &config.desktop,
+        &target,
+        PUBLIC_ROOT_DESKTOP_WS_PATH.to_string(),
+    );
+    html_response(
+        &method,
+        render_root_desktop(&info, websocket_token.as_deref(), device_hostname),
+    )
+}
+
 async fn serve_server_home(
     req: Request<Body>,
     config: &LatitudeConfig,
@@ -606,6 +660,20 @@ fn root_terminal_remainder(path: &str) -> Option<&str> {
 
     let root_terminal_prefix = format!("{root_terminal_path}/");
     path.strip_prefix(&root_terminal_prefix).map(
+        |remainder| {
+            if remainder.is_empty() { "/" } else { remainder }
+        },
+    )
+}
+
+fn root_desktop_remainder(path: &str) -> Option<&str> {
+    let root_desktop_path = format!("/{DESKTOP_ROUTE_SEGMENT}");
+    if path == root_desktop_path {
+        return Some("/");
+    }
+
+    let root_desktop_prefix = format!("{root_desktop_path}/");
+    path.strip_prefix(&root_desktop_prefix).map(
         |remainder| {
             if remainder.is_empty() { "/" } else { remainder }
         },

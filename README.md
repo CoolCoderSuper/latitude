@@ -20,6 +20,16 @@ cargo run -- --config latitude.json
 
 Open `http://127.0.0.1:8080/` and sign in with the configured public password. The example config uses `test`; change it before exposing Latitude outside your machine.
 
+## Desktop VNC
+
+Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.enabled` is set to `true`.
+
+Use `desktop.mode: "external"` to bridge to an already-running VNC server. The default external target is `127.0.0.1:5900`, view-only in the noVNC client, and non-loopback VNC hosts are rejected unless `allow_non_loopback` is explicitly enabled.
+
+Use `desktop.mode: "managed"` on Windows to let Latitude start a vendored UltraVNC helper on demand. Run `.\init-ultravnc.ps1` from the repository root to download UltraVNC into `tools/ultravnc/`, or point `desktop.managed_executable` at another helper. Latitude writes an `ultravnc.ini` beside the executable, starts `winvnc.exe -multi -run`, binds it to a random loopback-only port, disables UltraVNC password auth, and relies on Latitude's public auth plus the local-only listener.
+
+UltraVNC is GPL software. Keep its license and source-offer materials with any redistributed helper bundle; Latitude's MIT source stays separate from the helper process.
+
 ## Agent Setup
 
 Agents can configure Latitude for you.

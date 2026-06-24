@@ -34,7 +34,8 @@ use super::{
     },
     models::{
         PublicLoginPayload, PublicLoginResponse, PublicProjectListResponse, PublicSessionResponse,
-        public_project_detail, public_project_summary, public_root_terminal_link,
+        public_project_detail, public_project_summary, public_root_desktop_link,
+        public_root_terminal_link,
     },
 };
 
@@ -98,6 +99,9 @@ pub(in crate::server) async fn public_api_session(
         authenticated,
         projects_href: authenticated.then(|| PUBLIC_API_PROJECTS_PATH.to_string()),
         root_terminal: authenticated.then(public_root_terminal_link),
+        root_desktop: authenticated
+            .then(|| public_root_desktop_link(&config.desktop))
+            .flatten(),
         device_hostname: state.device_hostname().to_string(),
     })
 }
@@ -129,6 +133,7 @@ pub(in crate::server) async fn public_api_login(
             max_age_seconds: AUTH_COOKIE_MAX_AGE_SECONDS,
             projects_href: PUBLIC_API_PROJECTS_PATH.to_string(),
             root_terminal: public_root_terminal_link(),
+            root_desktop: public_root_desktop_link(&config.desktop),
             device_hostname: state.device_hostname().to_string(),
         }),
     ))
@@ -153,6 +158,7 @@ pub(in crate::server) async fn public_api_list_projects(
     Json(PublicProjectListResponse {
         device_hostname: state.device_hostname().to_string(),
         root_terminal: public_root_terminal_link(),
+        root_desktop: public_root_desktop_link(&config.desktop),
         projects,
     })
     .into_response()

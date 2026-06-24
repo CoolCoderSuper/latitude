@@ -8,21 +8,29 @@ use axum::{
 
 use crate::{
     config::{
-        ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig,
-        decode_page_binary_content, encode_page_binary_content,
+        ApplicationConfig, ApplicationTarget, DesktopConfig, DesktopMode, LatitudeConfig,
+        PageFormat, ProjectConfig, decode_page_binary_content, encode_page_binary_content,
     },
+    desktop::DesktopInfoResponse,
     state::AppState,
 };
 
 use super::{
+    assets::{
+        AUTH_PAGE_STYLE, COMMON_THEME_STYLE, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_STYLE, PAGE_STYLE,
+        PROJECT_HOME_STYLE, TERMINAL_VIEWER_STYLE,
+    },
     auth::{clean_next_path, public_password_matches, public_request_is_authenticated},
-    constants::{AUTH_COOKIE_NAME, LOGIN_PATH},
+    constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
         parse_git_action_form, parse_porcelain_status, parse_public_git_action_payload,
         public_diff_response,
     },
-    page::{parse_page_payload, render_page_content, render_project_page_content},
+    page::{
+        page_theme_from_headers, parse_page_payload, render_page_content,
+        render_project_page_content,
+    },
     paths::{
         ProjectPath, display_path, filtered_cookie_header, join_upstream_url, resolve_project_path,
         sanitized_relative_path, split_project_path,
@@ -31,7 +39,8 @@ use super::{
     render::{
         diff_line_class, highlight_diff_lines, render_diff_code_output,
         render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_root_terminal, render_server_home, syntax_name_for_path,
+        render_project_terminal, render_root_desktop, render_root_terminal, render_server_home,
+        syntax_name_for_path,
     },
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
@@ -160,6 +169,46 @@ fn matches_public_passwords_exactly() {
 }
 
 #[test]
+fn reads_page_theme_from_cookie() {
+    let req = Request::builder()
+        .header(header::COOKIE, format!("{LATITUDE_THEME_COOKIE}=dark"))
+        .body(Body::empty())
+        .unwrap();
+
+    assert_eq!(page_theme_from_headers(req.headers()), Some("dark"));
+}
+
+#[test]
+fn generated_theme_assets_do_not_follow_system_color_scheme() {
+    let styles = [
+        ("auth", AUTH_PAGE_STYLE),
+        ("project home", PROJECT_HOME_STYLE),
+        ("diff viewer", DIFF_VIEWER_STYLE),
+        ("terminal viewer", TERMINAL_VIEWER_STYLE),
+        ("desktop viewer", DESKTOP_VIEWER_STYLE),
+        ("page", PAGE_STYLE),
+        ("common theme", COMMON_THEME_STYLE),
+    ];
+
+    for (name, style) in styles {
+        assert!(
+            !style.contains("prefers-color-scheme"),
+            "{name} style should use the Latitude theme toggle, not system color scheme"
+        );
+        assert!(
+            !style.contains("color-scheme: light dark"),
+            "{name} style should not opt back into automatic system theming"
+        );
+    }
+
+    let rendered = render_server_home(&LatitudeConfig::default(), TEST_HOSTNAME);
+    assert!(!rendered.contains("prefers-color-scheme"));
+    assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
+    assert!(!rendered.contains("__LATITUDE_THEME_COOKIE__"));
+    assert!(rendered.contains("var cookieName = \"latitude_theme\";"));
+}
+
+#[test]
 fn joins_upstream_url_with_query() {
     let joined = join_upstream_url("http://127.0.0.1:3000", "/hello", Some("a=1")).unwrap();
     assert_eq!(joined, "http://127.0.0.1:3000/hello?a=1");
@@ -238,6 +287,7 @@ fn renders_markdown_as_html_document() {
 
     assert!(rendered.contains("<html lang=\"en\" data-latitude-theme=\"dark\">"));
     assert!(rendered.contains("<title>Agent Report - test-host</title>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
     assert!(rendered.contains("<h1>Agent Report</h1>"));
     assert!(rendered.contains("<li>Done</li>"));
 }
@@ -258,6 +308,9 @@ fn renders_project_markdown_document_with_back_to_project_shell() {
     assert!(rendered.contains("<title>Agent Report - test-host</title>"));
     assert!(rendered.contains("href=\"/demo\">Back to project</a>"));
     assert!(rendered.contains("<p class=\"latitude-page-hostname\">demo on test-host</p>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
+    assert!(!rendered.contains("data-latitude-theme-switcher"));
+    assert!(!rendered.contains("data-latitude-theme-button"));
     assert!(rendered.contains("<h1>Agent Report</h1>"));
 }
 
@@ -855,6 +908,7 @@ fn renders_project_terminal_page() {
     let rendered = render_project_terminal(&project, &info, Some("signed-token"), TEST_HOSTNAME);
 
     assert!(rendered.contains("<title>demo terminal - Latitude - test-host</title>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
     assert!(rendered.contains("<p>demo on test-host</p>"));
     assert!(rendered.contains("data-terminal-workspace"));
     assert!(
@@ -881,12 +935,43 @@ fn renders_root_terminal_page() {
     let rendered = render_root_terminal(&info, Some("signed-token"), TEST_HOSTNAME);
 
     assert!(rendered.contains("<title>Root terminal - Latitude - test-host</title>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
     assert!(rendered.contains("<h1>Root Terminal</h1>"));
     assert!(rendered.contains("<p>User directory on test-host</p>"));
     assert!(rendered.contains("data-sessions-path=\"/__latitude/api/terminal/sessions\""));
     assert!(rendered.contains("data-ws-path=\"/_terminal/ws\""));
     assert!(rendered.contains("data-ws-token=\"signed-token\""));
     assert!(rendered.contains("C:/Users/tester"));
+}
+
+#[test]
+fn renders_root_desktop_page() {
+    let info = DesktopInfoResponse {
+        label: "Desktop".to_string(),
+        enabled: true,
+        mode: DesktopMode::External,
+        managed: false,
+        host: "127.0.0.1".to_string(),
+        port: 5900,
+        view_only: true,
+        websocket_href: "/_desktop/ws".to_string(),
+        screens: Vec::new(),
+    };
+    let rendered = render_root_desktop(&info, Some("signed-token"), TEST_HOSTNAME);
+
+    assert!(rendered.contains("<title>Desktop - Latitude - test-host</title>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
+    assert!(rendered.contains("<h1>Desktop</h1>"));
+    assert!(rendered.contains("<p>Desktop on test-host</p>"));
+    assert!(rendered.contains("data-desktop-workspace"));
+    assert!(rendered.contains("data-desktop-screens"));
+    assert!(rendered.contains("data-desktop-scale"));
+    assert!(rendered.contains("data-desktop-fullscreen"));
+    assert!(rendered.contains("data-ws-path=\"/_desktop/ws\""));
+    assert!(rendered.contains("data-ws-token=\"signed-token\""));
+    assert!(rendered.contains("data-view-only=\"true\""));
+    assert!(rendered.contains("data-screen-layout=\"[]\""));
+    assert!(rendered.contains("@novnc/novnc@1.7.0/core/rfb.js"));
 }
 
 #[tokio::test]
@@ -915,6 +1000,55 @@ async fn serves_root_terminal_viewer() {
     assert!(rendered.contains("<h1>Root Terminal</h1>"));
     assert!(rendered.contains("data-sessions-path=\"/__latitude/api/terminal/sessions\""));
     assert!(rendered.contains("data-ws-path=\"/_terminal/ws\""));
+}
+
+#[tokio::test]
+async fn serves_root_desktop_viewer_when_enabled() {
+    let config = LatitudeConfig {
+        desktop: DesktopConfig {
+            enabled: true,
+            ..DesktopConfig::default()
+        },
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/_desktop")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("<h1>Desktop</h1>"));
+    assert!(rendered.contains("data-desktop-workspace"));
+    assert!(rendered.contains("data-ws-path=\"/_desktop/ws\""));
+}
+
+#[tokio::test]
+async fn root_desktop_viewer_returns_not_found_when_disabled() {
+    let config = LatitudeConfig::default();
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .uri("/_desktop")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[test]
@@ -1133,6 +1267,8 @@ fn renders_server_home_with_enabled_projects() {
     );
 
     assert!(rendered.contains("<title>Latitude Projects - test-host</title>"));
+    assert!(rendered.contains("data-latitude-theme-toggle"));
+    assert!(rendered.contains("<header><h1>Latitude</h1>"));
     assert!(rendered.contains("Available projects on test-host"));
     assert!(rendered.contains("href=\"/_terminal\""));
     assert!(rendered.contains("Root Terminal"));
@@ -1140,6 +1276,24 @@ fn renders_server_home_with_enabled_projects() {
     assert!(rendered.contains("href=\"/mock\""));
     assert!(rendered.contains("1 deployment"));
     assert!(!rendered.contains("href=\"/hidden\""));
+}
+
+#[test]
+fn renders_server_home_with_enabled_desktop() {
+    let rendered = render_server_home(
+        &LatitudeConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                ..DesktopConfig::default()
+            },
+            ..LatitudeConfig::default()
+        },
+        TEST_HOSTNAME,
+    );
+
+    assert!(rendered.contains("href=\"/_desktop\""));
+    assert!(rendered.contains("Desktop"));
+    assert!(rendered.contains("View the desktop over VNC"));
 }
 
 #[test]

@@ -99,6 +99,53 @@ if (workspace) {
     (socket.readyState === WebSocket.OPEN ||
       socket.readyState === WebSocket.CONNECTING);
 
+  const terminalCssValue = (styles, name, fallback) =>
+    styles.getPropertyValue(name).trim() || fallback;
+
+  const terminalTheme = () => {
+    const styles = window.getComputedStyle(workspace);
+    return {
+      background: terminalCssValue(styles, '--terminal-xterm-bg', '#101514'),
+      foreground: terminalCssValue(styles, '--terminal-xterm-fg', '#edf4f1'),
+      cursor: terminalCssValue(styles, '--terminal-xterm-cursor', '#2aa79c'),
+      selectionBackground: terminalCssValue(styles, '--terminal-xterm-selection', '#2e3936'),
+      black: terminalCssValue(styles, '--terminal-xterm-black', '#101514'),
+      red: terminalCssValue(styles, '--terminal-xterm-red', '#ff9d87'),
+      green: terminalCssValue(styles, '--terminal-xterm-green', '#8fe0ad'),
+      yellow: terminalCssValue(styles, '--terminal-xterm-yellow', '#e1b95a'),
+      blue: terminalCssValue(styles, '--terminal-xterm-blue', '#9ed2ff'),
+      magenta: terminalCssValue(styles, '--terminal-xterm-magenta', '#c9b6ff'),
+      cyan: terminalCssValue(styles, '--terminal-xterm-cyan', '#73d7e7'),
+      white: terminalCssValue(styles, '--terminal-xterm-white', '#edf4f1'),
+      brightBlack: terminalCssValue(styles, '--terminal-xterm-bright-black', '#8f9b97'),
+      brightRed: terminalCssValue(styles, '--terminal-xterm-bright-red', '#ffd0ca'),
+      brightGreen: terminalCssValue(styles, '--terminal-xterm-bright-green', '#c8f2d5'),
+      brightYellow: terminalCssValue(styles, '--terminal-xterm-bright-yellow', '#ffd98b'),
+      brightBlue: terminalCssValue(styles, '--terminal-xterm-bright-blue', '#c8e4ff'),
+      brightMagenta: terminalCssValue(styles, '--terminal-xterm-bright-magenta', '#e0d6ff'),
+      brightCyan: terminalCssValue(styles, '--terminal-xterm-bright-cyan', '#bdf4fb'),
+      brightWhite: terminalCssValue(styles, '--terminal-xterm-bright-white', '#ffffff'),
+    };
+  };
+
+  const applyTerminalTheme = (terminal) => {
+    const theme = terminalTheme();
+    if (terminal.options) {
+      terminal.options.theme = theme;
+    } else if (typeof terminal.setOption === 'function') {
+      terminal.setOption('theme', theme);
+    }
+    if (typeof terminal.refresh === 'function') {
+      terminal.refresh(0, Math.max(0, terminal.rows - 1));
+    }
+  };
+
+  const applyTerminalThemes = () => {
+    terminalControllers.forEach((controller) => {
+      applyTerminalTheme(controller.terminal);
+    });
+  };
+
   const terminalOptions = () => ({
     allowProposedApi: false,
     convertEol: true,
@@ -108,28 +155,7 @@ if (workspace) {
     fontSize: window.matchMedia('(max-width: 720px)').matches ? 12 : 13,
     lineHeight: 1.2,
     scrollback: 5000,
-    theme: {
-      background: '#101514',
-      foreground: '#edf4f1',
-      cursor: '#2aa79c',
-      selectionBackground: '#2e3936',
-      black: '#101514',
-      red: '#ff9d87',
-      green: '#8fe0ad',
-      yellow: '#e1b95a',
-      blue: '#9ed2ff',
-      magenta: '#c9b6ff',
-      cyan: '#73d7e7',
-      white: '#edf4f1',
-      brightBlack: '#8f9b97',
-      brightRed: '#ffd0ca',
-      brightGreen: '#c8f2d5',
-      brightYellow: '#ffd98b',
-      brightBlue: '#c8e4ff',
-      brightMagenta: '#e0d6ff',
-      brightCyan: '#bdf4fb',
-      brightWhite: '#ffffff',
-    },
+    theme: terminalTheme(),
   });
 
   const createTerminalController = (session) => {
@@ -469,6 +495,10 @@ if (workspace) {
       if (document.visibilityState === 'visible') {
         reconnectAll(false);
       }
+    });
+    new MutationObserver(applyTerminalThemes).observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-latitude-theme'],
     });
 
     loadSessions().catch((error) => {

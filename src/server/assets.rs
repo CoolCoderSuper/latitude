@@ -1,7 +1,12 @@
+pub(super) const COMMON_THEME_STYLE: &str = include_str!("assets/common-theme.css");
+pub(super) const THEME_BOOTSTRAP_SCRIPT: &str = include_str!("assets/theme-bootstrap.js");
+pub(super) const THEME_TOGGLE_SCRIPT: &str = include_str!("assets/theme-toggle.js");
 pub(super) const AUTH_PAGE_STYLE: &str = include_str!("assets/auth.css");
 pub(super) const PROJECT_HOME_STYLE: &str = include_str!("assets/project-home.css");
 pub(super) const DIFF_VIEWER_STYLE: &str = include_str!("assets/diff-viewer.css");
 pub(super) const DIFF_VIEWER_SCRIPT: &str = include_str!("assets/diff-viewer.js");
 pub(super) const TERMINAL_VIEWER_STYLE: &str = include_str!("assets/terminal-viewer.css");
 pub(super) const TERMINAL_VIEWER_SCRIPT: &str = include_str!("assets/terminal-viewer.js");
+pub(super) const DESKTOP_VIEWER_STYLE: &str = include_str!("assets/desktop-viewer.css");
+pub(super) const DESKTOP_VIEWER_SCRIPT: &str = include_str!("assets/desktop-viewer.js");
 pub(super) const PAGE_STYLE: &str = include_str!("assets/page.css");

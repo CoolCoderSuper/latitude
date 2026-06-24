@@ -1,0 +1,358 @@
+:root {
+  color-scheme: light;
+  --desktop-page-bg: #f4f7f6;
+  --desktop-page-text: #1c2433;
+  --desktop-heading: #18201f;
+  --desktop-muted: #52615e;
+  --desktop-accent: #0f766e;
+  --desktop-header-border: #d7dfdc;
+  --desktop-header-bg: #fff;
+  --desktop-workspace-border: #c9d6d2;
+  --desktop-workspace-bg: #f8fbfa;
+  --desktop-toolbar-border: #d7dfdc;
+  --desktop-toolbar-bg: #eef5f3;
+  --desktop-mode-border: #9fd5bd;
+  --desktop-mode-text: #14532d;
+  --desktop-mode-bg: rgba(220, 252, 231, 0.82);
+  --desktop-control-border: #bfd0cb;
+  --desktop-control-text: #334155;
+  --desktop-control-bg: #fff;
+  --desktop-control-hover-text: #0f766e;
+  --desktop-control-hover-bg: #e5f1ee;
+  --desktop-active-bg: #0f766e;
+  --desktop-active-text: #fff;
+  --desktop-status: #14532d;
+  --desktop-status-error: #991b1b;
+  --desktop-frame-bg: #fbfdfc;
+  --desktop-credential-border: #bfd0cb;
+  --desktop-credential-bg: rgba(255, 255, 255, 0.96);
+  --desktop-credential-label: #334155;
+  --desktop-credential-input-bg: #fff;
+  --desktop-credential-input-text: #1c2433;
+  --desktop-credential-shadow: rgba(15, 23, 42, 0.16);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--desktop-page-bg);
+  color: var(--desktop-page-text);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+main {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  padding: 12px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--desktop-header-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--desktop-header-bg);
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+h1 {
+  color: var(--desktop-heading);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+p {
+  color: var(--desktop-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+a {
+  color: var(--desktop-accent);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.desktop-target-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  text-align: right;
+}
+
+.desktop-workspace {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  border: 1px solid var(--desktop-workspace-border);
+  border-radius: 8px;
+  background: var(--desktop-workspace-bg);
+}
+
+.desktop-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  border-bottom: 1px solid var(--desktop-toolbar-border);
+  padding: 8px;
+  background: var(--desktop-toolbar-bg);
+}
+
+.desktop-mode {
+  flex: 0 0 auto;
+  border: 1px solid var(--desktop-mode-border);
+  border-radius: 8px;
+  padding: 5px 8px;
+  color: var(--desktop-mode-text);
+  background: var(--desktop-mode-bg);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.desktop-screen-switcher {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--desktop-control-border);
+  border-radius: 8px;
+  background: var(--desktop-control-bg);
+}
+
+.desktop-screen-switcher[hidden] {
+  display: none;
+}
+
+.desktop-screen-switcher button {
+  min-width: 34px;
+  min-height: 30px;
+  border: 0;
+  border-right: 1px solid var(--desktop-control-border);
+  padding: 0 9px;
+  color: var(--desktop-control-text);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.desktop-screen-switcher button:last-child {
+  border-right: 0;
+}
+
+.desktop-screen-switcher button:hover {
+  color: var(--desktop-control-hover-text);
+  background: var(--desktop-control-hover-bg);
+}
+
+.desktop-screen-switcher button.active {
+  color: var(--desktop-active-text);
+  background: var(--desktop-active-bg);
+}
+
+.desktop-control-button {
+  flex: 0 0 auto;
+  min-width: 42px;
+  min-height: 30px;
+  border: 1px solid var(--desktop-control-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--desktop-control-text);
+  background: var(--desktop-control-bg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.desktop-control-button:hover {
+  color: var(--desktop-control-hover-text);
+  background: var(--desktop-control-hover-bg);
+}
+
+.desktop-control-button.active {
+  border-color: var(--desktop-active-bg);
+  color: var(--desktop-active-text);
+  background: var(--desktop-active-bg);
+}
+
+.desktop-status {
+  margin-left: auto;
+  color: var(--desktop-status);
+  font-size: 0.8rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.desktop-status.error {
+  color: var(--desktop-status-error);
+}
+
+.desktop-frame {
+  overflow: hidden;
+  position: relative;
+  min-height: 0;
+  background: var(--desktop-frame-bg);
+}
+
+.desktop-target {
+  width: 100%;
+  height: 100%;
+  background: var(--desktop-frame-bg);
+}
+
+.desktop-workspace:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+}
+
+.desktop-target:focus {
+  outline: none;
+}
+
+.desktop-credentials {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  display: grid;
+  gap: 8px;
+  width: min(320px, calc(100% - 28px));
+  border: 1px solid var(--desktop-credential-border);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--desktop-credential-bg);
+  box-shadow: 0 16px 40px var(--desktop-credential-shadow);
+}
+
+.desktop-credentials[hidden] {
+  display: none;
+}
+
+.desktop-credentials label {
+  display: grid;
+  gap: 5px;
+  color: var(--desktop-credential-label);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.desktop-credentials input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--desktop-credential-border);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--desktop-credential-input-text);
+  background: var(--desktop-credential-input-bg);
+  font: inherit;
+}
+
+.desktop-credentials button {
+  min-height: 38px;
+  border: 1px solid var(--desktop-active-bg);
+  border-radius: 8px;
+  color: var(--desktop-active-text);
+  background: var(--desktop-active-bg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+}
+
+.desktop-credentials button:hover {
+  filter: brightness(1.08);
+}
+
+:root[data-latitude-theme="dark"] {
+  --desktop-page-bg: #101514;
+  --desktop-page-text: #edf4f1;
+  --desktop-heading: #edf4f1;
+  --desktop-muted: #aeb9c7;
+  --desktop-accent: #2aa79c;
+  --desktop-header-border: #2e3936;
+  --desktop-header-bg: #171d1b;
+  --desktop-workspace-border: #1b2624;
+  --desktop-workspace-bg: #101514;
+  --desktop-toolbar-border: #2e3936;
+  --desktop-toolbar-bg: #171d1b;
+  --desktop-mode-border: #367064;
+  --desktop-mode-text: #bbf7d0;
+  --desktop-mode-bg: rgba(18, 52, 33, 0.82);
+  --desktop-control-border: #33413d;
+  --desktop-control-text: #aeb9c7;
+  --desktop-control-bg: #101514;
+  --desktop-control-hover-text: #edf4f1;
+  --desktop-control-hover-bg: #1f2926;
+  --desktop-active-bg: #2aa79c;
+  --desktop-active-text: #061413;
+  --desktop-status: #8fe0ad;
+  --desktop-status-error: #ffb3a7;
+  --desktop-frame-bg: #050505;
+  --desktop-credential-border: #33413d;
+  --desktop-credential-bg: rgba(16, 21, 20, 0.96);
+  --desktop-credential-label: #aeb9c7;
+  --desktop-credential-input-bg: #101514;
+  --desktop-credential-input-text: #edf4f1;
+  --desktop-credential-shadow: rgba(0, 0, 0, 0.35);
+}
+
+@media (max-width: 720px) {
+  main {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  header {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 10px;
+  }
+
+  .desktop-target-label {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .desktop-toolbar {
+    gap: 8px;
+  }
+
+  .desktop-mode {
+    display: none;
+  }
+
+  .desktop-screen-switcher button {
+    min-width: 32px;
+    padding: 0 8px;
+  }
+
+  .desktop-control-button {
+    min-width: 38px;
+    padding: 0 8px;
+  }
+}

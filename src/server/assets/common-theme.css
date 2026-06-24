@@ -1,0 +1,79 @@
+.latitude-theme-toggle {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 1000;
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  box-sizing: border-box;
+  border: 1px solid #b7c1cf;
+  border-radius: 8px;
+  padding: 0;
+  color: #1c2433;
+  background: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
+
+.latitude-theme-toggle:hover {
+  border-color: #0f766e;
+  color: #0f766e;
+}
+
+.latitude-theme-header {
+  box-sizing: border-box;
+  position: relative;
+  padding-right: max(58px, env(safe-area-inset-right));
+}
+
+.latitude-theme-header > .latitude-theme-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  box-shadow: none;
+}
+
+.latitude-theme-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.latitude-theme-icon-sun {
+  display: none;
+}
+
+.latitude-theme-toggle[data-latitude-theme-current="dark"] .latitude-theme-icon-moon {
+  display: none;
+}
+
+.latitude-theme-toggle[data-latitude-theme-current="dark"] .latitude-theme-icon-sun {
+  display: block;
+}
+
+:root[data-latitude-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-latitude-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-latitude-theme="dark"] .latitude-theme-toggle {
+  border-color: #2f3a4a;
+  color: #edf4f1;
+  background: #151c28;
+}
+
+:root[data-latitude-theme="dark"] .latitude-theme-toggle:hover {
+  border-color: #2aa79c;
+  color: #2aa79c;
+}

@@ -1,8 +1,53 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --terminal-page-bg: #f4f7f6;
+  --terminal-page-text: #1c2433;
+  --terminal-heading: #18201f;
+  --terminal-muted: #52615e;
+  --terminal-accent: #0f766e;
+  --terminal-header-border: #d7dfdc;
+  --terminal-header-bg: #fff;
+  --terminal-workspace-border: #c9d6d2;
+  --terminal-workspace-bg: #f8fbfa;
+  --terminal-session-border: #d7dfdc;
+  --terminal-session-bg: #eef5f3;
+  --terminal-control-border: #bfd0cb;
+  --terminal-control-bg: #fff;
+  --terminal-control-text: #1c2433;
+  --terminal-control-hover-bg: #e5f1ee;
+  --terminal-active-bg: #0f766e;
+  --terminal-active-text: #fff;
+  --terminal-stack-bg: #fbfdfc;
+  --terminal-empty: #52615e;
+  --terminal-status-border: #9fd5bd;
+  --terminal-status-text: #14532d;
+  --terminal-status-bg: rgba(220, 252, 231, 0.96);
+  --terminal-error-border: #fecdd3;
+  --terminal-error-text: #991b1b;
+  --terminal-error-bg: rgba(255, 241, 242, 0.96);
+  --terminal-xterm-bg: #fbfdfc;
+  --terminal-xterm-fg: #111827;
+  --terminal-xterm-cursor: #0f766e;
+  --terminal-xterm-selection: #cfe9e4;
+  --terminal-xterm-black: #111827;
+  --terminal-xterm-red: #b42318;
+  --terminal-xterm-green: #0f766e;
+  --terminal-xterm-yellow: #9a6700;
+  --terminal-xterm-blue: #1d4ed8;
+  --terminal-xterm-magenta: #7e22ce;
+  --terminal-xterm-cyan: #047481;
+  --terminal-xterm-white: #f8fafc;
+  --terminal-xterm-bright-black: #64748b;
+  --terminal-xterm-bright-red: #dc2626;
+  --terminal-xterm-bright-green: #16a34a;
+  --terminal-xterm-bright-yellow: #ca8a04;
+  --terminal-xterm-bright-blue: #2563eb;
+  --terminal-xterm-bright-magenta: #9333ea;
+  --terminal-xterm-bright-cyan: #0891b2;
+  --terminal-xterm-bright-white: #ffffff;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f4f7f6;
-  color: #1c2433;
+  background: var(--terminal-page-bg);
+  color: var(--terminal-page-text);
 }
 
 html,
@@ -25,10 +70,10 @@ header {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  border: 1px solid #d7dfdc;
+  border: 1px solid var(--terminal-header-border);
   border-radius: 8px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--terminal-header-bg);
 }
 
 p {
@@ -37,19 +82,19 @@ p {
 
 h1 {
   margin: 0;
-  color: #18201f;
+  color: var(--terminal-heading);
   font-size: 1rem;
   font-weight: 900;
 }
 
 p {
-  color: #52615e;
+  color: var(--terminal-muted);
   font-size: 0.86rem;
   font-weight: 700;
 }
 
 a {
-  color: #0f766e;
+  color: var(--terminal-accent);
   font-size: 0.86rem;
   font-weight: 800;
   text-decoration: none;
@@ -74,9 +119,9 @@ a:hover {
   overflow: hidden;
   position: relative;
   min-height: 0;
-  border: 1px solid #1b2624;
+  border: 1px solid var(--terminal-workspace-border);
   border-radius: 8px;
-  background: #101514;
+  background: var(--terminal-workspace-bg);
 }
 
 .terminal-session-bar {
@@ -84,9 +129,9 @@ a:hover {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  border-bottom: 1px solid #2e3936;
+  border-bottom: 1px solid var(--terminal-session-border);
   padding: 8px;
-  background: #171d1b;
+  background: var(--terminal-session-bg);
 }
 
 .terminal-session-list {
@@ -108,10 +153,10 @@ a:hover {
 .terminal-session-chip,
 .terminal-session-close,
 .terminal-new-button {
-  border: 1px solid #2e3936;
+  border: 1px solid var(--terminal-control-border);
   border-radius: 8px;
-  color: #edf4f1;
-  background: #101514;
+  color: var(--terminal-control-text);
+  background: var(--terminal-control-bg);
   cursor: pointer;
   font: inherit;
 }
@@ -128,9 +173,9 @@ a:hover {
 }
 
 .terminal-session-chip.active {
-  border-color: #2aa79c;
-  color: #061210;
-  background: #2aa79c;
+  border-color: var(--terminal-active-bg);
+  color: var(--terminal-active-text);
+  background: var(--terminal-active-bg);
 }
 
 .terminal-session-title {
@@ -153,13 +198,16 @@ a:hover {
 }
 
 .terminal-new-button {
-  border-color: #2aa79c;
-  color: #061210;
-  background: #2aa79c;
+  border-color: var(--terminal-active-bg);
+  color: var(--terminal-active-text);
+  background: var(--terminal-active-bg);
 }
 
 .terminal-session-chip:hover,
-.terminal-session-close:hover,
+.terminal-session-close:hover {
+  background: var(--terminal-control-hover-bg);
+}
+
 .terminal-new-button:hover {
   filter: brightness(1.08);
 }
@@ -174,7 +222,7 @@ a:hover {
 .terminal-stack {
   position: relative;
   min-height: 0;
-  background: #101514;
+  background: var(--terminal-stack-bg);
 }
 
 .terminal-view {
@@ -200,7 +248,7 @@ a:hover {
 
 .terminal-empty {
   padding: 28px;
-  color: #aeb9c7;
+  color: var(--terminal-empty);
   font-size: 0.9rem;
   font-weight: 800;
 }
@@ -211,19 +259,19 @@ a:hover {
   right: 12px;
   z-index: 2;
   max-width: min(420px, calc(100% - 24px));
-  border: 1px solid #367064;
+  border: 1px solid var(--terminal-status-border);
   border-radius: 8px;
   padding: 9px 12px;
-  color: #bbf7d0;
-  background: rgba(18, 52, 33, 0.96);
+  color: var(--terminal-status-text);
+  background: var(--terminal-status-bg);
   font-size: 0.84rem;
   font-weight: 800;
 }
 
 .action-status.error {
-  border-color: #7f1d1d;
-  color: #fecdd3;
-  background: rgba(63, 21, 27, 0.96);
+  border-color: var(--terminal-error-border);
+  color: var(--terminal-error-text);
+  background: var(--terminal-error-bg);
 }
 
 .action-status[hidden] {
@@ -235,27 +283,56 @@ a:hover {
 }
 
 .xterm .xterm-viewport {
+  background: var(--terminal-xterm-bg);
   overflow-y: auto;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    background: #101514;
-    color: #edf4f1;
-  }
-
-  header {
-    border-color: #2e3936;
-    background: #171d1b;
-  }
-
-  h1 {
-    color: #edf4f1;
-  }
-
-  p {
-    color: #aeb9c7;
-  }
+:root[data-latitude-theme="dark"] {
+  --terminal-page-bg: #101514;
+  --terminal-page-text: #edf4f1;
+  --terminal-heading: #edf4f1;
+  --terminal-muted: #aeb9c7;
+  --terminal-accent: #2aa79c;
+  --terminal-header-border: #2e3936;
+  --terminal-header-bg: #171d1b;
+  --terminal-workspace-border: #1b2624;
+  --terminal-workspace-bg: #101514;
+  --terminal-session-border: #2e3936;
+  --terminal-session-bg: #171d1b;
+  --terminal-control-border: #2e3936;
+  --terminal-control-bg: #101514;
+  --terminal-control-text: #edf4f1;
+  --terminal-control-hover-bg: #1f2926;
+  --terminal-active-bg: #2aa79c;
+  --terminal-active-text: #061210;
+  --terminal-stack-bg: #101514;
+  --terminal-empty: #aeb9c7;
+  --terminal-status-border: #367064;
+  --terminal-status-text: #bbf7d0;
+  --terminal-status-bg: rgba(18, 52, 33, 0.96);
+  --terminal-error-border: #7f1d1d;
+  --terminal-error-text: #fecdd3;
+  --terminal-error-bg: rgba(63, 21, 27, 0.96);
+  --terminal-xterm-bg: #101514;
+  --terminal-xterm-fg: #edf4f1;
+  --terminal-xterm-cursor: #2aa79c;
+  --terminal-xterm-selection: #2e3936;
+  --terminal-xterm-black: #101514;
+  --terminal-xterm-red: #ff9d87;
+  --terminal-xterm-green: #8fe0ad;
+  --terminal-xterm-yellow: #e1b95a;
+  --terminal-xterm-blue: #9ed2ff;
+  --terminal-xterm-magenta: #c9b6ff;
+  --terminal-xterm-cyan: #73d7e7;
+  --terminal-xterm-white: #edf4f1;
+  --terminal-xterm-bright-black: #8f9b97;
+  --terminal-xterm-bright-red: #ffd0ca;
+  --terminal-xterm-bright-green: #c8f2d5;
+  --terminal-xterm-bright-yellow: #ffd98b;
+  --terminal-xterm-bright-blue: #c8e4ff;
+  --terminal-xterm-bright-magenta: #e0d6ff;
+  --terminal-xterm-bright-cyan: #bdf4fb;
+  --terminal-xterm-bright-white: #ffffff;
 }
 
 @media (max-width: 720px) {

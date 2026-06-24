@@ -25,7 +25,47 @@ pub struct LatitudeConfig {
     #[serde(default = "default_public_password")]
     pub public_password: String,
     #[serde(default)]
+    pub desktop: DesktopConfig,
+    #[serde(default)]
     pub projects: Vec<ProjectConfig>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesktopConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_desktop_label")]
+    pub label: String,
+    #[serde(default)]
+    pub mode: DesktopMode,
+    #[serde(default)]
+    pub managed_provider: ManagedDesktopProvider,
+    #[serde(default = "default_desktop_managed_executable")]
+    pub managed_executable: PathBuf,
+    #[serde(default = "default_desktop_vnc_host")]
+    pub vnc_host: String,
+    #[serde(default = "default_desktop_vnc_port")]
+    pub vnc_port: u16,
+    #[serde(default = "default_true")]
+    pub view_only: bool,
+    #[serde(default)]
+    pub allow_non_loopback: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopMode {
+    #[default]
+    External,
+    Managed,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedDesktopProvider {
+    #[default]
+    UltraVnc,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -99,7 +139,24 @@ impl Default for LatitudeConfig {
             public_bind: default_public_bind(),
             command_bind: default_command_bind(),
             public_password: default_public_password(),
+            desktop: DesktopConfig::default(),
             projects: Vec::new(),
+        }
+    }
+}
+
+impl Default for DesktopConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            label: default_desktop_label(),
+            mode: DesktopMode::default(),
+            managed_provider: ManagedDesktopProvider::default(),
+            managed_executable: default_desktop_managed_executable(),
+            vnc_host: default_desktop_vnc_host(),
+            vnc_port: default_desktop_vnc_port(),
+            view_only: true,
+            allow_non_loopback: false,
         }
     }
 }
@@ -149,6 +206,8 @@ impl LatitudeConfig {
             ));
         }
 
+        self.desktop.validate()?;
+
         let mut seen_names = HashSet::new();
         for project in &self.projects {
             project.validate()?;
@@ -158,6 +217,50 @@ impl LatitudeConfig {
                     project.name
                 )));
             }
+        }
+
+        Ok(())
+    }
+}
+
+impl DesktopConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.label.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "desktop label must not be empty when desktop is enabled".to_string(),
+            ));
+        }
+
+        if self.mode == DesktopMode::Managed {
+            if self.managed_executable.as_os_str().is_empty() {
+                return Err(ConfigError::Invalid(
+                    "desktop managed_executable must not be empty when managed desktop is enabled"
+                        .to_string(),
+                ));
+            }
+            return Ok(());
+        }
+
+        if self.vnc_host.trim().is_empty() {
+            return Err(ConfigError::Invalid(
+                "desktop vnc_host must not be empty when desktop is enabled".to_string(),
+            ));
+        }
+
+        if self.vnc_port == 0 {
+            return Err(ConfigError::Invalid(
+                "desktop vnc_port must be between 1 and 65535".to_string(),
+            ));
+        }
+
+        if !self.allow_non_loopback && !is_loopback_host(&self.vnc_host) {
+            return Err(ConfigError::Invalid(
+                "desktop vnc_host must be loopback unless allow_non_loopback is true".to_string(),
+            ));
         }
 
         Ok(())
@@ -297,6 +400,14 @@ fn is_valid_url_segment(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim();
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 pub fn is_binary_document_media_type(media_type: &str) -> bool {
     let media_type = media_type
         .split(';')
@@ -328,6 +439,22 @@ fn default_public_password() -> String {
     DEFAULT_PUBLIC_PASSWORD.to_string()
 }
 
+fn default_desktop_label() -> String {
+    "Desktop".to_string()
+}
+
+fn default_desktop_managed_executable() -> PathBuf {
+    PathBuf::from("tools/ultravnc/winvnc.exe")
+}
+
+fn default_desktop_vnc_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_desktop_vnc_port() -> u16 {
+    5900
+}
+
 fn default_index_file() -> String {
     "index.html".to_string()
 }
@@ -353,6 +480,68 @@ mod tests {
     #[test]
     fn defaults_public_password_to_test() {
         assert_eq!(LatitudeConfig::default().public_password, "test");
+    }
+
+    #[test]
+    fn desktop_defaults_to_disabled_loopback_view_only() {
+        let desktop = DesktopConfig::default();
+
+        assert!(!desktop.enabled);
+        assert_eq!(desktop.mode, DesktopMode::External);
+        assert_eq!(desktop.managed_provider, ManagedDesktopProvider::UltraVnc);
+        assert_eq!(
+            desktop.managed_executable,
+            PathBuf::from("tools/ultravnc/winvnc.exe")
+        );
+        assert_eq!(desktop.vnc_host, "127.0.0.1");
+        assert_eq!(desktop.vnc_port, 5900);
+        assert!(desktop.view_only);
+        assert!(!desktop.allow_non_loopback);
+    }
+
+    #[test]
+    fn rejects_non_loopback_desktop_host_by_default() {
+        let config = LatitudeConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                vnc_host: "192.168.1.25".to_string(),
+                ..DesktopConfig::default()
+            },
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_non_loopback_desktop_host_when_explicitly_allowed() {
+        let config = LatitudeConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                vnc_host: "192.168.1.25".to_string(),
+                allow_non_loopback: true,
+                ..DesktopConfig::default()
+            },
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn managed_desktop_skips_external_vnc_target_validation() {
+        let config = LatitudeConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                mode: DesktopMode::Managed,
+                vnc_host: String::new(),
+                vnc_port: 0,
+                ..DesktopConfig::default()
+            },
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
     }
 
     #[test]

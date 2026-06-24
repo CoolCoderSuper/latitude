@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --latitude-page-bg: #f7f8fb;
   --latitude-page-text: #1c2433;
   --latitude-page-heading: #111827;
@@ -22,9 +22,17 @@ body {
 
 .latitude-page-header {
   box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   width: min(100%, 920px);
   margin: 0 auto;
   padding: clamp(18px, 4vw, 32px) clamp(18px, 4vw, 40px) 0;
+}
+
+.latitude-page-header-copy {
+  min-width: 0;
 }
 
 .latitude-page-header a {
@@ -152,14 +160,10 @@ body {
   text-align: left;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --latitude-page-bg: #10141d;
-    --latitude-page-text: #dbe4ef;
-    --latitude-page-heading: #f8fafc;
-    --latitude-page-muted: #b8c3d1;
-    --latitude-page-inline-code-bg: #1f2937;
-    --latitude-page-border: #2f3a4a;
+@media (max-width: 620px) {
+  .latitude-page-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

@@ -1,11 +1,12 @@
 use serde::Serialize;
 
 use crate::config::{ApplicationConfig, ProjectConfig};
+use crate::desktop::{DesktopScreenResponse, detect_desktop_screens};
 
 use super::super::{
     constants::{
-        DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
-        TERMINAL_ROUTE_SEGMENT,
+        DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH,
+        PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     render::{
         deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
@@ -23,6 +24,7 @@ pub(in crate::server) struct PublicSessionResponse {
     pub(in crate::server) authenticated: bool,
     pub(in crate::server) projects_href: Option<String>,
     pub(in crate::server) root_terminal: Option<PublicRootTerminalLink>,
+    pub(in crate::server) root_desktop: Option<PublicRootDesktopLink>,
     pub(in crate::server) device_hostname: String,
 }
 
@@ -32,6 +34,7 @@ pub(in crate::server) struct PublicLoginResponse {
     pub(in crate::server) max_age_seconds: u64,
     pub(in crate::server) projects_href: String,
     pub(in crate::server) root_terminal: PublicRootTerminalLink,
+    pub(in crate::server) root_desktop: Option<PublicRootDesktopLink>,
     pub(in crate::server) device_hostname: String,
 }
 
@@ -39,6 +42,7 @@ pub(in crate::server) struct PublicLoginResponse {
 pub(in crate::server) struct PublicProjectListResponse {
     pub(in crate::server) device_hostname: String,
     pub(in crate::server) root_terminal: PublicRootTerminalLink,
+    pub(in crate::server) root_desktop: Option<PublicRootDesktopLink>,
     pub(in crate::server) projects: Vec<PublicProjectSummary>,
 }
 
@@ -89,6 +93,16 @@ pub(in crate::server) struct PublicRootTerminalLink {
 }
 
 #[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicRootDesktopLink {
+    pub(in crate::server) href: String,
+    pub(in crate::server) api_href: String,
+    pub(in crate::server) label: String,
+    pub(in crate::server) description: &'static str,
+    pub(in crate::server) view_only: bool,
+    pub(in crate::server) screens: Vec<DesktopScreenResponse>,
+}
+
+#[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicDeploymentSummary {
     pub(in crate::server) name: String,
     pub(in crate::server) href: String,
@@ -118,6 +132,19 @@ pub(in crate::server) fn public_root_terminal_link() -> PublicRootTerminalLink {
         label: "Root Terminal",
         description: "Run commands in your user directory",
     }
+}
+
+pub(in crate::server) fn public_root_desktop_link(
+    config: &crate::config::DesktopConfig,
+) -> Option<PublicRootDesktopLink> {
+    config.enabled.then(|| PublicRootDesktopLink {
+        href: format!("/{DESKTOP_ROUTE_SEGMENT}"),
+        api_href: PUBLIC_API_ROOT_DESKTOP_PATH.to_string(),
+        label: config.label.clone(),
+        description: "View the desktop over VNC",
+        view_only: config.view_only,
+        screens: detect_desktop_screens(),
+    })
 }
 
 pub(in crate::server) fn public_project_detail(
