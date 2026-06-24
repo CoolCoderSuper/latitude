@@ -90,14 +90,6 @@ a:hover {
   text-decoration: underline;
 }
 
-.desktop-target-label {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  text-align: right;
-}
-
 .desktop-workspace {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -331,11 +323,6 @@ a:hover {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 4px 10px;
-  }
-
-  .desktop-target-label {
-    grid-column: 1 / -1;
-    text-align: left;
   }
 
   .desktop-toolbar {

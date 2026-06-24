@@ -963,6 +963,7 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-latitude-theme-toggle"));
     assert!(rendered.contains("<h1>Desktop</h1>"));
     assert!(rendered.contains("<p>Desktop on test-host</p>"));
+    assert!(!rendered.contains("desktop-target-label"));
     assert!(rendered.contains("data-desktop-workspace"));
     assert!(rendered.contains("data-desktop-screens"));
     assert!(rendered.contains("data-desktop-scale"));

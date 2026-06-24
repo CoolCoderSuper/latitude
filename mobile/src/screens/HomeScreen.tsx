@@ -1,6 +1,7 @@
 import {
   ChevronRight,
   FolderOpen,
+  Monitor,
   Server,
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
@@ -15,7 +16,12 @@ import {
   ScreenHeader,
 } from '../components/ui';
 import { useRefreshControl, useTheme } from '../theme';
-import type { ProjectSummary, RootTerminalLink, SessionRecord } from '../types';
+import type {
+  ProjectSummary,
+  RootDesktopLink,
+  RootTerminalLink,
+  SessionRecord,
+} from '../types';
 import { prependDeviceHostname } from '../utils/headers';
 
 export function HomeScreen({
@@ -24,11 +30,13 @@ export function HomeScreen({
   error,
   loading,
   onManageServers,
+  onOpenRootDesktop,
   onOpenProject,
   onOpenRootTerminal,
   onRefresh,
   onSwitchServer,
   projects,
+  rootDesktop,
   rootTerminal,
   serverSessions,
 }: {
@@ -37,11 +45,13 @@ export function HomeScreen({
   error: string | null;
   loading: boolean;
   onManageServers: () => void;
+  onOpenRootDesktop: () => void;
   onOpenProject: (name: string) => void;
   onOpenRootTerminal: () => void;
   onRefresh: () => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
   projects: ProjectSummary[];
+  rootDesktop: RootDesktopLink | null;
   rootTerminal: RootTerminalLink;
   serverSessions: SessionRecord[];
 }) {
@@ -153,6 +163,24 @@ export function HomeScreen({
           </ScrollView>
         )}
         <View style={styles.list}>
+          {rootDesktop && (
+            <Pressable
+              onPress={onOpenRootDesktop}
+              style={({ pressed }) => [
+                styles.projectCard,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={styles.cardIcon}>
+                <Monitor color={colors.accent} size={21} />
+              </View>
+              <View style={styles.cardBody}>
+                <Text style={styles.cardTitle}>{rootDesktop.label}</Text>
+                <Text style={styles.cardMeta}>{rootDesktop.description}</Text>
+              </View>
+              <ChevronRight color={colors.muted} size={20} />
+            </Pressable>
+          )}
           <Pressable
             onPress={onOpenRootTerminal}
             style={({ pressed }) => [

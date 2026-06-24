@@ -551,6 +551,10 @@ function createStyles(colors: ThemeColors) {
     fontWeight: '800',
     textAlign: 'center',
   },
+  desktopPanel: {
+    flex: 1,
+    backgroundColor: '#050505',
+  },
   terminalPanel: {
     flex: 1,
     backgroundColor: colors.background,

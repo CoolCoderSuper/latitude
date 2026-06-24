@@ -192,8 +192,6 @@ pub(super) fn render_root_desktop(
     websocket_token: Option<&str>,
     device_hostname: &str,
 ) -> String {
-    let target = format!("{}:{}", info.host, info.port);
-
     html_page::document(
         &format!("{} - Latitude", info.label),
         device_hostname,
@@ -205,7 +203,6 @@ pub(super) fn render_root_desktop(
                     a href="/" { "Back to projects" }
                     h1 { (&info.label) }
                     p { "Desktop on " (device_hostname) }
-                    p class="desktop-target-label" { (&target) }
                 }
                 (desktop::desktop_workspace(info, websocket_token))
                 script type="module" { (PreEscaped(DESKTOP_VIEWER_SCRIPT)) }

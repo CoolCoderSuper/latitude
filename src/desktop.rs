@@ -136,10 +136,10 @@ fn normalize_desktop_screens(mut screens: Vec<RawDesktopScreen>) -> Vec<DesktopS
         .enumerate()
         .map(|(index, screen)| {
             let display_number = display_number(&screen.device);
-            let label = display_number
-                .map(|number| number.to_string())
-                .unwrap_or_else(|| (index + 1).to_string());
-            let title = format!("Screen {label}");
+            let label = (index + 1).to_string();
+            let title = display_number
+                .map(|number| format!("Screen {label} (DISPLAY{number})"))
+                .unwrap_or_else(|| format!("Screen {label}"));
             DesktopScreenResponse {
                 id: display_number
                     .map(|number| format!("display-{number}"))
@@ -197,10 +197,9 @@ impl ManagedDesktopManager {
         if let Some(existing) = process.as_mut()
             && existing.matches(config.managed_provider, &executable, config.view_only)
         {
-            if existing.is_running()? {
+            if existing.is_running().await? {
                 return Ok(existing.target());
             }
-            *process = None;
         }
 
         if let Some(mut existing) = process.take() {
@@ -262,8 +261,12 @@ impl ManagedDesktopProcess {
         DesktopTarget::managed(self.port)
     }
 
-    fn is_running(&mut self) -> Result<bool, DesktopError> {
-        Ok(self.child.try_wait()?.is_none())
+    async fn is_running(&mut self) -> Result<bool, DesktopError> {
+        if self.child.try_wait()?.is_none() {
+            return Ok(true);
+        }
+
+        Ok(managed_listener_is_open(self.port).await)
     }
 
     fn stop(&mut self) {
@@ -402,6 +405,17 @@ InputsEnabled={inputs_enabled}\n\
 AllowLoopback=1\n\
 LoopbackOnly=1\n\
 AuthRequired=0\n\
+AuthHosts=+127.0.0.1:+::1:\n\
+QuerySetting=0\n\
+QueryAccept=1\n\
+QueryIfNoLogon=0\n\
+ConnectPriority=1\n\
+MaxViewerSetting=0\n\
+MaxViewers=128\n\
+IdleTimeout=0\n\
+IdleInputTimeout=0\n\
+KeepAliveInterval=5\n\
+LockSetting=0\n\
 AllowShutdown=0\n\
 AllowProperties=0\n\
 DisableTrayIcon=1\n\
@@ -409,7 +423,13 @@ RemoveWallpaper=0\n\
 \n\
 [poll]\n\
 PollFullScreen=1\n\
+PollForeground=1\n\
+PollUnderCursor=1\n\
+OnlyPollConsole=0\n\
+OnlyPollOnEvent=0\n\
 EnableHook=1\n\
+EnableDriver=0\n\
+EnableVirtual=0\n\
 TurboMode=1\n"
     );
 
@@ -452,6 +472,17 @@ async fn wait_for_managed_listener(child: &mut Child, port: u16) -> Result<(), D
 
         sleep(Duration::from_millis(100)).await;
     }
+}
+
+async fn managed_listener_is_open(port: u16) -> bool {
+    matches!(
+        timeout(
+            Duration::from_millis(250),
+            TcpStream::connect(("127.0.0.1", port)),
+        )
+        .await,
+        Ok(Ok(_))
+    )
 }
 
 #[cfg(windows)]
@@ -555,10 +586,10 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_negative_monitor_coordinates_but_keeps_display_labels() {
+    fn normalizes_negative_monitor_coordinates_and_uses_friendly_labels() {
         let screens = normalize_desktop_screens(vec![
             RawDesktopScreen {
-                device: r"\\.\DISPLAY1".to_string(),
+                device: r"\\.\DISPLAY161".to_string(),
                 left: 0,
                 top: 0,
                 right: 1920,
@@ -566,7 +597,7 @@ mod tests {
                 primary: true,
             },
             RawDesktopScreen {
-                device: r"\\.\DISPLAY2".to_string(),
+                device: r"\\.\DISPLAY162".to_string(),
                 left: -1920,
                 top: 0,
                 right: 0,
@@ -582,5 +613,7 @@ mod tests {
         assert_eq!(screens[1].label, "2");
         assert_eq!(screens[1].x, 0);
         assert!(!screens[1].primary);
+        assert_eq!(screens[0].id, "display-161");
+        assert_eq!(screens[0].title, "Screen 1 (DISPLAY161)");
     }
 }

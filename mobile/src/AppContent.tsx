@@ -18,6 +18,7 @@ import type { RootStackParamList } from './navigationTypes';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { ProjectRoute } from './screens/ProjectRoute';
+import { RootDesktopScreen } from './screens/RootDesktopScreen';
 import { RootTerminalScreen } from './screens/RootTerminalScreen';
 import { ServersScreen } from './screens/ServersScreen';
 import {
@@ -32,7 +33,12 @@ import {
   saveSession,
 } from './storage';
 import { useTheme } from './theme';
-import type { ProjectSummary, RootTerminalLink, SessionRecord } from './types';
+import type {
+  ProjectSummary,
+  RootDesktopLink,
+  RootTerminalLink,
+  SessionRecord,
+} from './types';
 import { errorMessage } from './utils/errors';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -53,6 +59,7 @@ export function AppContent() {
   const [rootTerminal, setRootTerminal] = useState<RootTerminalLink>(
     DEFAULT_ROOT_TERMINAL,
   );
+  const [rootDesktop, setRootDesktop] = useState<RootDesktopLink | null>(null);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeBaseUrlRef = useRef<string | null>(null);
@@ -78,6 +85,7 @@ export function AppContent() {
       if (activeBaseUrlRef.current === session.baseUrl) {
         setProjects(response.projects);
         setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
+        setRootDesktop(response.root_desktop ?? null);
         if (
           response.device_hostname &&
           session.deviceHostname !== response.device_hostname
@@ -101,6 +109,7 @@ export function AppContent() {
         setSession(null);
         setProjects([]);
         setRootTerminal(DEFAULT_ROOT_TERMINAL);
+        setRootDesktop(null);
         setError('Sign in again to continue.');
       } else {
         setError(errorMessage(loadError));
@@ -163,6 +172,7 @@ export function AppContent() {
     setSession(nextSession);
     setProjects([]);
     setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
+    setRootDesktop(response.root_desktop ?? null);
     setError(null);
   }, []);
 
@@ -176,6 +186,7 @@ export function AppContent() {
     setRememberedBaseUrl(nextSession.baseUrl);
     setProjects([]);
     setRootTerminal(DEFAULT_ROOT_TERMINAL);
+    setRootDesktop(null);
     setError(null);
   }, []);
 
@@ -191,6 +202,7 @@ export function AppContent() {
       if (nextBaseUrl !== previousBaseUrl) {
         setProjects([]);
         setRootTerminal(DEFAULT_ROOT_TERMINAL);
+        setRootDesktop(null);
       }
       setError(null);
     },
@@ -243,9 +255,11 @@ export function AppContent() {
                 error={error}
                 loading={projectsLoading}
                 projects={projects}
+                rootDesktop={rootDesktop}
                 rootTerminal={rootTerminal}
                 serverSessions={sessions}
                 onManageServers={() => navigation.navigate('Servers')}
+                onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
                 onOpenProject={(name) => navigation.navigate('Project', { name })}
                 onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
                 onRefresh={() => {
@@ -274,6 +288,37 @@ export function AppContent() {
                 }
               />
             )}
+          </Stack.Screen>
+          <Stack.Screen name="RootDesktop">
+            {({ navigation }) =>
+              rootDesktop ? (
+                <RootDesktopScreen
+                  deviceHostname={session.deviceHostname}
+                  rootDesktop={rootDesktop}
+                  session={session}
+                  onBack={() => navigation.goBack()}
+                />
+              ) : (
+                <HomeScreen
+                  baseUrl={session.baseUrl}
+                  deviceHostname={session.deviceHostname}
+                  error="Desktop is not enabled on this server."
+                  loading={projectsLoading}
+                  projects={projects}
+                  rootDesktop={rootDesktop}
+                  rootTerminal={rootTerminal}
+                  serverSessions={sessions}
+                  onManageServers={() => navigation.navigate('Servers')}
+                  onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
+                  onOpenProject={(name) => navigation.navigate('Project', { name })}
+                  onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
+                  onRefresh={() => {
+                    void loadProjects();
+                  }}
+                  onSwitchServer={handleSwitchServer}
+                />
+              )
+            }
           </Stack.Screen>
           <Stack.Screen name="RootTerminal">
             {({ navigation }) => (

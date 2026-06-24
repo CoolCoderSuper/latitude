@@ -14,6 +14,7 @@ export type RootStackParamList = {
     initialTab?: ProjectTab;
     name: string;
   };
+  RootDesktop: undefined;
   RootTerminal: undefined;
   Servers: undefined;
   Viewer: ViewerState;

@@ -9,6 +9,7 @@ export type LoginResponse = {
   max_age_seconds: number;
   projects_href: string;
   root_terminal: RootTerminalLink;
+  root_desktop: RootDesktopLink | null;
   device_hostname: string;
 };
 
@@ -16,6 +17,7 @@ export type SessionResponse = {
   authenticated: boolean;
   projects_href: string | null;
   root_terminal: RootTerminalLink | null;
+  root_desktop: RootDesktopLink | null;
   device_hostname: string;
 };
 
@@ -30,6 +32,7 @@ export type ProjectSummary = {
 export type ProjectListResponse = {
   device_hostname: string;
   root_terminal: RootTerminalLink;
+  root_desktop: RootDesktopLink | null;
   projects: ProjectSummary[];
 };
 
@@ -60,6 +63,21 @@ export type TerminalLink = {
 
 export type ProjectTerminalLink = TerminalLink;
 export type RootTerminalLink = TerminalLink;
+export type RootDesktopLink = TerminalLink & {
+  view_only: boolean;
+  screens?: DesktopScreen[];
+};
+
+export type DesktopScreen = {
+  id: string;
+  label: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  primary: boolean;
+};
 
 export type ProjectDetail = {
   name: string;
@@ -145,6 +163,18 @@ export type TerminalInfoResponse = {
   timeout_seconds: number;
   max_output_bytes: number;
   sessions_href: string;
+};
+
+export type DesktopInfoResponse = {
+  label: string;
+  enabled: boolean;
+  mode: 'external' | 'managed';
+  managed: boolean;
+  host: string;
+  port: number;
+  view_only: boolean;
+  websocket_href: string;
+  screens: DesktopScreen[];
 };
 
 export type TerminalSessionSummary = {

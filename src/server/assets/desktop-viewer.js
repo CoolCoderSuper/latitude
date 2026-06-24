@@ -24,6 +24,7 @@ if (workspace) {
   let autoScale = true;
   let lastAppliedViewport = '';
   let layoutRetryTimers = [];
+  let fullRefreshTimers = [];
 
   const setStatus = (message, isError = false) => {
     if (!status) {
@@ -126,6 +127,32 @@ if (workspace) {
   };
 
   const displayFor = (currentRfb) => currentRfb?._display || null;
+
+  const requestFullFramebufferUpdate = () => {
+    if (!rfb?._sock || !rfb._fbWidth || !rfb._fbHeight) {
+      return;
+    }
+
+    try {
+      RFB.messages.fbUpdateRequest(rfb._sock, false, 0, 0, rfb._fbWidth, rfb._fbHeight);
+    } catch (_) {}
+  };
+
+  const clearFullRefreshTimers = () => {
+    for (const timer of fullRefreshTimers) {
+      window.clearTimeout(timer);
+    }
+    fullRefreshTimers = [];
+  };
+
+  const scheduleFullFramebufferRefresh = () => {
+    clearFullRefreshTimers();
+    requestFullFramebufferUpdate();
+
+    for (const delay of [120, 300, 700, 1400, 2400]) {
+      fullRefreshTimers.push(window.setTimeout(requestFullFramebufferUpdate, delay));
+    }
+  };
 
   const expectedScaleFor = (screen, width, height) => {
     if (!autoScale || !screen.width || !screen.height) {
@@ -409,6 +436,10 @@ if (workspace) {
     } else {
       display.scale = 1;
     }
+
+    if (force) {
+      scheduleFullFramebufferRefresh();
+    }
   };
 
   const refreshScreenOptions = () => {
@@ -454,6 +485,7 @@ if (workspace) {
 
   const stopScreenRefresh = () => {
     clearLayoutRetries();
+    clearFullRefreshTimers();
     if (screenRefreshTimer) {
       window.clearInterval(screenRefreshTimer);
       screenRefreshTimer = null;
@@ -525,6 +557,7 @@ if (workspace) {
       hideCredentials();
       setStatus('Connected');
       startScreenRefresh();
+      scheduleFullFramebufferRefresh();
       window.setTimeout(() => {
         if (rfb === nextRfb) {
           setStatus('');

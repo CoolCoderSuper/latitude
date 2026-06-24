@@ -1,4 +1,5 @@
 import type {
+  DesktopInfoResponse,
   GitActionPayload,
   GitActionResponse,
   GitDiffResponse,
@@ -117,6 +118,10 @@ export class LatitudePublicApi {
 
   async rootTerminal(): Promise<TerminalInfoResponse> {
     return this.get<TerminalInfoResponse>(`${PUBLIC_API_PREFIX}/terminal`);
+  }
+
+  async rootDesktop(): Promise<DesktopInfoResponse> {
+    return this.get<DesktopInfoResponse>(`${PUBLIC_API_PREFIX}/desktop`);
   }
 
   async runTerminalCommand(
