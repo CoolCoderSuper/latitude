@@ -5,11 +5,14 @@ export function desktopDocument(
   websocketUrl: string,
   viewOnly: boolean,
   screenLayout: DesktopScreen[] = [],
+  viewerBackground = '#050505',
 ): string {
   const labelJson = JSON.stringify(label);
   const websocketUrlJson = JSON.stringify(websocketUrl);
   const viewOnlyJson = JSON.stringify(viewOnly);
   const screenLayoutJson = JSON.stringify(screenLayout);
+  const viewerBackgroundCss = viewerBackground.replace(/[;"'<>\\]/g, '');
+  const viewerBackgroundJson = JSON.stringify(viewerBackgroundCss);
 
   return `<!doctype html>
 <html lang="en">
@@ -22,7 +25,7 @@ export function desktopDocument(
       height: 100%;
       margin: 0;
       overflow: hidden;
-      background: #050505;
+      background: ${viewerBackgroundCss};
       color: #edf4f1;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
@@ -31,306 +34,11 @@ export function desktopDocument(
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      gap: 8px;
-      padding: env(safe-area-inset-top, 0) 8px env(safe-area-inset-bottom, 0);
+      padding: 0;
       overscroll-behavior: none;
       user-select: none;
       -webkit-touch-callout: none;
       -webkit-user-select: none;
-    }
-
-    .bar {
-      box-sizing: border-box;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 8px;
-      min-height: 34px;
-      border-bottom: 1px solid #2e3936;
-      padding: 6px 2px;
-      color: #aeb9c7;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .mode {
-      border: 1px solid #367064;
-      border-radius: 8px;
-      padding: 4px 7px;
-      color: #bbf7d0;
-      background: rgba(18, 52, 33, 0.82);
-      font-size: 11px;
-      font-weight: 900;
-      white-space: nowrap;
-    }
-
-    .screens {
-      display: inline-flex;
-      flex: 0 0 auto;
-      align-items: center;
-      overflow: hidden;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      background: #101514;
-    }
-
-    .screens[hidden] {
-      display: none;
-    }
-
-    .screens button {
-      min-width: 30px;
-      min-height: 28px;
-      border: 0;
-      border-right: 1px solid #33413d;
-      padding: 0 8px;
-      color: #aeb9c7;
-      background: transparent;
-      font: inherit;
-      font-size: 11px;
-      font-weight: 900;
-    }
-
-    .screens button:last-child {
-      border-right: 0;
-    }
-
-    .screens button.active {
-      color: #061413;
-      background: #2aa79c;
-    }
-
-    .control {
-      flex: 0 0 auto;
-      min-width: 34px;
-      min-height: 28px;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      padding: 0 8px;
-      color: #aeb9c7;
-      background: #101514;
-      font: inherit;
-      font-size: 11px;
-      font-weight: 900;
-    }
-
-    .control.active {
-      border-color: #2aa79c;
-      color: #061413;
-      background: #2aa79c;
-    }
-
-    .control[hidden] {
-      display: none;
-    }
-
-    .control:disabled {
-      color: #52615e;
-      opacity: 0.62;
-    }
-
-    .zoom-controls {
-      display: inline-flex;
-      flex: 0 0 auto;
-      align-items: center;
-      overflow: hidden;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      background: #101514;
-    }
-
-    .zoom-controls .control {
-      min-width: 30px;
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-    }
-
-    .zoom-level {
-      min-width: 40px;
-      border-right: 1px solid #33413d;
-      border-left: 1px solid #33413d;
-      color: #aeb9c7;
-      font-size: 11px;
-      font-weight: 900;
-      line-height: 28px;
-      text-align: center;
-      white-space: nowrap;
-    }
-
-    .status {
-      margin-left: auto;
-      max-width: 126px;
-      overflow: hidden;
-      color: #8fe0ad;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .status.error {
-      color: #ffb3a7;
-    }
-
-    .pointer-tools {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-height: 36px;
-      overflow-x: auto;
-      padding: 0 2px 2px;
-      scrollbar-width: none;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .pointer-tools::-webkit-scrollbar {
-      display: none;
-    }
-
-    .pointer-tools[hidden] {
-      display: none;
-    }
-
-    .keyboard-panel {
-      position: fixed;
-      right: 12px;
-      bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      left: 12px;
-      z-index: 5;
-      display: grid;
-      max-height: min(430px, calc(100vh - 96px));
-      gap: 10px;
-      overflow-y: auto;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      padding: 10px;
-      background: rgba(16, 21, 20, 0.98);
-      box-shadow: 0 18px 52px rgba(0, 0, 0, 0.46);
-      box-sizing: border-box;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .keyboard-panel[hidden] {
-      display: none;
-    }
-
-    .keyboard-panel-head {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .keyboard-panel-title {
-      flex: 1 1 auto;
-      color: #edf4f1;
-      font-weight: 900;
-    }
-
-    .keyboard-tools {
-      display: grid;
-      gap: 8px;
-    }
-
-    .keyboard-group {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: stretch;
-      overflow: hidden;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      background: #101514;
-    }
-
-    .keyboard-group .control {
-      flex: 1 0 auto;
-      min-width: 52px;
-      border: 0;
-      border-right: 1px solid #33413d;
-      border-radius: 0;
-      background: transparent;
-    }
-
-    .keyboard-group .control:last-child {
-      border-right: 0;
-    }
-
-    .keyboard-input {
-      width: 100%;
-      min-height: 84px;
-      max-height: 150px;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      padding: 9px 10px;
-      color: #edf4f1;
-      background: #050505;
-      caret-color: #2aa79c;
-      box-sizing: border-box;
-      font: inherit;
-      outline: 0;
-      pointer-events: auto;
-      resize: vertical;
-    }
-
-    .keyboard-input:focus {
-      border-color: #2aa79c;
-      box-shadow: 0 0 0 2px rgba(42, 167, 156, 0.2);
-    }
-
-    .keyboard-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .keyboard-actions .keyboard-send {
-      flex: 1 1 auto;
-      min-width: 90px;
-    }
-
-    .keyboard-actions .keyboard-clear {
-      flex: 0 0 auto;
-    }
-
-    @media (min-width: 700px) {
-      .keyboard-panel {
-        right: auto;
-        left: 50%;
-        width: min(520px, calc(100vw - 24px));
-        transform: translateX(-50%);
-      }
-    }
-
-    .pointer-group {
-      display: inline-flex;
-      flex: 0 0 auto;
-      align-items: center;
-      overflow: hidden;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      background: #101514;
-    }
-
-    .pointer-group .control {
-      border: 0;
-      border-right: 1px solid #33413d;
-      border-radius: 0;
-      background: transparent;
-    }
-
-    .pointer-group .control:last-child {
-      border-right: 0;
-    }
-
-    .pointer-group .control.active {
-      color: #061413;
-      background: #2aa79c;
-    }
-
-    .mouse-button {
-      min-width: 38px;
-    }
-
-    .drag-lock {
-      min-width: 52px;
     }
 
     .desktop-stage {
@@ -344,9 +52,7 @@ export function desktopDocument(
       height: 100%;
       min-height: 0;
       overflow: hidden;
-      border: 1px solid #2e3936;
-      border-radius: 8px;
-      background: #050505;
+      background: ${viewerBackgroundCss};
       box-sizing: border-box;
       touch-action: none;
       user-select: none;
@@ -354,9 +60,16 @@ export function desktopDocument(
     }
 
     #desktop canvas {
+      background: transparent !important;
       touch-action: none;
       user-select: none;
       -webkit-user-select: none;
+    }
+
+    #desktop > div,
+    #desktop .noVNC_screen,
+    #desktop .noVNC_container {
+      background: ${viewerBackgroundCss} !important;
     }
 
     .touch-cursor {
@@ -389,147 +102,11 @@ export function desktopDocument(
     .touch-cursor[hidden] {
       display: none;
     }
-
-    .credentials {
-      position: absolute;
-      top: 48px;
-      left: 16px;
-      z-index: 3;
-      display: grid;
-      gap: 8px;
-      width: min(320px, calc(100% - 32px));
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      padding: 12px;
-      background: rgba(16, 21, 20, 0.96);
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-    }
-
-    .credentials[hidden],
-    .credentials label[hidden] {
-      display: none;
-    }
-
-    .credentials label {
-      display: grid;
-      gap: 5px;
-      color: #aeb9c7;
-      font-size: 12px;
-      font-weight: 900;
-    }
-
-    .credentials input {
-      box-sizing: border-box;
-      width: 100%;
-      min-height: 38px;
-      border: 1px solid #33413d;
-      border-radius: 8px;
-      padding: 0 10px;
-      color: #edf4f1;
-      background: #101514;
-      font: inherit;
-    }
-
-    .credentials button {
-      min-height: 38px;
-      border: 1px solid #2aa79c;
-      border-radius: 8px;
-      color: #061413;
-      background: #2aa79c;
-      font: inherit;
-      font-weight: 900;
-    }
   </style>
 </head>
 <body>
-  <div class="bar">
-    <span class="mode">${viewOnly ? 'View only' : 'Control'}</span>
-    <span class="screens" hidden aria-label="Screens"></span>
-    <button class="control scale" type="button" aria-pressed="true">Fit</button>
-    <span class="zoom-controls" role="group" aria-label="Zoom">
-      <button class="control zoom-out" type="button" aria-label="Zoom out">-</button>
-      <span class="zoom-level" aria-live="polite">100%</span>
-      <button class="control zoom-in" type="button" aria-label="Zoom in">+</button>
-    </span>
-    <button class="control keyboard-toggle" type="button" aria-pressed="false">Keys</button>
-    <button class="control fullscreen" type="button" aria-pressed="false">Full</button>
-    <span class="status">Connecting</span>
-  </div>
-  <div class="pointer-tools" hidden>
-    <span class="pointer-group" role="group" aria-label="Pointer mode">
-      <button class="control pointer-mode touchpad active" type="button" data-pointer-mode="touchpad" aria-pressed="true">Pad</button>
-      <button class="control pointer-mode direct" type="button" data-pointer-mode="direct" aria-pressed="false">Direct</button>
-    </span>
-    <span class="pointer-group" role="group" aria-label="Mouse buttons">
-      <button class="control mouse-button left active" type="button" data-mouse-button="1" aria-pressed="true">L</button>
-      <button class="control mouse-button middle" type="button" data-mouse-button="2" aria-pressed="false">M</button>
-      <button class="control mouse-button right" type="button" data-mouse-button="4" aria-pressed="false">R</button>
-      <button class="control drag-lock" type="button" aria-pressed="false">Drag</button>
-    </span>
-  </div>
-  <form class="credentials" hidden>
-    <label class="credential-user" hidden>
-      Username
-      <input type="text" autocomplete="username" />
-    </label>
-    <label class="credential-password">
-      Password
-      <input type="password" autocomplete="current-password" />
-    </label>
-    <label class="credential-target" hidden>
-      Target
-      <input type="text" />
-    </label>
-    <button type="submit">Connect</button>
-  </form>
   <div class="desktop-stage">
     <div id="desktop" tabindex="0"></div>
-    <div class="keyboard-panel" hidden role="dialog" aria-label="Keyboard">
-      <div class="keyboard-panel-head">
-        <strong class="keyboard-panel-title">Keys</strong>
-        <button class="control keyboard-close" type="button" aria-label="Close keyboard">Close</button>
-      </div>
-      <textarea class="keyboard-input" rows="3" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="text" aria-label="Text to send" placeholder="Text to send"></textarea>
-      <div class="keyboard-actions">
-        <button class="control keyboard-send active" type="button">Send</button>
-        <button class="control keyboard-clear" type="button">Clear</button>
-      </div>
-      <div class="keyboard-tools">
-        <span class="keyboard-group" role="group" aria-label="Modifier keys">
-          <button class="control" type="button" data-modifier-key="control" aria-pressed="false">Ctrl</button>
-          <button class="control" type="button" data-modifier-key="alt" aria-pressed="false">Alt</button>
-          <button class="control" type="button" data-modifier-key="shift" aria-pressed="false">Shift</button>
-          <button class="control" type="button" data-modifier-key="meta" aria-pressed="false">Win</button>
-        </span>
-        <span class="keyboard-group" role="group" aria-label="Special keys">
-          <button class="control" type="button" data-key-name="escape">Esc</button>
-          <button class="control" type="button" data-key-name="tab">Tab</button>
-          <button class="control" type="button" data-key-name="enter">Enter</button>
-          <button class="control" type="button" data-key-name="backspace">Bksp</button>
-          <button class="control" type="button" data-key-name="delete">Del</button>
-        </span>
-        <span class="keyboard-group" role="group" aria-label="Navigation keys">
-          <button class="control" type="button" data-key-name="home">Home</button>
-          <button class="control" type="button" data-key-name="end">End</button>
-          <button class="control" type="button" data-key-name="pageup">PgUp</button>
-          <button class="control" type="button" data-key-name="pagedown">PgDn</button>
-        </span>
-        <span class="keyboard-group" role="group" aria-label="Arrow keys">
-          <button class="control" type="button" data-key-name="left">Left</button>
-          <button class="control" type="button" data-key-name="up">Up</button>
-          <button class="control" type="button" data-key-name="down">Down</button>
-          <button class="control" type="button" data-key-name="right">Right</button>
-        </span>
-        <span class="keyboard-group" role="group" aria-label="Command shortcuts">
-          <button class="control" type="button" data-key-combo="ctrl-a">All</button>
-          <button class="control" type="button" data-key-combo="ctrl-c">Copy</button>
-          <button class="control" type="button" data-key-combo="ctrl-v">Paste</button>
-          <button class="control" type="button" data-key-combo="ctrl-x">Cut</button>
-          <button class="control" type="button" data-key-combo="ctrl-z">Undo</button>
-          <button class="control" type="button" data-key-combo="ctrl-alt-del">CAD</button>
-        </span>
-      </div>
-    </div>
     <div class="touch-cursor" hidden></div>
   </div>
   <script>
@@ -541,17 +118,25 @@ export function desktopDocument(
       if (window.latitudeIsBenignViewerError(event.message)) {
         return;
       }
-      var status = document.querySelector('.status');
-      if (status && !window.latitudeViewerStarted) {
-        status.textContent = event.message || 'Viewer script failed';
-        status.classList.add('error');
+      if (!window.latitudeViewerStarted && window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'desktop-state',
+          state: {
+            status: event.message || 'Viewer script failed',
+            statusIsError: true,
+          },
+        }));
       }
     });
     window.setTimeout(function () {
-      var status = document.querySelector('.status');
-      if (status && !window.latitudeViewerStarted) {
-        status.textContent = 'Viewer script failed';
-        status.classList.add('error');
+      if (!window.latitudeViewerStarted && window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'desktop-state',
+          state: {
+            status: 'Viewer script failed',
+            statusIsError: true,
+          },
+        }));
       }
     }, 3500);
   </script>
@@ -563,33 +148,10 @@ export function desktopDocument(
     const websocketUrl = ${websocketUrlJson};
     const viewOnly = ${viewOnlyJson};
     const configuredScreenLayout = ${screenLayoutJson};
+    const viewerBackground = ${viewerBackgroundJson};
     const target = document.getElementById('desktop');
-    const statusElement = document.querySelector('.status');
-    const screensElement = document.querySelector('.screens');
-    const scaleButton = document.querySelector('.scale');
-    const zoomOutButton = document.querySelector('.zoom-out');
-    const zoomInButton = document.querySelector('.zoom-in');
-    const zoomLevelElement = document.querySelector('.zoom-level');
-    const keyboardToggle = document.querySelector('.keyboard-toggle');
-    const keyboardPanel = document.querySelector('.keyboard-panel');
-    const keyboardInput = document.querySelector('.keyboard-input');
-    const keyboardCloseButton = document.querySelector('.keyboard-close');
-    const keyboardSendButton = document.querySelector('.keyboard-send');
-    const keyboardClearButton = document.querySelector('.keyboard-clear');
-    const keyboardKeyButtons = Array.from(document.querySelectorAll('[data-key-name]'));
-    const keyboardModifierButtons = Array.from(document.querySelectorAll('[data-modifier-key]'));
-    const keyboardComboButtons = Array.from(document.querySelectorAll('[data-key-combo]'));
-    const fullscreenButton = document.querySelector('.fullscreen');
-    const pointerTools = document.querySelector('.pointer-tools');
-    const pointerModeButtons = Array.from(document.querySelectorAll('[data-pointer-mode]'));
-    const mouseButtonElements = Array.from(document.querySelectorAll('[data-mouse-button]'));
-    const dragLockButton = document.querySelector('.drag-lock');
     const touchCursor = document.querySelector('.touch-cursor');
     const desktopStage = document.querySelector('.desktop-stage');
-    const credentialsElement = document.querySelector('.credentials');
-    const credentialUser = document.querySelector('.credential-user');
-    const credentialPassword = document.querySelector('.credential-password');
-    const credentialTarget = document.querySelector('.credential-target');
 
     let rfb = null;
     let reconnectTimer = null;
@@ -603,6 +165,7 @@ export function desktopDocument(
     let autoScale = true;
     let zoomLevel = 1;
     let keyboardActive = false;
+    let hasUserSelectedScreen = false;
     let lastAppliedViewport = '';
     let layoutRetryTimers = [];
     let fullRefreshTimers = [];
@@ -623,10 +186,77 @@ export function desktopDocument(
     const maxZoom = 3;
     const zoomStep = 1.25;
     const pinchZoomThreshold = 12;
+    const nativeState = {
+      ready: false,
+      connected: false,
+      status: 'Connecting',
+      statusIsError: false,
+      viewOnly,
+      autoScale,
+      zoomLevel,
+      selectedScreenId,
+      screens: [],
+      pointerMode,
+      activeMouseButton,
+      dragLocked,
+      pressedModifiers: [],
+      credentialsRequired: null,
+    };
+    let nativeStateTimer = null;
+
+    const postNativeMessage = (payload) => {
+      if (
+        !window.ReactNativeWebView ||
+        typeof window.ReactNativeWebView.postMessage !== 'function'
+      ) {
+        return;
+      }
+
+      try {
+        window.ReactNativeWebView.postMessage(JSON.stringify(payload));
+      } catch (_) {}
+    };
+
+    const flushNativeState = () => {
+      nativeStateTimer = null;
+      postNativeMessage({
+        type: 'desktop-state',
+        state: nativeState,
+      });
+    };
+
+    const updateNativeState = (patch) => {
+      Object.assign(nativeState, patch);
+      if (nativeStateTimer) {
+        return;
+      }
+
+      nativeStateTimer = window.setTimeout(flushNativeState, 0);
+    };
 
     const setStatus = (text, isError = false) => {
-      statusElement.textContent = text;
-      statusElement.classList.toggle('error', Boolean(isError));
+      updateNativeState({
+        status: text,
+        statusIsError: Boolean(isError),
+      });
+    };
+
+    const applyViewerBackground = (currentRfb = rfb) => {
+      document.documentElement.style.background = viewerBackground;
+      document.body.style.background = viewerBackground;
+      target.style.background = viewerBackground;
+
+      if (desktopStage) {
+        desktopStage.style.background = viewerBackground;
+      }
+      if (currentRfb && currentRfb._screen) {
+        currentRfb._screen.style.setProperty('background', viewerBackground, 'important');
+        currentRfb._screen.style.setProperty('background-color', viewerBackground, 'important');
+      }
+      if (currentRfb && currentRfb._canvas) {
+        currentRfb._canvas.style.setProperty('background', 'transparent', 'important');
+        currentRfb._canvas.style.setProperty('background-color', 'transparent', 'important');
+      }
     };
 
     const isBenignViewerError = (message) => {
@@ -659,36 +289,12 @@ export function desktopDocument(
     };
 
     const hideCredentials = () => {
-      credentialsElement.hidden = true;
+      updateNativeState({ credentialsRequired: null });
     };
 
     const showCredentials = (types) => {
       const required = new Set(types || ['password']);
-      credentialUser.hidden = !required.has('username');
-      credentialPassword.hidden = !required.has('password');
-      credentialTarget.hidden = !required.has('target');
-      credentialsElement.hidden = false;
-      const firstInput = credentialsElement.querySelector('label:not([hidden]) input');
-      if (firstInput) {
-        firstInput.focus();
-      }
-    };
-
-    const collectCredentials = () => {
-      const payload = {};
-      const username = credentialUser.querySelector('input').value;
-      const password = credentialPassword.querySelector('input').value;
-      const targetValue = credentialTarget.querySelector('input').value;
-      if (username) {
-        payload.username = username;
-      }
-      if (password) {
-        payload.password = password;
-      }
-      if (targetValue) {
-        payload.target = targetValue;
-      }
-      return payload;
+      updateNativeState({ credentialsRequired: Array.from(required) });
     };
 
     const scheduleReconnect = () => {
@@ -706,20 +312,11 @@ export function desktopDocument(
     };
 
     const updateScaleButton = () => {
-      scaleButton.textContent = autoScale ? 'Fit' : '1:1';
-      scaleButton.classList.toggle('active', autoScale && zoomLevel === 1);
-      scaleButton.setAttribute('aria-pressed', String(autoScale && zoomLevel === 1));
-      scaleButton.title =
-        zoomLevel > 1 || !autoScale ? 'Reset to fitted view' : 'Switch to 1:1 view';
+      updateNativeState({ autoScale });
     };
 
     const updateZoomControls = () => {
-      const roundedZoom = Math.round(zoomLevel * 100);
-      zoomLevelElement.textContent = roundedZoom + '%';
-      zoomOutButton.disabled = zoomLevel <= minZoom + 0.001;
-      zoomInButton.disabled = zoomLevel >= maxZoom - 0.001;
-      zoomOutButton.title = 'Zoom out';
-      zoomInButton.title = 'Zoom in';
+      updateNativeState({ zoomLevel });
     };
 
     const keyDefinitions = {
@@ -810,11 +407,7 @@ export function desktopDocument(
     };
 
     const updateModifierButtons = () => {
-      for (const button of keyboardModifierButtons) {
-        const active = pressedModifiers.has(button.dataset.modifierKey);
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', String(active));
-      }
+      updateNativeState({ pressedModifiers: Array.from(pressedModifiers) });
     };
 
     const releaseModifiers = () => {
@@ -845,34 +438,12 @@ export function desktopDocument(
     };
 
     const updateKeyboardControls = () => {
-      keyboardToggle.hidden = viewOnly;
-      keyboardPanel.hidden = viewOnly || !keyboardActive;
-      keyboardToggle.classList.toggle('active', keyboardActive);
-      keyboardToggle.setAttribute('aria-pressed', String(keyboardActive));
-      keyboardInput.disabled = viewOnly || !keyboardActive;
+      updateNativeState({ keyboardActive });
     };
 
-    const resetKeyboardInput = () => {
-      keyboardInput.value = '';
-    };
-
-    const focusKeyboardInput = () => {
-      if (viewOnly) {
-        return;
-      }
-
-      keyboardInput.focus({ preventScroll: true });
-      window.setTimeout(() => {
-        keyboardInput.focus({ preventScroll: true });
-      }, 40);
-    };
-
-    const setKeyboardActive = (active, focusInput = true) => {
+    const setKeyboardActive = (active) => {
       const nextActive = Boolean(active && !viewOnly);
       if (keyboardActive === nextActive) {
-        if (nextActive && focusInput) {
-          focusKeyboardInput();
-        }
         updateKeyboardControls();
         return;
       }
@@ -880,31 +451,12 @@ export function desktopDocument(
       keyboardActive = nextActive;
       if (!keyboardActive) {
         releaseModifiers();
-        keyboardInput.blur();
       }
       updateKeyboardControls();
-      if (keyboardActive && focusInput) {
-        focusKeyboardInput();
-      }
     };
 
     const pressSpecialKey = (name) => {
       pressKey(keyDefinitions[name]);
-    };
-
-    const sendKeyboardInputText = () => {
-      const value = keyboardInput.value;
-      if (!value) {
-        focusKeyboardInput();
-        return;
-      }
-      if (!canSendKeyboard()) {
-        return;
-      }
-
-      sendText(value);
-      resetKeyboardInput();
-      focusKeyboardInput();
     };
 
     const sendShortcut = (shortcut) => {
@@ -928,19 +480,6 @@ export function desktopDocument(
       for (const modifier of modifierKeys.slice().reverse()) {
         sendKeyEvent(modifier, false);
       }
-    };
-
-    const updateFullscreenButton = () => {
-      const fullscreenHost = document.documentElement;
-      if (!document.fullscreenEnabled || !fullscreenHost.requestFullscreen) {
-        fullscreenButton.hidden = true;
-        return;
-      }
-
-      const isFullscreen = document.fullscreenElement === fullscreenHost;
-      fullscreenButton.textContent = isFullscreen ? 'Exit' : 'Full';
-      fullscreenButton.classList.toggle('active', isFullscreen);
-      fullscreenButton.setAttribute('aria-pressed', String(isFullscreen));
     };
 
     const requestFullFramebufferUpdate = () => {
@@ -1108,31 +647,19 @@ export function desktopDocument(
         setPointerMode('touchpad');
       }
       activeMouseButton = buttonMask;
-      for (const button of mouseButtonElements) {
-        const active = Number(button.dataset.mouseButton) === activeMouseButton;
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', String(active));
-      }
       if (dragLocked) {
         sendPointer(activeMouseButton);
       }
+      updateNativeState({ activeMouseButton });
     };
 
     const setDragLocked = (locked) => {
       dragLocked = Boolean(locked);
-      dragLockButton.classList.toggle('active', dragLocked);
-      dragLockButton.setAttribute('aria-pressed', String(dragLocked));
       sendPointer(currentPointerMask());
+      updateNativeState({ dragLocked });
     };
 
     const updatePointerMode = () => {
-      pointerTools.hidden = viewOnly;
-      for (const button of pointerModeButtons) {
-        const active = button.dataset.pointerMode === pointerMode;
-        button.classList.toggle('active', active);
-        button.setAttribute('aria-pressed', String(active));
-      }
-
       if (rfb) {
         rfb.dragViewport = false;
         rfb.showDotCursor = pointerMode === 'direct';
@@ -1148,6 +675,7 @@ export function desktopDocument(
         touchPointer = centeredPointer();
       }
       updateTouchCursor();
+      updateNativeState({ pointerMode });
     };
 
     const setPointerMode = (nextMode) => {
@@ -1638,6 +1166,15 @@ export function desktopDocument(
       return [allScreens, ...screens];
     };
 
+    const preferredNativeScreenId = (options) => {
+      if (options.length < 2) {
+        return 'all';
+      }
+
+      const screens = options.filter((screen) => screen.id !== 'all');
+      return (screens.find((screen) => screen.primary) || screens[0] || options[0] || {}).id || 'all';
+    };
+
     const sameScreenOptions = (left, right) => {
       if (left.length !== right.length) {
         return false;
@@ -1658,28 +1195,10 @@ export function desktopDocument(
     };
 
     const renderScreenSwitcher = () => {
-      screensElement.hidden = screenOptions.length < 2;
-      screensElement.replaceChildren();
-      if (screenOptions.length < 2) {
-        return;
-      }
-
-      for (const screen of screenOptions) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = screen.label;
-        button.title = screen.title;
-        button.setAttribute('aria-label', screen.title);
-        button.classList.toggle('active', screen.id === selectedScreenId);
-        button.addEventListener('click', () => {
-          selectedScreenId = screen.id;
-          lastAppliedViewport = '';
-          renderScreenSwitcher();
-          applySelectedScreen(true);
-          scheduleLayoutRetry();
-        });
-        screensElement.appendChild(button);
-      }
+      updateNativeState({
+        screens: screenOptions,
+        selectedScreenId,
+      });
     };
 
     const selectedScreen = () =>
@@ -1772,6 +1291,7 @@ export function desktopDocument(
       if (rfb && rfb._screen) {
         rfb._screen.style.overflow = 'hidden';
       }
+      applyViewerBackground(rfb);
 
       rfb.scaleViewport = false;
       rfb.clipViewport = true;
@@ -1814,12 +1334,24 @@ export function desktopDocument(
     const refreshScreenOptions = () => {
       const nextOptions = buildScreenOptions();
       const selectedExists = nextOptions.some((screen) => screen.id === selectedScreenId);
+      let selectedChanged = false;
       if (!selectedExists) {
-        selectedScreenId = 'all';
+        selectedScreenId = preferredNativeScreenId(nextOptions);
+        hasUserSelectedScreen = false;
+        selectedChanged = true;
+      } else if (!hasUserSelectedScreen && nextOptions.length > 1) {
+        const preferredScreenId = preferredNativeScreenId(nextOptions);
+        if (selectedScreenId !== preferredScreenId) {
+          selectedScreenId = preferredScreenId;
+          selectedChanged = true;
+        }
       }
 
       if (!sameScreenOptions(screenOptions, nextOptions)) {
         screenOptions = nextOptions;
+        lastAppliedViewport = '';
+        renderScreenSwitcher();
+      } else if (selectedChanged) {
         lastAppliedViewport = '';
         renderScreenSwitcher();
       }
@@ -1869,6 +1401,7 @@ export function desktopDocument(
       }
       screenOptions = [];
       selectedScreenId = 'all';
+      hasUserSelectedScreen = false;
       lastAppliedViewport = '';
       renderScreenSwitcher();
     };
@@ -1894,7 +1427,7 @@ export function desktopDocument(
       scheduleLayoutRetry();
     };
 
-    scaleButton.addEventListener('click', () => {
+    const toggleScaleMode = () => {
       if (zoomLevel > 1 || !autoScale) {
         zoomLevel = 1;
         autoScale = true;
@@ -1905,97 +1438,89 @@ export function desktopDocument(
       updateZoomControls();
       updateScaleButton();
       scheduleLayoutRetry();
-    });
+    };
 
-    zoomOutButton.addEventListener('click', () => zoomBy(1 / zoomStep));
-    zoomInButton.addEventListener('click', () => zoomBy(zoomStep));
-
-    keyboardToggle.addEventListener('click', () => {
-      setKeyboardActive(!keyboardActive, false);
-    });
-
-    keyboardCloseButton.addEventListener('click', () => {
-      setKeyboardActive(false, false);
-    });
-
-    keyboardSendButton.addEventListener('click', () => {
-      sendKeyboardInputText();
-    });
-
-    keyboardClearButton.addEventListener('click', () => {
-      resetKeyboardInput();
-      focusKeyboardInput();
-    });
-
-    keyboardInput.addEventListener('focus', () => {
-      keyboardActive = !viewOnly;
-      updateKeyboardControls();
-    });
-
-    keyboardInput.addEventListener('keydown', (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-        event.preventDefault();
-        sendKeyboardInputText();
+    const selectScreenById = (screenId) => {
+      if (!screenOptions.some((screen) => screen.id === screenId)) {
         return;
       }
 
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setKeyboardActive(false, false);
-      }
-    });
-
-    for (const button of keyboardKeyButtons) {
-      button.addEventListener('click', () => pressSpecialKey(button.dataset.keyName));
-    }
-
-    for (const button of keyboardModifierButtons) {
-      button.addEventListener('click', () => {
-        toggleModifier(button.dataset.modifierKey);
-      });
-    }
-
-    for (const button of keyboardComboButtons) {
-      button.addEventListener('click', () => {
-        sendShortcut(button.dataset.keyCombo);
-      });
-    }
-
-    for (const button of pointerModeButtons) {
-      button.addEventListener('click', () => setPointerMode(button.dataset.pointerMode));
-    }
-
-    for (const button of mouseButtonElements) {
-      button.addEventListener('click', () => setActiveMouseButton(Number(button.dataset.mouseButton)));
-    }
-
-    dragLockButton.addEventListener('click', () => {
-      if (pointerMode !== 'touchpad') {
-        setPointerMode('touchpad');
-      }
-      setDragLocked(!dragLocked);
-    });
-
-    fullscreenButton.addEventListener('click', async () => {
-      const fullscreenHost = document.documentElement;
-      try {
-        if (document.fullscreenElement === fullscreenHost) {
-          await document.exitFullscreen();
-        } else {
-          await fullscreenHost.requestFullscreen();
-        }
-      } catch (error) {
-        setStatus(error.message || 'Fullscreen unavailable', true);
-      }
-    });
-
-    document.addEventListener('fullscreenchange', () => {
-      updateFullscreenButton();
+      hasUserSelectedScreen = true;
+      selectedScreenId = screenId;
       lastAppliedViewport = '';
+      renderScreenSwitcher();
+      applySelectedScreen(true);
       scheduleLayoutRetry();
-    });
+    };
+
+    const submitCredentials = (credentials) => {
+      if (!rfb) {
+        connect();
+        return;
+      }
+
+      rfb.sendCredentials(credentials || {});
+      hideCredentials();
+      setStatus('Authenticating');
+    };
+
+    const handleNativeCommand = (command) => {
+      if (!command || typeof command !== 'object') {
+        return;
+      }
+
+      const type = command.type || command.action;
+      if (type === 'requestState') {
+        flushNativeState();
+      } else if (type === 'toggleScale') {
+        toggleScaleMode();
+      } else if (type === 'zoomIn') {
+        zoomBy(zoomStep);
+      } else if (type === 'zoomOut') {
+        zoomBy(1 / zoomStep);
+      } else if (type === 'setZoom') {
+        const center = centerClientPoint();
+        setZoomLevel(Number(command.zoomLevel), center.x, center.y);
+      } else if (type === 'selectScreen') {
+        selectScreenById(String(command.screenId || 'all'));
+      } else if (type === 'setPointerMode') {
+        setPointerMode(command.mode);
+      } else if (type === 'setMouseButton') {
+        const mask = Number(command.buttonMask);
+        setActiveMouseButton([0x1, 0x2, 0x4].includes(mask) ? mask : 0x1);
+      } else if (type === 'toggleDragLock') {
+        if (pointerMode !== 'touchpad') {
+          setPointerMode('touchpad');
+        }
+        setDragLocked(!dragLocked);
+      } else if (type === 'setDragLock') {
+        if (pointerMode !== 'touchpad') {
+          setPointerMode('touchpad');
+        }
+        setDragLocked(Boolean(command.locked));
+      } else if (type === 'pressKey') {
+        pressSpecialKey(command.key);
+      } else if (type === 'toggleModifier') {
+        toggleModifier(command.modifier);
+      } else if (type === 'releaseModifiers') {
+        releaseModifiers();
+      } else if (type === 'shortcut') {
+        sendShortcut(command.shortcut);
+      } else if (type === 'sendText') {
+        sendText(String(command.text || ''));
+      } else if (type === 'sendCredentials') {
+        submitCredentials(command.credentials);
+      } else if (type === 'reconnect') {
+        window.latitudeReconnect(Boolean(command.force));
+      } else if (type === 'refresh') {
+        scheduleFullFramebufferRefresh();
+      }
+    };
+
+    window.latitudeMobileCommand = handleNativeCommand;
 
     const configureRfb = (nextRfb) => {
+      applyViewerBackground(nextRfb);
       nextRfb.viewOnly = viewOnly;
       nextRfb.scaleViewport = false;
       nextRfb.resizeSession = false;
@@ -2011,6 +1536,8 @@ export function desktopDocument(
         clearReconnectTimer();
         reconnectDelay = 1000;
         hideCredentials();
+        updateNativeState({ connected: true });
+        applyViewerBackground(nextRfb);
         setStatus('Connected');
         startScreenRefresh();
         scheduleFullFramebufferRefresh();
@@ -2030,6 +1557,7 @@ export function desktopDocument(
         rfb = null;
         stopScreenRefresh();
         touchPointer = null;
+        updateNativeState({ connected: false });
         updateTouchCursor();
         if (event.detail.clean) {
           setStatus('Disconnected', true);
@@ -2063,6 +1591,7 @@ export function desktopDocument(
       try {
         const nextRfb = new RFB(target, websocketUrl, { shared: true });
         rfb = nextRfb;
+        applyViewerBackground(nextRfb);
         configureRfb(nextRfb);
       } catch (error) {
         setStatus(error.message || 'Connection failed', true);
@@ -2085,17 +1614,6 @@ export function desktopDocument(
       }
     };
 
-    credentialsElement.addEventListener('submit', (event) => {
-      event.preventDefault();
-      if (!rfb) {
-        connect();
-        return;
-      }
-      rfb.sendCredentials(collectCredentials());
-      hideCredentials();
-      setStatus('Authenticating');
-    });
-
     window.addEventListener('focus', () => window.latitudeReconnect(false));
     window.addEventListener('online', () => window.latitudeReconnect(true));
     document.addEventListener('visibilitychange', () => {
@@ -2115,10 +1633,12 @@ export function desktopDocument(
 
     updateScaleButton();
     updateZoomControls();
-    updateFullscreenButton();
     updateKeyboardControls();
     setActiveMouseButton(activeMouseButton, false);
     updatePointerMode();
+    applyViewerBackground();
+    updateNativeState({ ready: true });
+    flushNativeState();
 
     connect();
   </script>

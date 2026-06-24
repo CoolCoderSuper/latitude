@@ -1,21 +1,148 @@
-export function terminalDocument(projectName: string, websocketUrl: string): string {
+import type { ThemeColors, ThemeMode } from '../../theme';
+
+type XtermTheme = {
+  background: string;
+  foreground: string;
+  cursor: string;
+  selectionBackground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+};
+
+type TerminalDocumentTheme = {
+  mode: ThemeMode;
+  variables: Record<string, string>;
+  xterm: XtermTheme;
+};
+
+export function terminalDocumentTheme(
+  mode: ThemeMode,
+  colors: ThemeColors,
+): TerminalDocumentTheme {
+  return {
+    mode,
+    variables: {
+      '--terminal-page-bg': colors.background,
+      '--terminal-page-text': colors.text,
+      '--terminal-heading': colors.text,
+      '--terminal-muted': colors.muted,
+      '--terminal-accent': colors.accent,
+      '--terminal-border': colors.border,
+      '--terminal-status-text': colors.success,
+      '--terminal-error-text': colors.danger,
+      '--terminal-xterm-bg': mode === 'dark' ? colors.background : colors.codeBg,
+      '--terminal-xterm-fg': colors.codeText,
+    },
+    xterm:
+      mode === 'dark'
+        ? {
+            background: colors.background,
+            foreground: colors.text,
+            cursor: colors.accent,
+            selectionBackground: colors.border,
+            black: colors.background,
+            red: colors.coral,
+            green: colors.success,
+            yellow: colors.gold,
+            blue: '#9ed2ff',
+            magenta: colors.tokenKeyword,
+            cyan: colors.tokenNumber,
+            white: colors.text,
+            brightBlack: colors.muted,
+            brightRed: colors.codeRemoveText,
+            brightGreen: colors.codeAddText,
+            brightYellow: colors.tokenString,
+            brightBlue: '#c8e4ff',
+            brightMagenta: '#e0d6ff',
+            brightCyan: '#bdf4fb',
+            brightWhite: '#ffffff',
+          }
+        : {
+            background: colors.codeBg,
+            foreground: colors.codeText,
+            cursor: colors.accent,
+            selectionBackground: '#cfe9e4',
+            black: '#111827',
+            red: colors.danger,
+            green: colors.accent,
+            yellow: colors.gold,
+            blue: colors.tokenType,
+            magenta: colors.tokenKeyword,
+            cyan: colors.tokenNumber,
+            white: '#f8fafc',
+            brightBlack: colors.codeMuted,
+            brightRed: '#dc2626',
+            brightGreen: '#16a34a',
+            brightYellow: '#ca8a04',
+            brightBlue: '#2563eb',
+            brightMagenta: '#9333ea',
+            brightCyan: '#0891b2',
+            brightWhite: '#ffffff',
+          },
+  };
+}
+
+export function terminalThemeInjectionScript(
+  theme: TerminalDocumentTheme,
+): string {
+  const themeJson = JSON.stringify(theme);
+
+  return `
+(function() {
+  window.__latitudeTerminalTheme = ${themeJson};
+  if (window.latitudeSetTerminalTheme) {
+    window.latitudeSetTerminalTheme(window.__latitudeTerminalTheme);
+  }
+})();
+true;
+`;
+}
+
+export function terminalDocument(
+  projectName: string,
+  websocketUrl: string,
+  theme: TerminalDocumentTheme,
+): string {
   const projectNameJson = JSON.stringify(projectName);
   const websocketUrlJson = JSON.stringify(websocketUrl);
+  const themeJson = JSON.stringify(theme);
+  const cssVariables = terminalCssVariables(theme);
 
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-latitude-theme="${theme.mode}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
   <style>
+    :root {
+      color-scheme: ${theme.mode};
+${cssVariables}
+      background: var(--terminal-page-bg);
+      color: var(--terminal-page-text);
+    }
+
     html,
     body {
       height: 100%;
       margin: 0;
       overflow: hidden;
-      background: #101514;
-      color: #edf4f1;
+      background: var(--terminal-page-bg);
+      color: var(--terminal-page-text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -33,9 +160,9 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
       align-items: center;
       gap: 8px;
       min-height: 34px;
-      border-bottom: 1px solid #2e3936;
+      border-bottom: 1px solid var(--terminal-border);
       padding: 6px 2px;
-      color: #aeb9c7;
+      color: var(--terminal-muted);
       font-size: 12px;
       font-weight: 800;
     }
@@ -43,19 +170,19 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
     .name {
       min-width: 0;
       overflow: hidden;
-      color: #edf4f1;
+      color: var(--terminal-heading);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
     .status {
       margin-left: auto;
-      color: #8fe0ad;
+      color: var(--terminal-status-text);
       white-space: nowrap;
     }
 
     .status.error {
-      color: #ffb3a7;
+      color: var(--terminal-error-text);
     }
 
     #terminal {
@@ -64,10 +191,10 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
       height: 100%;
       min-height: 0;
       overflow: hidden;
-      border: 1px solid #2e3936;
+      border: 1px solid var(--terminal-border);
       border-radius: 8px;
       padding: 6px;
-      background: #101514;
+      background: var(--terminal-xterm-bg);
     }
 
     .xterm {
@@ -75,6 +202,7 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
     }
 
     .xterm .xterm-viewport {
+      background: var(--terminal-xterm-bg);
       overflow-y: auto;
     }
   </style>
@@ -90,9 +218,48 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
   <script>
     const projectName = ${projectNameJson};
     const websocketUrl = ${websocketUrlJson};
+    const initialTheme = window.__latitudeTerminalTheme || ${themeJson};
     const terminalElement = document.getElementById('terminal');
     const statusElement = document.querySelector('.status');
+    let currentTheme = initialTheme;
+    let terminal = null;
     document.querySelector('.name').textContent = projectName;
+
+    const applyCssVariables = (theme) => {
+      if (!theme || !theme.variables) {
+        return;
+      }
+
+      const root = document.documentElement;
+      root.dataset.latitudeTheme = theme.mode;
+      root.style.colorScheme = theme.mode;
+      Object.keys(theme.variables).forEach((name) => {
+        root.style.setProperty(name, theme.variables[name]);
+      });
+    };
+
+    const applyTerminalTheme = (nextTerminal, theme) => {
+      if (!nextTerminal || !theme || !theme.xterm) {
+        return;
+      }
+
+      if (nextTerminal.options) {
+        nextTerminal.options.theme = theme.xterm;
+      } else if (typeof nextTerminal.setOption === 'function') {
+        nextTerminal.setOption('theme', theme.xterm);
+      }
+      if (typeof nextTerminal.refresh === 'function') {
+        nextTerminal.refresh(0, Math.max(0, nextTerminal.rows - 1));
+      }
+    };
+
+    window.latitudeSetTerminalTheme = (theme) => {
+      currentTheme = theme || currentTheme;
+      applyCssVariables(currentTheme);
+      applyTerminalTheme(terminal, currentTheme);
+    };
+
+    window.latitudeSetTerminalTheme(currentTheme);
 
     const setStatus = (text, isError = false) => {
       statusElement.textContent = text;
@@ -105,7 +272,7 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
         return;
       }
 
-      const terminal = new window.Terminal({
+      terminal = new window.Terminal({
         convertEol: true,
         cursorBlink: true,
         cursorStyle: 'block',
@@ -114,29 +281,9 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
         fontSize: 12,
         lineHeight: 1.18,
         scrollback: 5000,
-        theme: {
-          background: '#101514',
-          foreground: '#edf4f1',
-          cursor: '#2aa79c',
-          selectionBackground: '#2e3936',
-          black: '#101514',
-          red: '#ff9d87',
-          green: '#8fe0ad',
-          yellow: '#e1b95a',
-          blue: '#9ed2ff',
-          magenta: '#c9b6ff',
-          cyan: '#73d7e7',
-          white: '#edf4f1',
-          brightBlack: '#8f9b97',
-          brightRed: '#ffd0ca',
-          brightGreen: '#c8f2d5',
-          brightYellow: '#ffd98b',
-          brightBlue: '#c8e4ff',
-          brightMagenta: '#e0d6ff',
-          brightCyan: '#bdf4fb',
-          brightWhite: '#ffffff',
-        },
+        theme: currentTheme.xterm,
       });
+      applyTerminalTheme(terminal, currentTheme);
       const fitAddon = new window.FitAddon.FitAddon();
       terminal.loadAddon(fitAddon);
       terminal.open(terminalElement);
@@ -307,4 +454,10 @@ export function terminalDocument(projectName: string, websocketUrl: string): str
   </script>
 </body>
 </html>`;
+}
+
+function terminalCssVariables(theme: TerminalDocumentTheme): string {
+  return Object.entries(theme.variables)
+    .map(([name, value]) => `      ${name}: ${value};`)
+    .join('\n');
 }

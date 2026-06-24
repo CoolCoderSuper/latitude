@@ -18,7 +18,11 @@ import type {
   TerminalSessionSummary,
 } from '../../types';
 import { errorMessage } from '../../utils/errors';
-import { terminalDocument } from './terminalDocument';
+import {
+  terminalDocument,
+  terminalDocumentTheme,
+  terminalThemeInjectionScript,
+} from './terminalDocument';
 
 export function TerminalPanel({
   api,
@@ -280,16 +284,38 @@ function TerminalSessionView({
   terminalTitle: string;
   token: string;
 }) {
-  const { styles } = useTheme();
+  const { colors, mode, styles } = useTheme();
   const webViewRef = useRef<WebView>(null);
+  const terminalTheme = useMemo(
+    () => terminalDocumentTheme(mode, colors),
+    [colors, mode],
+  );
+  const initialThemeRef = useRef(terminalTheme);
   const terminalUrl = useMemo(
     () => terminalWebSocketUrl(baseUrl, terminalHref, token, session.id),
     [baseUrl, terminalHref, session.id, token],
   );
   const terminalHtml = useMemo(
-    () => terminalDocument(`${terminalTitle} - ${session.title}`, terminalUrl),
+    () =>
+      terminalDocument(
+        `${terminalTitle} - ${session.title}`,
+        terminalUrl,
+        initialThemeRef.current,
+      ),
     [session.title, terminalTitle, terminalUrl],
   );
+  const terminalThemeScript = useMemo(
+    () => terminalThemeInjectionScript(terminalTheme),
+    [terminalTheme],
+  );
+  const terminalSource = useMemo(
+    () => ({ html: terminalHtml, baseUrl: normalizeBaseUrl(baseUrl) }),
+    [baseUrl, terminalHtml],
+  );
+
+  useEffect(() => {
+    webViewRef.current?.injectJavaScript(terminalThemeScript);
+  }, [terminalThemeScript]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -310,12 +336,14 @@ function TerminalSessionView({
       <WebView
         ref={webViewRef}
         domStorageEnabled
+        injectedJavaScript={terminalThemeScript}
+        injectedJavaScriptBeforeContentLoaded={terminalThemeScript}
         javaScriptEnabled
         keyboardDisplayRequiresUserAction={false}
         mixedContentMode="always"
         originWhitelist={['*']}
         setSupportMultipleWindows={false}
-        source={{ html: terminalHtml, baseUrl: normalizeBaseUrl(baseUrl) }}
+        source={terminalSource}
         startInLoadingState
         style={styles.webView}
       />
