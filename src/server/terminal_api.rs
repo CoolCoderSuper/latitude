@@ -1,14 +1,10 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Instant,
-};
+use std::{path::Path, sync::Arc, time::Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
-use tokio::{fs, process::Command, sync::broadcast, time::timeout};
+use tokio::{process::Command, sync::broadcast, time::timeout};
 
-use crate::terminal::{TerminalSession, TerminalSessionSummary, root_terminal_cwd};
+use crate::terminal::{TerminalSession, TerminalSessionSummary, root_terminal_cwd, terminal_cwd};
 
 use super::{
     constants::{
@@ -125,7 +121,7 @@ async fn scoped_terminal_info_response(
     terminal_dir: &Path,
     sessions_href: String,
 ) -> PublicTerminalInfoResponse {
-    let cwd = terminal_cwd(terminal_dir).await;
+    let cwd = terminal_cwd(terminal_dir);
     PublicTerminalInfoResponse {
         cwd: display_path(&cwd),
         shell: terminal_shell_name(),
@@ -146,7 +142,7 @@ pub(super) async fn execute_terminal_command(
     project_dir: &Path,
     command_text: String,
 ) -> PublicTerminalCommandResponse {
-    let cwd = terminal_cwd(project_dir).await;
+    let cwd = terminal_cwd(project_dir);
     let started = Instant::now();
     let mut command = terminal_shell_command(&command_text);
     command
@@ -195,12 +191,6 @@ pub(super) async fn execute_terminal_command(
             timed_out: true,
         },
     }
-}
-
-async fn terminal_cwd(project_dir: &Path) -> PathBuf {
-    fs::canonicalize(project_dir)
-        .await
-        .unwrap_or_else(|_| project_dir.to_path_buf())
 }
 
 fn terminal_shell_name() -> &'static str {

@@ -145,5 +145,18 @@ pub(super) fn filtered_cookie_header(value: &HeaderValue, excluded_name: &str) -
 
 pub(super) fn display_path(path: &Path) -> String {
     let path = path.display().to_string();
-    path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+    strip_windows_extended_path_text(&path).into_owned()
+}
+
+fn strip_windows_extended_path_text(path: &str) -> std::borrow::Cow<'_, str> {
+    const EXTENDED_UNC_PREFIX: &str = "\\\\?\\UNC\\";
+    const EXTENDED_PATH_PREFIX: &str = "\\\\?\\";
+
+    if let Some(stripped) = path.strip_prefix(EXTENDED_UNC_PREFIX) {
+        return std::borrow::Cow::Owned(format!("\\\\{stripped}"));
+    }
+
+    path.strip_prefix(EXTENDED_PATH_PREFIX)
+        .map(std::borrow::Cow::Borrowed)
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(path))
 }

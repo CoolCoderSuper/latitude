@@ -1234,6 +1234,10 @@ fn trims_windows_extended_path_prefix_for_display() {
         display_path(Path::new(r"\\?\C:\work\demo")),
         r"C:\work\demo"
     );
+    assert_eq!(
+        display_path(Path::new(r"\\?\UNC\server\share\demo")),
+        r"\\server\share\demo"
+    );
 }
 
 #[test]

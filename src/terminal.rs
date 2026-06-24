@@ -338,7 +338,8 @@ pub fn root_terminal_cwd() -> PathBuf {
 }
 
 pub fn terminal_cwd(project_dir: &Path) -> PathBuf {
-    std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf())
+    let cwd = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+    strip_windows_extended_path_prefix(cwd)
 }
 
 fn project_terminal_scope(project: &str) -> String {
@@ -400,6 +401,62 @@ fn current_time_ms() -> u128 {
 }
 
 fn display_path(path: &Path) -> String {
+    display_path_text(path)
+}
+
+fn display_path_text(path: &Path) -> String {
     let path = path.display().to_string();
-    path.strip_prefix(r"\\?\").unwrap_or(&path).to_string()
+    strip_windows_extended_path_text(&path).into_owned()
+}
+
+fn strip_windows_extended_path_prefix(path: PathBuf) -> PathBuf {
+    let path_text = path.display().to_string();
+    let stripped = strip_windows_extended_path_text(&path_text);
+    if stripped == path_text.as_str() {
+        path
+    } else {
+        PathBuf::from(stripped.into_owned())
+    }
+}
+
+fn strip_windows_extended_path_text(path: &str) -> std::borrow::Cow<'_, str> {
+    const EXTENDED_UNC_PREFIX: &str = "\\\\?\\UNC\\";
+    const EXTENDED_PATH_PREFIX: &str = "\\\\?\\";
+
+    if let Some(stripped) = path.strip_prefix(EXTENDED_UNC_PREFIX) {
+        return std::borrow::Cow::Owned(format!("\\\\{stripped}"));
+    }
+
+    path.strip_prefix(EXTENDED_PATH_PREFIX)
+        .map(std::borrow::Cow::Borrowed)
+        .unwrap_or_else(|| std::borrow::Cow::Borrowed(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_windows_extended_drive_prefix_for_terminal_cwd() {
+        assert_eq!(
+            strip_windows_extended_path_prefix(PathBuf::from(r"\\?\C:\work\demo")),
+            PathBuf::from(r"C:\work\demo")
+        );
+    }
+
+    #[test]
+    fn strips_windows_extended_unc_prefix_for_terminal_cwd() {
+        assert_eq!(
+            strip_windows_extended_path_prefix(PathBuf::from(r"\\?\UNC\server\share\demo")),
+            PathBuf::from(r"\\server\share\demo")
+        );
+    }
+
+    #[test]
+    fn keeps_normal_terminal_cwd_paths() {
+        assert_eq!(
+            strip_windows_extended_path_prefix(PathBuf::from(r"C:\work\demo")),
+            PathBuf::from(r"C:\work\demo")
+        );
+    }
 }
