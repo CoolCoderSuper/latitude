@@ -9,7 +9,7 @@ Latitude has two listeners:
 
 Only expose the public proxy through Cloudflare. Do not expose the command API; it is intentionally unauthenticated and local-only.
 
-The public proxy requires the configured `public_password` before it serves pages or runs Git actions. The starter config currently uses `test`.
+The public proxy requires the configured `public_password` before it serves pages or runs Git actions. Deployment share links under `/__latitude/share/<token>/` can instead use their own optional per-link password. The starter config currently uses `test`.
 
 ## Local Startup
 

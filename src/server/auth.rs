@@ -77,7 +77,7 @@ fn request_wants_json(req: &Request<Body>) -> bool {
         .is_some_and(|value| value.contains("application/json"))
 }
 
-fn header_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(super) fn header_cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     for value in headers.get_all(header::COOKIE) {
         let Ok(raw) = value.to_str() else {
             continue;

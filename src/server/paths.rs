@@ -1,6 +1,5 @@
 use std::path::{Component, Path, PathBuf};
 
-use axum::http::HeaderValue;
 use percent_encoding::percent_decode_str;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -121,7 +120,11 @@ pub(super) fn is_hop_by_hop_header(name: &str) -> bool {
     )
 }
 
-pub(super) fn filtered_cookie_header(value: &HeaderValue, excluded_name: &str) -> Option<String> {
+#[cfg(test)]
+pub(super) fn filtered_cookie_header(
+    value: &axum::http::HeaderValue,
+    excluded_name: &str,
+) -> Option<String> {
     let raw = value.to_str().ok()?;
     let cookies = raw
         .split(';')

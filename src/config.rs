@@ -2,6 +2,7 @@ use std::{
     collections::HashSet,
     net::SocketAddr,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
@@ -26,6 +27,8 @@ pub struct LatitudeConfig {
     pub public_password: String,
     #[serde(default)]
     pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub share_links: Vec<DeploymentShareConfig>,
     #[serde(default)]
     pub projects: Vec<ProjectConfig>,
 }
@@ -89,6 +92,18 @@ pub struct ApplicationConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeploymentShareConfig {
+    pub token: String,
+    pub project: String,
+    pub deployment: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationTarget {
     ReverseProxy {
@@ -140,6 +155,7 @@ impl Default for LatitudeConfig {
             command_bind: default_command_bind(),
             public_password: default_public_password(),
             desktop: DesktopConfig::default(),
+            share_links: Vec::new(),
             projects: Vec::new(),
         }
     }
@@ -208,6 +224,17 @@ impl LatitudeConfig {
 
         self.desktop.validate()?;
 
+        let mut seen_share_tokens = HashSet::new();
+        for share in &self.share_links {
+            share.validate()?;
+            if !seen_share_tokens.insert(share.token.clone()) {
+                return Err(ConfigError::Invalid(format!(
+                    "duplicate share link token '{}'",
+                    share.token
+                )));
+            }
+        }
+
         let mut seen_names = HashSet::new();
         for project in &self.projects {
             project.validate()?;
@@ -264,6 +291,55 @@ impl DesktopConfig {
         }
 
         Ok(())
+    }
+}
+
+impl DeploymentShareConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !is_valid_url_segment(&self.token) {
+            return Err(ConfigError::Invalid(format!(
+                "share link token '{}' must contain only ASCII letters, digits, '-' or '_'",
+                self.token
+            )));
+        }
+
+        if !is_valid_url_segment(&self.project) {
+            return Err(ConfigError::Invalid(format!(
+                "share link project '{}' must contain only ASCII letters, digits, '-' or '_'",
+                self.project
+            )));
+        }
+
+        if !is_valid_url_segment(&self.deployment) {
+            return Err(ConfigError::Invalid(format!(
+                "share link deployment '{}' must contain only ASCII letters, digits, '-' or '_'",
+                self.deployment
+            )));
+        }
+
+        if self
+            .password
+            .as_deref()
+            .is_some_and(|password| password.is_empty())
+        {
+            return Err(ConfigError::Invalid(format!(
+                "share link '{}' password must not be empty",
+                self.token
+            )));
+        }
+
+        if self.expires_at == Some(0) {
+            return Err(ConfigError::Invalid(format!(
+                "share link '{}' expires_at must be a Unix timestamp greater than 0",
+                self.token
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub fn is_expired(&self, now: u64) -> bool {
+        self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
 }
 
@@ -425,6 +501,13 @@ pub fn encode_page_binary_content(bytes: &[u8]) -> String {
 
 pub fn decode_page_binary_content(content: &str) -> Result<Vec<u8>, base64::DecodeError> {
     BASE64_STANDARD.decode(content)
+}
+
+pub fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 fn default_public_bind() -> String {
@@ -602,6 +685,61 @@ mod tests {
         };
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_deployment_share_links() {
+        let config = LatitudeConfig {
+            share_links: vec![DeploymentShareConfig {
+                token: "abc123".to_string(),
+                project: "demo".to_string(),
+                deployment: "site".to_string(),
+                password: Some("secret".to_string()),
+                expires_at: Some(4_102_444_800),
+            }],
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_duplicate_share_link_tokens() {
+        let config = LatitudeConfig {
+            share_links: vec![
+                DeploymentShareConfig {
+                    token: "abc123".to_string(),
+                    project: "demo".to_string(),
+                    deployment: "site".to_string(),
+                    password: None,
+                    expires_at: None,
+                },
+                DeploymentShareConfig {
+                    token: "abc123".to_string(),
+                    project: "demo".to_string(),
+                    deployment: "other".to_string(),
+                    password: None,
+                    expires_at: None,
+                },
+            ],
+            ..LatitudeConfig::default()
+        };
+
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn share_link_expiry_uses_unix_seconds() {
+        let share = DeploymentShareConfig {
+            token: "abc123".to_string(),
+            project: "demo".to_string(),
+            deployment: "site".to_string(),
+            password: None,
+            expires_at: Some(10),
+        };
+
+        assert!(!share.is_expired(9));
+        assert!(share.is_expired(10));
     }
 
     #[test]

@@ -5,14 +5,21 @@ use axum::{
     http::{Request, StatusCode, header},
     response::IntoResponse,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{ApplicationConfig, ApplicationTarget, ConfigError, LatitudeConfig, ProjectConfig},
+    config::{
+        ApplicationConfig, ApplicationTarget, ConfigError, DeploymentShareConfig, LatitudeConfig,
+        ProjectConfig, current_unix_timestamp,
+    },
     state::AppState,
 };
 
-use super::{constants::MAX_PAGE_PAYLOAD_BYTES, page::parse_page_payload, response::ApiError};
+use super::{
+    constants::{MAX_PAGE_PAYLOAD_BYTES, PUBLIC_SHARE_BASE_PATH},
+    page::parse_page_payload,
+    response::ApiError,
+};
 
 #[derive(Debug, Serialize)]
 pub(super) struct HealthResponse {
@@ -21,6 +28,28 @@ pub(super) struct HealthResponse {
     command_bind: String,
     project_count: usize,
     deployment_count: usize,
+    share_link_count: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct CreateDeploymentShareRequest {
+    project: String,
+    deployment: String,
+    #[serde(default)]
+    password: Option<String>,
+    #[serde(default)]
+    expires_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DeploymentShareResponse {
+    token: String,
+    project: String,
+    deployment: String,
+    href: String,
+    has_password: bool,
+    expires_at: Option<u64>,
+    expired: bool,
 }
 
 fn find_project_mut<'a>(
@@ -47,6 +76,7 @@ pub(super) async fn command_health(State(state): State<AppState>) -> impl IntoRe
         command_bind: config.command_bind,
         project_count: config.projects.len(),
         deployment_count,
+        share_link_count: config.share_links.len(),
     })
 }
 
@@ -141,7 +171,11 @@ pub(super) async fn delete_project(
         .update_config(|config| {
             let before = config.projects.len();
             config.projects.retain(|project| project.name != name);
-            before != config.projects.len()
+            let removed = before != config.projects.len();
+            if removed {
+                config.share_links.retain(|share| share.project != name);
+            }
+            removed
         })
         .await?;
 
@@ -312,7 +346,13 @@ pub(super) async fn delete_project_deployment(
             let project_config = find_project_mut(config, &project)?;
             let before = project_config.deployments.len();
             project_config.deployments.retain(|app| app.name != name);
-            Ok(before != project_config.deployments.len())
+            let removed = before != project_config.deployments.len();
+            if removed {
+                config
+                    .share_links
+                    .retain(|share| share.project != project || share.deployment != name);
+            }
+            Ok(removed)
         })
         .await??;
 
@@ -323,4 +363,135 @@ pub(super) async fn delete_project_deployment(
             "deployment '{name}' was not found in project '{project}'"
         )))
     }
+}
+
+pub(super) async fn list_deployment_shares(State(state): State<AppState>) -> impl IntoResponse {
+    let config = state.config_snapshot().await;
+    let now = current_unix_timestamp();
+    let shares = config
+        .share_links
+        .iter()
+        .map(|share| deployment_share_response(share, now))
+        .collect::<Vec<_>>();
+
+    Json(shares)
+}
+
+pub(super) async fn create_deployment_share(
+    State(state): State<AppState>,
+    Json(payload): Json<CreateDeploymentShareRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let now = current_unix_timestamp();
+    let share = state
+        .update_config_fallible(|config| -> Result<DeploymentShareConfig, ApiError> {
+            let Some(project) = config
+                .projects
+                .iter()
+                .find(|project| project.name == payload.project)
+            else {
+                return Err(ApiError::not_found(format!(
+                    "project '{}' was not found",
+                    payload.project
+                )));
+            };
+
+            if !project
+                .deployments
+                .iter()
+                .any(|deployment| deployment.name == payload.deployment)
+            {
+                return Err(ApiError::not_found(format!(
+                    "deployment '{}' was not found in project '{}'",
+                    payload.deployment, payload.project
+                )));
+            }
+
+            let password = payload
+                .password
+                .clone()
+                .filter(|password| !password.is_empty());
+            let share = DeploymentShareConfig {
+                token: generate_share_token(config),
+                project: payload.project.clone(),
+                deployment: payload.deployment.clone(),
+                password,
+                expires_at: payload.expires_at,
+            };
+            share.validate()?;
+            config.share_links.push(share.clone());
+            Ok(share)
+        })
+        .await??;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(deployment_share_response(&share, now)),
+    ))
+}
+
+pub(super) async fn get_deployment_share(
+    AxumPath(token): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let config = state.config_snapshot().await;
+    let now = current_unix_timestamp();
+    config
+        .share_links
+        .iter()
+        .find(|share| share.token == token)
+        .map(|share| Json(deployment_share_response(share, now)))
+        .ok_or_else(|| ApiError::not_found(format!("share link '{token}' was not found")))
+}
+
+pub(super) async fn delete_deployment_share(
+    AxumPath(token): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let removed = state
+        .update_config(|config| {
+            let before = config.share_links.len();
+            config.share_links.retain(|share| share.token != token);
+            before != config.share_links.len()
+        })
+        .await?;
+
+    if removed {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found(format!(
+            "share link '{token}' was not found"
+        )))
+    }
+}
+
+fn deployment_share_response(share: &DeploymentShareConfig, now: u64) -> DeploymentShareResponse {
+    DeploymentShareResponse {
+        token: share.token.clone(),
+        project: share.project.clone(),
+        deployment: share.deployment.clone(),
+        href: format!("{PUBLIC_SHARE_BASE_PATH}/{}/", share.token),
+        has_password: share.password.is_some(),
+        expires_at: share.expires_at,
+        expired: share.is_expired(now),
+    }
+}
+
+fn generate_share_token(config: &LatitudeConfig) -> String {
+    loop {
+        let token = encode_hex(rand::random::<[u8; 16]>());
+        if !config.share_links.iter().any(|share| share.token == token) {
+            return token;
+        }
+    }
+}
+
+fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let bytes = bytes.as_ref();
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }

@@ -10,6 +10,7 @@ An agent can publish a page, screenshot, video, static site, live app preview, p
 - Previewing generated pages, apps, images, videos, and reports.
 - Giving the user a browser-based view of project status, diffs, and terminals.
 - Serving local work through one authenticated public gateway.
+- Creating deployment share links that can be open, password-protected, auto-expiring, or manually deleted.
 
 ## Running Locally
 
@@ -37,6 +38,19 @@ Agents can configure Latitude for you.
 In normal use, you should not need to hand-write project, page, proxy, or static-site entries. Ask the agent to publish what it wants you to see, and it can use the Latitude CLI or local command API to create the right project and URL.
 
 The command API is intended for local agent use. Keep it bound to localhost, and only expose the authenticated public gateway when sharing Latitude through a tunnel.
+
+## Deployment Share Links
+
+Share links expose one deployment without requiring the recipient to know the main project URL. They can be open, protected by a per-link password, expire automatically, and be deleted manually.
+
+```powershell
+cargo run -- share create demo mock
+cargo run -- share create demo mock --password "review-only" --expires-in 2h
+cargo run -- share list
+cargo run -- share delete <token>
+```
+
+The generated URL uses `/__latitude/share/<token>/`. Deleting the token or reaching `expires_at` immediately disables that share path.
 
 ## More
 

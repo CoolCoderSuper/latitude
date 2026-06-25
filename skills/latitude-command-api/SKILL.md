@@ -1,6 +1,6 @@
 ---
 name: latitude-command-api
-description: "Operate Latitude through its CLI first, with direct local command API requests as the fallback. Use when an agent needs to publish an HTML, Markdown, image, or video document, create or update Latitude projects, configure reverse proxy or static deployments, inspect or replace Latitude config, or verify local Latitude health."
+description: "Operate Latitude through its CLI first, with direct local command API requests as the fallback. Use when an agent needs to publish an HTML, Markdown, image, or video document, create or update Latitude projects, configure reverse proxy or static deployments, create or delete deployment share links, inspect or replace Latitude config, or verify local Latitude health."
 ---
 
 # Latitude CLI And Command API
@@ -15,6 +15,7 @@ Default command base URL: `http://127.0.0.1:7600`.
 Default public preview URL: `http://127.0.0.1:8080`.
 If `/health` reports `public_bind` as `0.0.0.0:8080`, use `127.0.0.1:8080` for local preview.
 Public preview pages require the configured `public_password`. The starter password is `test`.
+Deployment share links mount at `/__latitude/share/{token}/` and can use no password or a per-link password.
 
 ## Preferred CLI Workflow
 
@@ -48,6 +49,17 @@ latitude deploy proxy demo frontend --upstream http://127.0.0.1:5173
 4. Verify the returned `public_url`. Deployments mount at `/{project}/{deployment}` on the public listener.
 
 The CLI prints JSON responses. Publish and deploy commands include `public_url` plus the deployment object returned by Latitude.
+
+5. Create a share link when the user needs a deployment-specific URL:
+
+```bash
+latitude share create demo mock
+latitude share create demo mock --password "review-only" --expires-in 2h
+latitude share list
+latitude share delete <token>
+```
+
+Share create responses include `share_url` plus a redacted share object. The share URL can be sent directly; it does not require the global public password unless the deployment itself redirects elsewhere.
 
 ## CLI Reference
 
@@ -153,11 +165,26 @@ latitude deployment get demo frontend
 latitude deployment delete demo frontend
 ```
 
+### Share A Deployment
+
+```bash
+latitude share create demo frontend
+latitude share create demo frontend --password "review-only"
+latitude share create demo frontend --expires-in 30m
+latitude share create demo frontend --expires-at 4102444800
+latitude share list
+latitude share get <token>
+latitude share delete <token>
+```
+
+Omit `--password` for an open share link. Use `--expires-in` with seconds by default or `m`, `h`, and `d` suffixes for minutes, hours, and days. `--expires-at` accepts a Unix timestamp in seconds. `share list` and `share get` redact the password and show `has_password`, `expires_at`, and `expired`.
+
 ## Safety Rules
 
 - Never bind or expose the command API outside loopback. `command_bind` must use `127.0.0.1` or `[::1]`.
 - Treat config replacement as a full replacement. Fetch the current config first and preserve unrelated fields.
 - Preserve or intentionally update `public_password`; it controls public preview access and Git actions.
+- Preserve `share_links` unless intentionally creating or deleting deployment share links.
 - Remember listener bind changes are persisted but require a Latitude restart. Project and deployment changes apply immediately.
 - Use only URL-safe names for projects and deployments: ASCII letters, digits, `-`, and `_`.
 
@@ -275,6 +302,40 @@ curl -X PUT \
   http://127.0.0.1:7600/api/projects/demo/deployments/mock
 ```
 
+### Create A Deployment Share Link
+
+Open share:
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "demo",
+    "deployment": "mock"
+  }' \
+  http://127.0.0.1:7600/api/shares
+```
+
+Password-protected, auto-expiring share:
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": "demo",
+    "deployment": "mock",
+    "password": "review-only",
+    "expires_at": 4102444800
+  }' \
+  http://127.0.0.1:7600/api/shares
+```
+
+The response includes `href`, such as `/__latitude/share/<token>/`. Delete a share with:
+
+```bash
+curl -X DELETE http://127.0.0.1:7600/api/shares/<token>
+```
+
 ### Replace Full Config
 
 ```bash
@@ -291,6 +352,7 @@ The config shape is:
   "public_bind": "0.0.0.0:8080",
   "command_bind": "127.0.0.1:7600",
   "public_password": "test",
+  "share_links": [],
   "projects": []
 }
 ```
@@ -313,6 +375,10 @@ The config shape is:
 | `PUT` | `/api/projects/{project}/deployments/{name}` | Create or replace one deployment. |
 | `DELETE` | `/api/projects/{project}/deployments/{name}` | Delete one deployment. |
 | `PUT` or `POST` | `/api/projects/{project}/pages/{name}` | Create or replace a page deployment from raw text, raw image/video bytes, or JSON. |
+| `GET` | `/api/shares` | List deployment share links with password fields redacted. |
+| `POST` | `/api/shares` | Create a deployment share link. |
+| `GET` | `/api/shares/{token}` | Read one deployment share link with password fields redacted. |
+| `DELETE` | `/api/shares/{token}` | Delete one deployment share link. |
 
 ## Errors
 

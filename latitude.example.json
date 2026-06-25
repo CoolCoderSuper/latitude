@@ -13,6 +13,7 @@
     "view_only": true,
     "allow_non_loopback": false
   },
+  "share_links": [],
   "projects": [
     {
       "name": "demo",

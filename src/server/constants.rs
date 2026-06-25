@@ -8,6 +8,7 @@ pub(super) const DESKTOP_ROUTE_SEGMENT: &str = "_desktop";
 pub(super) const TERMINAL_ROUTE_SEGMENT: &str = "_terminal";
 pub(super) const TERMINAL_WS_SUFFIX: &str = "ws";
 pub(super) const LOGIN_PATH: &str = "/__latitude/login";
+pub(super) const PUBLIC_SHARE_BASE_PATH: &str = "/__latitude/share";
 pub(super) const PUBLIC_ROOT_TERMINAL_WS_PATH: &str = "/_terminal/ws";
 pub(super) const PUBLIC_ROOT_DESKTOP_WS_PATH: &str = "/_desktop/ws";
 pub(super) const PUBLIC_TERMINAL_WS_PATH: &str = "/{project}/_terminal/ws";

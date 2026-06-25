@@ -25,8 +25,9 @@ use tracing::info;
 use crate::state::AppState;
 
 use command::{
-    command_health, create_project, create_project_deployment, delete_project,
-    delete_project_deployment, get_config, get_project, get_project_deployment,
+    command_health, create_deployment_share, create_project, create_project_deployment,
+    delete_deployment_share, delete_project, delete_project_deployment, get_config,
+    get_deployment_share, get_project, get_project_deployment, list_deployment_shares,
     list_project_deployments, list_projects, put_config, replace_project,
     replace_project_deployment, upsert_project_page,
 };
@@ -146,6 +147,14 @@ fn command_router(state: AppState) -> Router {
         .route(
             "/projects/{project}/pages/{name}",
             post(upsert_project_page).put(upsert_project_page),
+        )
+        .route(
+            "/shares",
+            get(list_deployment_shares).post(create_deployment_share),
+        )
+        .route(
+            "/shares/{token}",
+            get(get_deployment_share).delete(delete_deployment_share),
         );
 
     Router::new()

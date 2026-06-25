@@ -8,8 +8,9 @@ use axum::{
 
 use crate::{
     config::{
-        ApplicationConfig, ApplicationTarget, DesktopConfig, DesktopMode, LatitudeConfig,
-        PageFormat, ProjectConfig, decode_page_binary_content, encode_page_binary_content,
+        ApplicationConfig, ApplicationTarget, DeploymentShareConfig, DesktopConfig, DesktopMode,
+        LatitudeConfig, PageFormat, ProjectConfig, decode_page_binary_content,
+        encode_page_binary_content,
     },
     desktop::DesktopInfoResponse,
     state::AppState,
@@ -684,6 +685,163 @@ async fn serves_static_site_without_document_shell() {
     assert!(!rendered.contains("Back to project"));
 
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn serves_unprotected_deployment_share_without_public_auth() {
+    let config = LatitudeConfig {
+        share_links: vec![DeploymentShareConfig {
+            token: "open123".to_string(),
+            project: "demo".to_string(),
+            deployment: "report".to_string(),
+            password: None,
+            expires_at: None,
+        }],
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "report".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: "# Shared Report".to_string(),
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: None,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    let req = Request::builder()
+        .uri("/__latitude/share/open123/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("<h1>Shared Report</h1>"));
+    assert!(!rendered.contains("Sign in to"));
+}
+
+#[tokio::test]
+async fn password_protected_deployment_share_sets_scoped_cookie() {
+    let config = LatitudeConfig {
+        share_links: vec![DeploymentShareConfig {
+            token: "locked123".to_string(),
+            project: "demo".to_string(),
+            deployment: "report".to_string(),
+            password: Some("secret".to_string()),
+            expires_at: None,
+        }],
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "report".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: "# Locked Report".to_string(),
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: None,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    let req = Request::builder()
+        .uri("/__latitude/share/locked123/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state.clone()), req).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(rendered.contains("Open shared deployment"));
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/__latitude/share/locked123/")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from(
+            "password=secret&next=%2F__latitude%2Fshare%2Flocked123%2F",
+        ))
+        .unwrap();
+    let response = public_entry(State(state.clone()), req).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("/__latitude/share/locked123/")
+    );
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap()
+        .to_string();
+    assert!(cookie.starts_with("latitude_share_locked123="));
+    assert!(cookie.contains("Path=/__latitude/share/locked123"));
+
+    let req = Request::builder()
+        .uri("/__latitude/share/locked123/")
+        .header(header::COOKIE, cookie)
+        .body(Body::empty())
+        .unwrap();
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+
+    assert!(rendered.contains("<h1>Locked Report</h1>"));
+}
+
+#[tokio::test]
+async fn expired_deployment_share_returns_gone() {
+    let config = LatitudeConfig {
+        share_links: vec![DeploymentShareConfig {
+            token: "expired123".to_string(),
+            project: "demo".to_string(),
+            deployment: "report".to_string(),
+            password: None,
+            expires_at: Some(1),
+        }],
+        projects: vec![ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "report".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Page {
+                    content: "# Old Report".to_string(),
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: None,
+                },
+            }],
+        }],
+        ..LatitudeConfig::default()
+    };
+    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    let req = Request::builder()
+        .uri("/__latitude/share/expired123/")
+        .body(Body::empty())
+        .unwrap();
+
+    let response = public_entry(State(state), req).await;
+    assert_eq!(response.status(), StatusCode::GONE);
 }
 
 #[test]

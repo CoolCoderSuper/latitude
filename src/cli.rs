@@ -2,6 +2,7 @@ use std::{
     io::{self, Read},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -68,6 +69,11 @@ pub enum CliCommand {
     Deployment {
         #[command(subcommand)]
         command: DeploymentCommand,
+    },
+    /// Create, inspect, or delete deployment share links.
+    Share {
+        #[command(subcommand)]
+        command: ShareCommand,
     },
 }
 
@@ -173,6 +179,30 @@ pub enum DeploymentCommand {
     Delete { project: String, name: String },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ShareCommand {
+    /// List deployment share links.
+    List,
+    /// Create a deployment share link.
+    Create(ShareCreateArgs),
+    /// Print one deployment share link as JSON.
+    Get { token: String },
+    /// Delete one deployment share link.
+    Delete { token: String },
+}
+
+#[derive(Debug, Args)]
+pub struct ShareCreateArgs {
+    pub project: String,
+    pub deployment: String,
+    #[arg(long)]
+    pub password: Option<String>,
+    #[arg(long, value_name = "DURATION")]
+    pub expires_in: Option<String>,
+    #[arg(long, value_name = "UNIX_SECONDS")]
+    pub expires_at: Option<u64>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct HealthResponse {
     status: String,
@@ -180,6 +210,7 @@ struct HealthResponse {
     command_bind: String,
     project_count: usize,
     deployment_count: usize,
+    share_link_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +233,33 @@ struct PageJsonPayload<'a> {
 struct DeploymentResult<T> {
     public_url: Option<String>,
     deployment: T,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct DeploymentShareSummary {
+    token: String,
+    project: String,
+    deployment: String,
+    href: String,
+    has_password: bool,
+    expires_at: Option<u64>,
+    expired: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateSharePayload<'a> {
+    project: &'a str,
+    deployment: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct ShareResult {
+    share_url: Option<String>,
+    share: DeploymentShareSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -238,6 +296,7 @@ pub async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
         CliCommand::Publish { command } => run_publish_command(&client, command).await,
         CliCommand::Deploy { command } => run_deploy_command(&client, command).await,
         CliCommand::Deployment { command } => run_deployment_command(&client, command).await,
+        CliCommand::Share { command } => run_share_command(&client, command).await,
     }
 }
 
@@ -305,6 +364,38 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
             print_json(&DeleteResult { deleted: true })
         }
     }
+}
+
+async fn run_share_command(client: &CommandClient, command: &ShareCommand) -> Result<()> {
+    match command {
+        ShareCommand::List => print_json(&client.get_json::<Value>("/api/shares").await?),
+        ShareCommand::Create(args) => create_share(client, args).await,
+        ShareCommand::Get { token } => print_json(
+            &client
+                .get_json::<Value>(&format!("/api/shares/{token}"))
+                .await?,
+        ),
+        ShareCommand::Delete { token } => {
+            client.delete(&format!("/api/shares/{token}")).await?;
+            print_json(&DeleteResult { deleted: true })
+        }
+    }
+}
+
+async fn create_share(client: &CommandClient, args: &ShareCreateArgs) -> Result<()> {
+    let expires_at = share_expires_at(args)?;
+    let payload = CreateSharePayload {
+        project: &args.project,
+        deployment: &args.deployment,
+        password: args.password.as_deref(),
+        expires_at,
+    };
+    let share: DeploymentShareSummary = client
+        .send_json(Method::POST, "/api/shares", &payload)
+        .await?;
+    let share_url = client.public_share_url(&share.token).await;
+
+    print_json(&ShareResult { share_url, share })
 }
 
 async fn publish_page(client: &CommandClient, args: &PublishPageArgs) -> Result<()> {
@@ -534,6 +625,11 @@ impl CommandClient {
         local_public_url(&health.public_bind, project, deployment)
     }
 
+    async fn public_share_url(&self, token: &str) -> Option<String> {
+        let health = self.get_json::<HealthResponse>("/health").await.ok()?;
+        local_public_share_url(&health.public_bind, token)
+    }
+
     fn url(&self, path: &str) -> Result<Url> {
         let mut url = self.base.clone();
         url.set_path(path.trim_start_matches('/'));
@@ -669,6 +765,14 @@ fn command_bind_to_url(command_bind: &str) -> String {
 }
 
 fn local_public_url(public_bind: &str, project: &str, deployment: &str) -> Option<String> {
+    local_public_path_url(public_bind, &format!("/{project}/{deployment}"))
+}
+
+fn local_public_share_url(public_bind: &str, token: &str) -> Option<String> {
+    local_public_path_url(public_bind, &format!("/__latitude/share/{token}/"))
+}
+
+fn local_public_path_url(public_bind: &str, path: &str) -> Option<String> {
     let addr = public_bind.parse::<SocketAddr>().ok()?;
     let host = match addr.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => "127.0.0.1".to_string(),
@@ -676,11 +780,75 @@ fn local_public_url(public_bind: &str, project: &str, deployment: &str) -> Optio
         IpAddr::V6(ip) if ip.is_unspecified() => "[::1]".to_string(),
         IpAddr::V6(ip) => format!("[{ip}]"),
     };
+    let path = if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("/{path}")
+    };
 
-    Some(format!(
-        "http://{host}:{}/{project}/{deployment}",
-        addr.port()
-    ))
+    Some(format!("http://{host}:{}{}", addr.port(), path))
+}
+
+fn share_expires_at(args: &ShareCreateArgs) -> Result<Option<u64>> {
+    match (&args.expires_in, args.expires_at) {
+        (Some(_), Some(_)) => Err(anyhow!(
+            "--expires-in and --expires-at cannot be used together"
+        )),
+        (None, Some(expires_at)) => Ok(Some(expires_at)),
+        (Some(expires_in), None) => {
+            let seconds = parse_duration_seconds(expires_in)?;
+            current_unix_timestamp()
+                .checked_add(seconds)
+                .map(Some)
+                .ok_or_else(|| anyhow!("share expiry is too far in the future"))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
+fn parse_duration_seconds(value: &str) -> Result<u64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(anyhow!("duration must not be empty"));
+    }
+
+    let number_end = value
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (number, suffix) = value.split_at(number_end);
+    if number.is_empty() {
+        return Err(anyhow!("duration must start with a number"));
+    }
+
+    let quantity = number
+        .parse::<u64>()
+        .with_context(|| format!("duration number is invalid: {number}"))?;
+    if quantity == 0 {
+        return Err(anyhow!("duration must be greater than zero"));
+    }
+
+    let multiplier = match suffix.trim().to_ascii_lowercase().as_str() {
+        "" | "s" | "sec" | "secs" | "second" | "seconds" => 1,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 60 * 60,
+        "d" | "day" | "days" => 60 * 60 * 24,
+        _ => {
+            return Err(anyhow!(
+                "duration suffix must be seconds, minutes, hours, or days"
+            ));
+        }
+    };
+
+    quantity
+        .checked_mul(multiplier)
+        .ok_or_else(|| anyhow!("duration is too large"))
+}
+
+fn current_unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -705,6 +873,24 @@ mod tests {
             local_public_url("0.0.0.0:8080", "demo", "report").as_deref(),
             Some("http://127.0.0.1:8080/demo/report")
         );
+    }
+
+    #[test]
+    fn public_share_url_uses_share_mount() {
+        assert_eq!(
+            local_public_share_url("0.0.0.0:8080", "abc123").as_deref(),
+            Some("http://127.0.0.1:8080/__latitude/share/abc123/")
+        );
+    }
+
+    #[test]
+    fn parses_share_expiry_durations() {
+        assert_eq!(parse_duration_seconds("30").unwrap(), 30);
+        assert_eq!(parse_duration_seconds("15m").unwrap(), 900);
+        assert_eq!(parse_duration_seconds("2h").unwrap(), 7200);
+        assert_eq!(parse_duration_seconds("3 days").unwrap(), 259200);
+        assert!(parse_duration_seconds("0").is_err());
+        assert!(parse_duration_seconds("1w").is_err());
     }
 
     #[test]

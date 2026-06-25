@@ -4,7 +4,7 @@ use axum::{
     Json,
     body::{Body, to_bytes},
     extract::State,
-    http::{Method, Request, Response, StatusCode, header},
+    http::{HeaderValue, Method, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
 use tokio::fs;
@@ -12,7 +12,8 @@ use tracing::error;
 
 use crate::{
     config::{
-        ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig, decode_page_binary_content,
+        ApplicationConfig, ApplicationTarget, DeploymentShareConfig, LatitudeConfig, PageFormat,
+        ProjectConfig, current_unix_timestamp, decode_page_binary_content,
         is_binary_document_media_type,
     },
     desktop::desktop_info_response,
@@ -20,20 +21,26 @@ use crate::{
 };
 
 use super::super::{
-    auth::{public_auth_challenge, public_request_is_authenticated, request_bearer_token},
+    auth::{
+        clean_next_path, header_cookie_value, parse_public_login_form, public_auth_challenge,
+        public_login_success_response, public_password_matches, public_request_is_authenticated,
+        request_bearer_token,
+    },
     constants::{
-        AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, MAX_TERMINAL_COMMAND_BYTES,
-        PUBLIC_ROOT_DESKTOP_WS_PATH, TERMINAL_ROUTE_SEGMENT,
+        AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
+        MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH,
+        PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     git::{GitActionResponse, collect_project_diff, handle_git_action_request},
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
-        ProjectPath, filtered_cookie_header, is_hop_by_hop_header, join_upstream_url,
-        resolve_project_path, sanitized_relative_path, split_project_path,
+        ProjectPath, is_hop_by_hop_header, join_upstream_url, resolve_project_path,
+        sanitized_relative_path, split_project_path,
     },
     render::{
         render_diff_workspace_fragment, render_project_diff, render_project_home,
         render_project_terminal, render_root_desktop, render_root_terminal, render_server_home,
+        render_share_login,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
@@ -48,10 +55,20 @@ pub(in crate::server) async fn public_entry(
 ) -> Response<Body> {
     let original_path = req.uri().path().to_string();
     let config = state.config_snapshot().await;
+    let device_hostname = state.device_hostname().to_string();
+
+    if original_path == PUBLIC_SHARE_BASE_PATH
+        || original_path.starts_with(&format!("{PUBLIC_SHARE_BASE_PATH}/"))
+    {
+        let Some(share_path) = split_share_path(&original_path) else {
+            return plain_response(StatusCode::NOT_FOUND, "share link was not found\n");
+        };
+        return serve_shared_deployment(state, req, &config, share_path, &device_hostname).await;
+    }
+
     if !public_request_is_authenticated(&state, &config, &req) {
         return public_auth_challenge(&state, &req, false);
     }
-    let device_hostname = state.device_hostname().to_string();
 
     if original_path == "/" {
         return serve_server_home(req, &config, &device_hostname).await;
@@ -113,11 +130,266 @@ pub(in crate::server) async fn public_entry(
         );
     };
 
+    let mount_path = format!("/{}/{}", project.name, app.name);
+    serve_deployment_target(
+        state,
+        req,
+        &project,
+        &app,
+        remainder.as_str(),
+        &mount_path,
+        None,
+        &device_hostname,
+    )
+    .await
+}
+
+struct SharePath {
+    token: String,
+    mount_path: String,
+    remainder: String,
+}
+
+async fn serve_shared_deployment(
+    state: AppState,
+    req: Request<Body>,
+    config: &LatitudeConfig,
+    share_path: SharePath,
+    device_hostname: &str,
+) -> Response<Body> {
+    let Some(share) = config
+        .share_links
+        .iter()
+        .find(|share| share.token == share_path.token)
+        .cloned()
+    else {
+        return plain_response(StatusCode::NOT_FOUND, "share link was not found\n");
+    };
+
+    let now = current_unix_timestamp();
+    if share.is_expired(now) {
+        return plain_response(StatusCode::GONE, "share link has expired\n");
+    }
+
+    if !share_request_is_authenticated(&state, &req, &share) {
+        if req.method() == Method::POST {
+            return handle_share_login_post(state, req, &share, &share_path, now, device_hostname)
+                .await;
+        }
+        return share_auth_challenge(&req, &share_path, false, device_hostname);
+    }
+
+    let Some(project) = config
+        .projects
+        .iter()
+        .find(|project| project.enabled && project.name == share.project)
+        .cloned()
+    else {
+        return plain_response(
+            StatusCode::NOT_FOUND,
+            format!("No enabled project is mounted at {}\n", share.project),
+        );
+    };
+
+    let Some(app) = project
+        .deployments
+        .iter()
+        .find(|app| app.enabled && app.name == share.deployment)
+        .cloned()
+    else {
+        return plain_response(
+            StatusCode::NOT_FOUND,
+            format!(
+                "No enabled deployment is mounted at {}/{}\n",
+                share.project, share.deployment
+            ),
+        );
+    };
+
+    let share_cookie_name = share
+        .password
+        .as_ref()
+        .map(|_| share_auth_cookie_name(&share.token));
+    serve_deployment_target(
+        state,
+        req,
+        &project,
+        &app,
+        &share_path.remainder,
+        &share_path.mount_path,
+        share_cookie_name.as_deref(),
+        device_hostname,
+    )
+    .await
+}
+
+async fn handle_share_login_post(
+    state: AppState,
+    req: Request<Body>,
+    share: &DeploymentShareConfig,
+    share_path: &SharePath,
+    now: u64,
+    device_hostname: &str,
+) -> Response<Body> {
+    let query_next = req
+        .uri()
+        .path_and_query()
+        .map(|path_and_query| path_and_query.as_str().to_string());
+    let (_parts, body) = req.into_parts();
+    let body = match to_bytes(body, MAX_LOGIN_PAYLOAD_BYTES).await {
+        Ok(body) => body,
+        Err(error) => {
+            return plain_response(
+                StatusCode::BAD_REQUEST,
+                format!("share login payload could not be read: {error}\n"),
+            );
+        }
+    };
+
+    let form = parse_public_login_form(&body);
+    let next = clean_next_path(form.next.or(query_next));
+
+    if share
+        .password
+        .as_deref()
+        .is_some_and(|password| public_password_matches(&form.password, password))
+    {
+        return public_login_success_response(&next, share_auth_set_cookie(&state, share, now));
+    }
+
+    share_auth_challenge_for_path(&share_path.mount_path, &next, true, false, device_hostname)
+}
+
+fn share_auth_challenge(
+    req: &Request<Body>,
+    share_path: &SharePath,
+    login_failed: bool,
+    device_hostname: &str,
+) -> Response<Body> {
+    if req.method() != Method::GET && req.method() != Method::HEAD {
+        return plain_response(StatusCode::UNAUTHORIZED, "share password required\n");
+    }
+
+    let next = clean_next_path(
+        req.uri()
+            .path_and_query()
+            .map(|path_and_query| path_and_query.as_str().to_string()),
+    );
+
+    share_auth_challenge_for_path(
+        &share_path.mount_path,
+        &next,
+        login_failed,
+        req.method() == Method::HEAD,
+        device_hostname,
+    )
+}
+
+fn share_auth_challenge_for_path(
+    action: &str,
+    next: &str,
+    login_failed: bool,
+    head: bool,
+    device_hostname: &str,
+) -> Response<Body> {
+    let method = if head { Method::HEAD } else { Method::GET };
+    html_status_response(
+        StatusCode::UNAUTHORIZED,
+        &method,
+        render_share_login(action, next, login_failed, device_hostname),
+    )
+}
+
+fn share_request_is_authenticated(
+    state: &AppState,
+    req: &Request<Body>,
+    share: &DeploymentShareConfig,
+) -> bool {
+    if share.password.is_none() {
+        return true;
+    }
+
+    header_cookie_value(req.headers(), &share_auth_cookie_name(&share.token))
+        .as_deref()
+        .is_some_and(|value| state.verify_public_auth_cookie(&share_auth_key(share), value))
+}
+
+fn share_auth_set_cookie(state: &AppState, share: &DeploymentShareConfig, now: u64) -> String {
+    let value = state.public_auth_cookie_value(&share_auth_key(share));
+    let cookie_name = share_auth_cookie_name(&share.token);
+    let max_age = share
+        .expires_at
+        .map(|expires_at| expires_at.saturating_sub(now))
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(AUTH_COOKIE_MAX_AGE_SECONDS)
+        .min(AUTH_COOKIE_MAX_AGE_SECONDS);
+    format!(
+        "{cookie_name}={value}; HttpOnly; SameSite=Lax; Path={PUBLIC_SHARE_BASE_PATH}/{}; Max-Age={max_age}",
+        share.token
+    )
+}
+
+fn share_auth_key(share: &DeploymentShareConfig) -> String {
+    format!(
+        "share:{}:{}:{}:{}",
+        share.token,
+        share.project,
+        share.deployment,
+        share.password.as_deref().unwrap_or("")
+    )
+}
+
+fn share_auth_cookie_name(token: &str) -> String {
+    format!("latitude_share_{token}")
+}
+
+fn split_share_path(path: &str) -> Option<SharePath> {
+    let prefix = format!("{PUBLIC_SHARE_BASE_PATH}/");
+    let rest = path.strip_prefix(&prefix)?;
+    let mut segments = rest.splitn(2, '/');
+    let token = segments.next()?.to_string();
+    if token.is_empty() {
+        return None;
+    }
+
+    let remainder = segments
+        .next()
+        .map(|rest| format!("/{rest}"))
+        .unwrap_or_else(|| "/".to_string());
+
+    Some(SharePath {
+        mount_path: format!("{PUBLIC_SHARE_BASE_PATH}/{token}"),
+        token,
+        remainder,
+    })
+}
+
+async fn serve_deployment_target(
+    state: AppState,
+    req: Request<Body>,
+    project: &ProjectConfig,
+    app: &ApplicationConfig,
+    remainder: &str,
+    mount_path: &str,
+    extra_excluded_cookie_name: Option<&str>,
+    device_hostname: &str,
+) -> Response<Body> {
     match &app.target {
         ApplicationTarget::ReverseProxy {
             upstream,
             strip_prefix,
-        } => proxy_request(state, req, upstream, *strip_prefix, remainder.as_str()).await,
+        } => {
+            proxy_request(
+                state,
+                req,
+                upstream,
+                *strip_prefix,
+                remainder,
+                mount_path,
+                extra_excluded_cookie_name,
+            )
+            .await
+        }
         ApplicationTarget::Static {
             root,
             index_file,
@@ -131,8 +403,8 @@ pub(in crate::server) async fn public_entry(
                 &root,
                 index_file,
                 *spa_fallback,
-                remainder.as_str(),
-                &device_hostname,
+                remainder,
+                device_hostname,
             )
             .await
         }
@@ -149,8 +421,8 @@ pub(in crate::server) async fn public_entry(
                 *format,
                 media_type.as_deref(),
                 content,
-                remainder.as_str(),
-                &device_hostname,
+                remainder,
+                device_hostname,
             )
             .await
         }
@@ -163,12 +435,14 @@ async fn proxy_request(
     upstream: &str,
     strip_prefix: bool,
     remainder: &str,
+    mount_path: &str,
+    extra_excluded_cookie_name: Option<&str>,
 ) -> Response<Body> {
     let (parts, body) = req.into_parts();
     let forward_path = if strip_prefix {
         remainder.to_string()
     } else {
-        parts.uri.path().to_string()
+        format!("{}{}", mount_path.trim_end_matches('/'), remainder)
     };
 
     let target_url = match join_upstream_url(upstream, &forward_path, parts.uri.query()) {
@@ -197,7 +471,10 @@ async fn proxy_request(
             continue;
         }
         if *name == header::COOKIE {
-            if let Some(filtered_cookie) = filtered_cookie_header(value, AUTH_COOKIE_NAME) {
+            let excluded_cookie_names = [Some(AUTH_COOKIE_NAME), extra_excluded_cookie_name];
+            if let Some(filtered_cookie) =
+                filtered_cookie_header_except(value, &excluded_cookie_names)
+            {
                 builder = builder.header(name, filtered_cookie);
             }
             continue;
@@ -236,6 +513,31 @@ async fn proxy_request(
             StatusCode::BAD_GATEWAY,
             format!("upstream request failed: {error}"),
         ),
+    }
+}
+
+fn filtered_cookie_header_except(
+    value: &HeaderValue,
+    excluded_names: &[Option<&str>],
+) -> Option<String> {
+    let raw = value.to_str().ok()?;
+    let cookies = raw
+        .split(';')
+        .filter_map(|cookie| {
+            let cookie = cookie.trim();
+            let (name, _) = cookie.split_once('=')?;
+            let should_exclude = excluded_names
+                .iter()
+                .flatten()
+                .any(|excluded_name| name.trim() == *excluded_name);
+            (!should_exclude).then(|| cookie.to_string())
+        })
+        .collect::<Vec<_>>();
+
+    if cookies.is_empty() {
+        None
+    } else {
+        Some(cookies.join("; "))
     }
 }
 
@@ -681,9 +983,13 @@ fn root_desktop_remainder(path: &str) -> Option<&str> {
 }
 
 fn html_response(method: &Method, html: String) -> Response<Body> {
+    html_status_response(StatusCode::OK, method, html)
+}
+
+fn html_status_response(status: StatusCode, method: &Method, html: String) -> Response<Body> {
     let bytes = html.into_bytes();
     let builder = Response::builder()
-        .status(StatusCode::OK)
+        .status(status)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
         .header(header::CONTENT_LENGTH, bytes.len());
 

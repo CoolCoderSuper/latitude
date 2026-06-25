@@ -239,6 +239,39 @@ pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostnam
     )
 }
 
+pub(super) fn render_share_login(
+    action: &str,
+    next: &str,
+    login_failed: bool,
+    device_hostname: &str,
+) -> String {
+    html_page::document(
+        "Open share link - Latitude",
+        device_hostname,
+        AUTH_PAGE_STYLE,
+        html! {},
+        html! {
+            main {
+                header {
+                    h1 { "Latitude" }
+                    p { "Open shared deployment on " (device_hostname) }
+                }
+                @if login_failed {
+                    div class="error" { "Incorrect password." }
+                }
+                form method="post" action=(action) {
+                    input type="hidden" name="next" value=(next);
+                    label {
+                        "Password"
+                        input name="password" type="password" required autofocus autocomplete="current-password";
+                    }
+                    button type="submit" { "Open share" }
+                }
+            }
+        },
+    )
+}
+
 pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str) -> String {
     let enabled_projects = config
         .projects
