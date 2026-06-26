@@ -8,6 +8,14 @@ From the repository root, run:
 .\init-ultravnc.ps1
 ```
 
+By default the script prepares UltraVNC in portable mode here. To install and start it as a Windows service, run this from an elevated PowerShell session:
+
+```powershell
+.\init-ultravnc.ps1 -Install
+```
+
+The service listens on `127.0.0.1:5900`.
+
 Latitude expects `winvnc.exe` here by default:
 
 ```text
