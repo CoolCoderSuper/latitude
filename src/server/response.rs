@@ -7,7 +7,7 @@ use axum::{
 use serde::Serialize;
 use tracing::error;
 
-use crate::config::ConfigError;
+use crate::{config::ConfigError, storage::StorageError};
 
 #[derive(Debug)]
 pub(super) struct ApiError {
@@ -45,6 +45,18 @@ impl From<ConfigError> for ApiError {
             ConfigError::Invalid(message) => Self::new(StatusCode::BAD_REQUEST, message),
             error => {
                 error!(%error, "config operation failed");
+                Self::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+            }
+        }
+    }
+}
+
+impl From<StorageError> for ApiError {
+    fn from(error: StorageError) -> Self {
+        match error {
+            StorageError::Invalid(message) => Self::new(StatusCode::BAD_REQUEST, message),
+            error => {
+                error!(%error, "catalog operation failed");
                 Self::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
             }
         }

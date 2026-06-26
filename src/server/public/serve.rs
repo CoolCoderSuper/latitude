@@ -12,12 +12,12 @@ use tracing::error;
 
 use crate::{
     config::{
-        ApplicationConfig, ApplicationTarget, DeploymentShareConfig, LatitudeConfig, PageFormat,
-        ProjectConfig, current_unix_timestamp, decode_page_binary_content,
-        is_binary_document_media_type,
+        ApplicationConfig, ApplicationTarget, BootConfig, DeploymentShareConfig, PageFormat,
+        ProjectConfig, current_unix_timestamp, is_binary_document_media_type,
     },
     desktop::desktop_info_response,
     state::AppState,
+    storage::PageContent,
 };
 
 use super::super::{
@@ -64,7 +64,7 @@ pub(in crate::server) async fn public_entry(
         let Some(share_path) = split_share_path(&original_path) else {
             return plain_response(StatusCode::NOT_FOUND, "share link was not found\n");
         };
-        return serve_shared_deployment(state, req, &config, share_path, &device_hostname).await;
+        return serve_shared_deployment(state, req, share_path, &device_hostname).await;
     }
 
     if !public_request_is_authenticated(&state, &config, &req) {
@@ -72,7 +72,7 @@ pub(in crate::server) async fn public_entry(
     }
 
     if original_path == "/" {
-        return serve_server_home(req, &config, &device_hostname).await;
+        return serve_server_home(req, &state, &config, &device_hostname).await;
     }
 
     if let Some(remainder) = root_terminal_remainder(&original_path) {
@@ -91,16 +91,15 @@ pub(in crate::server) async fn public_entry(
     };
     let project_mount = public_path.project_name().to_string();
 
-    let Some(project) = config
-        .projects
-        .iter()
-        .find(|project| project.enabled && project.name == project_mount)
-        .cloned()
-    else {
-        return plain_response(
-            StatusCode::NOT_FOUND,
-            format!("No enabled project is mounted at /{project_mount}\n"),
-        );
+    let project = match load_enabled_project(&state, &project_mount).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return plain_response(
+                StatusCode::NOT_FOUND,
+                format!("No enabled project is mounted at /{project_mount}\n"),
+            );
+        }
+        Err(response) => return response,
     };
 
     let ProjectPath::Deployment {
@@ -154,17 +153,19 @@ struct SharePath {
 async fn serve_shared_deployment(
     state: AppState,
     req: Request<Body>,
-    config: &LatitudeConfig,
     share_path: SharePath,
     device_hostname: &str,
 ) -> Response<Body> {
-    let Some(share) = config
-        .share_links
-        .iter()
-        .find(|share| share.token == share_path.token)
-        .cloned()
-    else {
-        return plain_response(StatusCode::NOT_FOUND, "share link was not found\n");
+    let share = match state.catalog().get_share(&share_path.token).await {
+        Ok(Some(share)) => share,
+        Ok(None) => return plain_response(StatusCode::NOT_FOUND, "share link was not found\n"),
+        Err(error) => {
+            error!(%error, token = %share_path.token, "share link lookup failed");
+            return plain_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "catalog could not be read\n",
+            );
+        }
     };
 
     let now = current_unix_timestamp();
@@ -180,16 +181,15 @@ async fn serve_shared_deployment(
         return share_auth_challenge(&req, &share_path, false, device_hostname);
     }
 
-    let Some(project) = config
-        .projects
-        .iter()
-        .find(|project| project.enabled && project.name == share.project)
-        .cloned()
-    else {
-        return plain_response(
-            StatusCode::NOT_FOUND,
-            format!("No enabled project is mounted at {}\n", share.project),
-        );
+    let project = match load_enabled_project(&state, &share.project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return plain_response(
+                StatusCode::NOT_FOUND,
+                format!("No enabled project is mounted at {}\n", share.project),
+            );
+        }
+        Err(response) => return response,
     };
 
     let Some(app) = project
@@ -409,23 +409,27 @@ async fn serve_deployment_target(
             )
             .await
         }
-        ApplicationTarget::Page {
-            content,
-            format,
-            media_type,
-            title,
-        } => {
-            serve_page(
-                req,
-                &project.name,
-                title.as_deref(),
-                *format,
-                media_type.as_deref(),
-                content,
-                remainder,
-                device_hostname,
-            )
-            .await
+        ApplicationTarget::Page { .. } => {
+            match state
+                .catalog()
+                .get_page_content(&project.name, &app.name)
+                .await
+            {
+                Ok(Some(content)) => {
+                    serve_page(req, &project.name, content, remainder, device_hostname).await
+                }
+                Ok(None) => plain_response(
+                    StatusCode::NOT_FOUND,
+                    format!(
+                        "page deployment '{}' was not found in project '{}'\n",
+                        app.name, project.name
+                    ),
+                ),
+                Err(error) => json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("page content could not be read: {error}"),
+                ),
+            }
         }
     }
 }
@@ -636,10 +640,7 @@ async fn serve_static(
 async fn serve_page(
     req: Request<Body>,
     project_name: &str,
-    title: Option<&str>,
-    format: PageFormat,
-    media_type: Option<&str>,
-    content: &str,
+    content: PageContent,
     remainder: &str,
     device_hostname: &str,
 ) -> Response<Body> {
@@ -657,18 +658,35 @@ async fn serve_page(
         );
     }
 
-    if format == PageFormat::Binary && page_raw_requested(req.uri().query()) {
-        return binary_document_response(req.method(), media_type, content);
+    if content.format == PageFormat::Binary && page_raw_requested(req.uri().query()) {
+        return binary_document_response(
+            req.method(),
+            content.media_type.as_deref(),
+            content.bytes,
+        );
     }
+
+    let rendered_content = match content.format {
+        PageFormat::Binary => String::new(),
+        PageFormat::Html | PageFormat::Markdown => match String::from_utf8(content.bytes) {
+            Ok(content) => content,
+            Err(error) => {
+                return plain_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("page content could not be decoded as UTF-8: {error}\n"),
+                );
+            }
+        },
+    };
 
     html_response(
         req.method(),
         render_project_page_content(
             project_name,
-            title,
-            format,
-            media_type,
-            content,
+            content.title.as_deref(),
+            content.format,
+            content.media_type.as_deref(),
+            &rendered_content,
             page_theme_from_headers(req.headers()),
             device_hostname,
         ),
@@ -678,22 +696,13 @@ async fn serve_page(
 fn binary_document_response(
     method: &Method,
     media_type: Option<&str>,
-    content: &str,
+    bytes: Vec<u8>,
 ) -> Response<Body> {
     let Some(media_type) = media_type else {
         return plain_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "binary page media_type is missing\n",
         );
-    };
-    let bytes = match decode_page_binary_content(content) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return plain_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("binary page content could not be decoded: {error}\n"),
-            );
-        }
     };
     let builder = Response::builder()
         .status(StatusCode::OK)
@@ -895,7 +904,7 @@ async fn serve_root_terminal(
 async fn serve_root_desktop(
     req: Request<Body>,
     state: &AppState,
-    config: &LatitudeConfig,
+    config: &BootConfig,
     remainder: &str,
     device_hostname: &str,
 ) -> Response<Body> {
@@ -946,7 +955,8 @@ async fn serve_root_desktop(
 
 async fn serve_server_home(
     req: Request<Body>,
-    config: &LatitudeConfig,
+    state: &AppState,
+    config: &BootConfig,
     device_hostname: &str,
 ) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
@@ -956,7 +966,39 @@ async fn serve_server_home(
         );
     }
 
-    html_response(req.method(), render_server_home(config, device_hostname))
+    let projects = match state.catalog().list_projects().await {
+        Ok(projects) => projects,
+        Err(error) => {
+            error!(%error, "project list failed");
+            return plain_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "catalog could not be read\n",
+            );
+        }
+    };
+
+    html_response(
+        req.method(),
+        render_server_home(config, &projects, device_hostname),
+    )
+}
+
+async fn load_enabled_project(
+    state: &AppState,
+    name: &str,
+) -> Result<Option<ProjectConfig>, Response<Body>> {
+    state
+        .catalog()
+        .get_project(name)
+        .await
+        .map(|project| project.filter(|project| project.enabled))
+        .map_err(|error| {
+            error!(%error, project = %name, "project lookup failed");
+            plain_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "catalog could not be read\n",
+            )
+        })
 }
 
 fn root_terminal_remainder(path: &str) -> Option<&str> {

@@ -2,6 +2,7 @@
   "public_bind": "0.0.0.0:8080",
   "command_bind": "127.0.0.1:7600",
   "public_password": "test",
+  "data_dir": "latitude-data",
   "desktop": {
     "enabled": false,
     "label": "Desktop",
@@ -12,38 +13,5 @@
     "vnc_port": 5900,
     "view_only": true,
     "allow_non_loopback": false
-  },
-  "share_links": [],
-  "projects": [
-    {
-      "name": "demo",
-      "enabled": true,
-      "project_dir": ".",
-      "deployments": [
-        {
-          "name": "website",
-          "enabled": true,
-          "kind": "reverse_proxy",
-          "upstream": "http://127.0.0.1:3000",
-          "strip_prefix": true
-        },
-        {
-          "name": "mock",
-          "enabled": true,
-          "kind": "static",
-          "root": "./sites/mock",
-          "index_file": "index.html",
-          "spa_fallback": true
-        },
-        {
-          "name": "agent-note",
-          "enabled": true,
-          "kind": "page",
-          "format": "markdown",
-          "title": "Agent Note",
-          "content": "# Agent Note\n\nLatitude serves websites and documents inside projects."
-        }
-      ]
-    }
-  ]
+  }
 }

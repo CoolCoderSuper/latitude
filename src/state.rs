@@ -7,9 +7,10 @@ use sha2::Sha256;
 use tokio::sync::RwLock;
 
 use crate::{
-    config::{ConfigError, LatitudeConfig},
+    config::{BootConfig, ConfigError},
     desktop::ManagedDesktopManager,
     device::current_hostname,
+    storage::CatalogStore,
     terminal::TerminalSessionManager,
 };
 
@@ -22,7 +23,8 @@ pub struct AppState {
 
 struct AppStateInner {
     config_path: PathBuf,
-    config: RwLock<LatitudeConfig>,
+    config: RwLock<BootConfig>,
+    catalog: CatalogStore,
     client: Client,
     device_hostname: String,
     public_auth_secret: [u8; 32],
@@ -31,7 +33,7 @@ struct AppStateInner {
 }
 
 impl AppState {
-    pub fn new(config_path: PathBuf, config: LatitudeConfig) -> Self {
+    pub fn new(config_path: PathBuf, config: BootConfig, catalog: CatalogStore) -> Self {
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -41,6 +43,7 @@ impl AppState {
             inner: Arc::new(AppStateInner {
                 config_path,
                 config: RwLock::new(config),
+                catalog,
                 client,
                 device_hostname: current_hostname(),
                 public_auth_secret: random(),
@@ -66,6 +69,10 @@ impl AppState {
         self.inner.desktop_manager.clone()
     }
 
+    pub fn catalog(&self) -> &CatalogStore {
+        &self.inner.catalog
+    }
+
     pub fn public_auth_cookie_value(&self, password: &str) -> String {
         encode_hex(public_auth_tag(&self.inner.public_auth_secret, password))
     }
@@ -78,42 +85,15 @@ impl AppState {
         mac.verify_slice(&tag).is_ok()
     }
 
-    pub async fn config_snapshot(&self) -> LatitudeConfig {
+    pub async fn config_snapshot(&self) -> BootConfig {
         self.inner.config.read().await.clone()
     }
 
-    pub async fn replace_config(&self, config: LatitudeConfig) -> Result<(), ConfigError> {
+    pub async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {
         config.validate()?;
         config.save_to(&self.inner.config_path).await?;
         *self.inner.config.write().await = config;
         Ok(())
-    }
-
-    pub async fn update_config<T>(
-        &self,
-        update: impl FnOnce(&mut LatitudeConfig) -> T,
-    ) -> Result<T, ConfigError> {
-        let mut candidate = self.config_snapshot().await;
-        let result = update(&mut candidate);
-        candidate.validate()?;
-        candidate.save_to(&self.inner.config_path).await?;
-        *self.inner.config.write().await = candidate;
-        Ok(result)
-    }
-
-    pub async fn update_config_fallible<T, E>(
-        &self,
-        update: impl FnOnce(&mut LatitudeConfig) -> Result<T, E>,
-    ) -> Result<Result<T, E>, ConfigError> {
-        let mut candidate = self.config_snapshot().await;
-        let result = match update(&mut candidate) {
-            Ok(result) => result,
-            Err(error) => return Ok(Err(error)),
-        };
-        candidate.validate()?;
-        candidate.save_to(&self.inner.config_path).await?;
-        *self.inner.config.write().await = candidate;
-        Ok(Ok(result))
     }
 }
 

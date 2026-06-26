@@ -3,22 +3,20 @@ use axum::{
     body::{Body, to_bytes},
     extract::{Path as AxumPath, State},
     http::{Request, StatusCode, header},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    config::{
-        ApplicationConfig, ApplicationTarget, ConfigError, DeploymentShareConfig, LatitudeConfig,
-        ProjectConfig, current_unix_timestamp,
-    },
+    config::{ApplicationConfig, BootConfig, DeploymentShareConfig, current_unix_timestamp},
     state::AppState,
+    storage::PageContent,
 };
 
 use super::{
     constants::{MAX_PAGE_PAYLOAD_BYTES, PUBLIC_SHARE_BASE_PATH},
     page::parse_page_payload,
-    response::ApiError,
+    response::{ApiError, internal_response},
 };
 
 #[derive(Debug, Serialize)]
@@ -52,32 +50,19 @@ pub(super) struct DeploymentShareResponse {
     expired: bool,
 }
 
-fn find_project_mut<'a>(
-    config: &'a mut LatitudeConfig,
-    name: &str,
-) -> Result<&'a mut ProjectConfig, ApiError> {
-    config
-        .projects
-        .iter_mut()
-        .find(|project| project.name == name)
-        .ok_or_else(|| ApiError::not_found(format!("project '{name}' was not found")))
-}
-
-pub(super) async fn command_health(State(state): State<AppState>) -> impl IntoResponse {
+pub(super) async fn command_health(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
     let config = state.config_snapshot().await;
-    let deployment_count = config
-        .projects
-        .iter()
-        .map(|project| project.deployments.len())
-        .sum();
-    Json(HealthResponse {
+    let counts = state.catalog().counts().await?;
+    Ok(Json(HealthResponse {
         status: "ok",
         public_bind: config.public_bind,
         command_bind: config.command_bind,
-        project_count: config.projects.len(),
-        deployment_count,
-        share_link_count: config.share_links.len(),
-    })
+        project_count: counts.project_count,
+        deployment_count: counts.deployment_count,
+        share_link_count: counts.share_link_count,
+    }))
 }
 
 pub(super) async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
@@ -86,37 +71,26 @@ pub(super) async fn get_config(State(state): State<AppState>) -> impl IntoRespon
 
 pub(super) async fn put_config(
     State(state): State<AppState>,
-    Json(config): Json<LatitudeConfig>,
+    Json(config): Json<BootConfig>,
 ) -> Result<impl IntoResponse, ApiError> {
+    config.validate()?;
     state.replace_config(config.clone()).await?;
     Ok(Json(config))
 }
 
-pub(super) async fn list_projects(State(state): State<AppState>) -> impl IntoResponse {
-    let config = state.config_snapshot().await;
-    Json(config.projects)
+pub(super) async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(state.catalog().list_projects().await?))
 }
 
 pub(super) async fn create_project(
     State(state): State<AppState>,
-    Json(project): Json<ProjectConfig>,
+    Json(project): Json<crate::config::ProjectConfig>,
 ) -> Result<impl IntoResponse, ApiError> {
     project.validate()?;
     let created = project.clone();
-
-    state
-        .update_config(|config| -> Result<(), ConfigError> {
-            if config.projects.iter().any(|item| item.name == project.name) {
-                return Err(ConfigError::Invalid(format!(
-                    "project '{}' already exists",
-                    project.name
-                )));
-            }
-            config.projects.push(project);
-            Ok(())
-        })
-        .await??;
-
+    state.catalog().create_project(project).await?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -124,11 +98,10 @@ pub(super) async fn get_project(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let config = state.config_snapshot().await;
-    config
-        .projects
-        .into_iter()
-        .find(|item| item.name == project)
+    state
+        .catalog()
+        .get_project(&project)
+        .await?
         .map(Json)
         .ok_or_else(|| ApiError::not_found(format!("project '{project}' was not found")))
 }
@@ -136,30 +109,14 @@ pub(super) async fn get_project(
 pub(super) async fn replace_project(
     AxumPath(name): AxumPath<String>,
     State(state): State<AppState>,
-    Json(mut project): Json<ProjectConfig>,
+    Json(mut project): Json<crate::config::ProjectConfig>,
 ) -> Result<impl IntoResponse, ApiError> {
     if project.name != name {
         project.name = name.clone();
     }
     project.validate()?;
     let replacement = project.clone();
-
-    state
-        .update_config(|config| -> Result<(), ConfigError> {
-            if let Some(existing) = config
-                .projects
-                .iter_mut()
-                .find(|existing| existing.name == name)
-            {
-                *existing = project;
-                Ok(())
-            } else {
-                config.projects.push(project);
-                Ok(())
-            }
-        })
-        .await??;
-
+    state.catalog().replace_project(project).await?;
     Ok(Json(replacement))
 }
 
@@ -167,19 +124,7 @@ pub(super) async fn delete_project(
     AxumPath(name): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let removed = state
-        .update_config(|config| {
-            let before = config.projects.len();
-            config.projects.retain(|project| project.name != name);
-            let removed = before != config.projects.len();
-            if removed {
-                config.share_links.retain(|share| share.project != name);
-            }
-            removed
-        })
-        .await?;
-
-    if removed {
+    if state.catalog().delete_project(&name).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found("project was not found"))
@@ -190,13 +135,14 @@ pub(super) async fn list_project_deployments(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let config = state.config_snapshot().await;
-    config
-        .projects
-        .into_iter()
-        .find(|item| item.name == project)
-        .map(|project| Json(project.deployments))
-        .ok_or_else(|| ApiError::not_found(format!("project '{project}' was not found")))
+    if state.catalog().get_project(&project).await?.is_none() {
+        return Err(ApiError::not_found(format!(
+            "project '{project}' was not found"
+        )));
+    }
+    Ok(Json(
+        state.catalog().list_project_deployments(&project).await?,
+    ))
 }
 
 pub(super) async fn create_project_deployment(
@@ -206,28 +152,7 @@ pub(super) async fn create_project_deployment(
 ) -> Result<impl IntoResponse, ApiError> {
     app.validate()?;
     let created = app.clone();
-
-    state
-        .update_config_fallible(|config| -> Result<(), ApiError> {
-            let project_config = find_project_mut(config, &project)?;
-            if project_config
-                .deployments
-                .iter()
-                .any(|item| item.name == app.name)
-            {
-                return Err(ApiError::new(
-                    StatusCode::BAD_REQUEST,
-                    format!(
-                        "deployment '{}' already exists in project '{}'",
-                        app.name, project
-                    ),
-                ));
-            }
-            project_config.deployments.push(app);
-            Ok(())
-        })
-        .await??;
-
+    state.catalog().create_deployment(&project, app).await?;
     Ok((StatusCode::CREATED, Json(created)))
 }
 
@@ -235,17 +160,10 @@ pub(super) async fn get_project_deployment(
     AxumPath((project, name)): AxumPath<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let config = state.config_snapshot().await;
-    let project_config = config
-        .projects
-        .into_iter()
-        .find(|item| item.name == project)
-        .ok_or_else(|| ApiError::not_found(format!("project '{project}' was not found")))?;
-
-    project_config
-        .deployments
-        .into_iter()
-        .find(|app| app.name == name)
+    state
+        .catalog()
+        .get_deployment(&project, &name)
+        .await?
         .map(Json)
         .ok_or_else(|| {
             ApiError::not_found(format!(
@@ -263,24 +181,12 @@ pub(super) async fn replace_project_deployment(
         app.name = name.clone();
     }
     app.validate()?;
-    let replacement = app.clone();
-
-    state
-        .update_config_fallible(|config| -> Result<(), ApiError> {
-            let project_config = find_project_mut(config, &project)?;
-            if let Some(existing) = project_config
-                .deployments
-                .iter_mut()
-                .find(|existing| existing.name == name)
-            {
-                *existing = app;
-            } else {
-                project_config.deployments.push(app);
-            }
-            Ok(())
-        })
-        .await??;
-
+    state.catalog().replace_deployment(&project, app).await?;
+    let replacement = state
+        .catalog()
+        .get_deployment(&project, &name)
+        .await?
+        .ok_or_else(|| ApiError::not_found("deployment was not stored"))?;
     Ok(Json(replacement))
 }
 
@@ -305,58 +211,43 @@ pub(super) async fn upsert_project_page(
         })?;
 
     let page = parse_page_payload(content_type.as_deref(), &body)?;
-    let app = ApplicationConfig {
-        name: name.clone(),
-        enabled: true,
-        target: ApplicationTarget::Page {
-            content: page.content,
-            format: page.format,
-            media_type: page.media_type,
-            title: page.title,
-        },
-    };
-    app.validate()?;
-    let replacement = app.clone();
+    let bytes = page.payload_bytes()?;
+    let deployment = state
+        .catalog()
+        .upsert_page(
+            &project,
+            &name,
+            page.format,
+            page.media_type,
+            page.title,
+            bytes,
+        )
+        .await?;
 
-    state
-        .update_config_fallible(|config| -> Result<(), ApiError> {
-            let project_config = find_project_mut(config, &project)?;
-            if let Some(existing) = project_config
-                .deployments
-                .iter_mut()
-                .find(|existing| existing.name == name)
-            {
-                *existing = app;
-            } else {
-                project_config.deployments.push(app);
-            }
-            Ok(())
-        })
-        .await??;
+    Ok(Json(deployment))
+}
 
-    Ok(Json(replacement))
+pub(super) async fn get_project_page_content(
+    AxumPath((project, name)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+) -> Result<Response<Body>, ApiError> {
+    let content = state
+        .catalog()
+        .get_page_content(&project, &name)
+        .await?
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "page deployment '{name}' was not found in project '{project}'"
+            ))
+        })?;
+    Ok(page_content_response(content))
 }
 
 pub(super) async fn delete_project_deployment(
     AxumPath((project, name)): AxumPath<(String, String)>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let removed = state
-        .update_config_fallible(|config| -> Result<bool, ApiError> {
-            let project_config = find_project_mut(config, &project)?;
-            let before = project_config.deployments.len();
-            project_config.deployments.retain(|app| app.name != name);
-            let removed = before != project_config.deployments.len();
-            if removed {
-                config
-                    .share_links
-                    .retain(|share| share.project != project || share.deployment != name);
-            }
-            Ok(removed)
-        })
-        .await??;
-
-    if removed {
+    if state.catalog().delete_deployment(&project, &name).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(format!(
@@ -365,63 +256,35 @@ pub(super) async fn delete_project_deployment(
     }
 }
 
-pub(super) async fn list_deployment_shares(State(state): State<AppState>) -> impl IntoResponse {
-    let config = state.config_snapshot().await;
+pub(super) async fn list_deployment_shares(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
     let now = current_unix_timestamp();
-    let shares = config
-        .share_links
+    let shares = state
+        .catalog()
+        .list_shares()
+        .await?
         .iter()
         .map(|share| deployment_share_response(share, now))
         .collect::<Vec<_>>();
 
-    Json(shares)
+    Ok(Json(shares))
 }
 
 pub(super) async fn create_deployment_share(
     State(state): State<AppState>,
     Json(payload): Json<CreateDeploymentShareRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let now = current_unix_timestamp();
     let share = state
-        .update_config_fallible(|config| -> Result<DeploymentShareConfig, ApiError> {
-            let Some(project) = config
-                .projects
-                .iter()
-                .find(|project| project.name == payload.project)
-            else {
-                return Err(ApiError::not_found(format!(
-                    "project '{}' was not found",
-                    payload.project
-                )));
-            };
-
-            if !project
-                .deployments
-                .iter()
-                .any(|deployment| deployment.name == payload.deployment)
-            {
-                return Err(ApiError::not_found(format!(
-                    "deployment '{}' was not found in project '{}'",
-                    payload.deployment, payload.project
-                )));
-            }
-
-            let password = payload
-                .password
-                .clone()
-                .filter(|password| !password.is_empty());
-            let share = DeploymentShareConfig {
-                token: generate_share_token(config),
-                project: payload.project.clone(),
-                deployment: payload.deployment.clone(),
-                password,
-                expires_at: payload.expires_at,
-            };
-            share.validate()?;
-            config.share_links.push(share.clone());
-            Ok(share)
-        })
-        .await??;
+        .catalog()
+        .create_share(
+            &payload.project,
+            &payload.deployment,
+            payload.password,
+            payload.expires_at,
+        )
+        .await?;
+    let now = current_unix_timestamp();
 
     Ok((
         StatusCode::CREATED,
@@ -433,13 +296,12 @@ pub(super) async fn get_deployment_share(
     AxumPath(token): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let config = state.config_snapshot().await;
     let now = current_unix_timestamp();
-    config
-        .share_links
-        .iter()
-        .find(|share| share.token == token)
-        .map(|share| Json(deployment_share_response(share, now)))
+    state
+        .catalog()
+        .get_share(&token)
+        .await?
+        .map(|share| Json(deployment_share_response(&share, now)))
         .ok_or_else(|| ApiError::not_found(format!("share link '{token}' was not found")))
 }
 
@@ -447,15 +309,7 @@ pub(super) async fn delete_deployment_share(
     AxumPath(token): AxumPath<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let removed = state
-        .update_config(|config| {
-            let before = config.share_links.len();
-            config.share_links.retain(|share| share.token != token);
-            before != config.share_links.len()
-        })
-        .await?;
-
-    if removed {
+    if state.catalog().delete_share(&token).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::not_found(format!(
@@ -476,22 +330,20 @@ fn deployment_share_response(share: &DeploymentShareConfig, now: u64) -> Deploym
     }
 }
 
-fn generate_share_token(config: &LatitudeConfig) -> String {
-    loop {
-        let token = encode_hex(rand::random::<[u8; 16]>());
-        if !config.share_links.iter().any(|share| share.token == token) {
-            return token;
-        }
-    }
-}
+fn page_content_response(content: PageContent) -> Response<Body> {
+    let content_type = content
+        .media_type
+        .or_else(|| match content.format {
+            crate::config::PageFormat::Html => Some("text/html; charset=utf-8".to_string()),
+            crate::config::PageFormat::Markdown => Some("text/markdown; charset=utf-8".to_string()),
+            crate::config::PageFormat::Binary => None,
+        })
+        .unwrap_or_else(|| "application/octet-stream".to_string());
 
-fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_LENGTH, content.bytes.len())
+        .body(Body::from(content.bytes))
+        .unwrap_or_else(internal_response)
 }

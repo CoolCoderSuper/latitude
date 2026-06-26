@@ -92,7 +92,9 @@ latitude config get
 latitude config put latitude.json
 ```
 
-`config put` replaces the full active config. Preserve unrelated fields, especially `public_password`.
+Config contains boot settings such as listener binds, `public_password`, `desktop`, and optional `data_dir`. Projects, deployments, page content, and share links are managed through the project, deployment, page, and share commands.
+
+`config put` replaces the active boot config. Preserve unrelated boot fields, especially `public_password`.
 
 ### Projects
 
@@ -182,9 +184,9 @@ Omit `--password` for an open share link. Use `--expires-in` with seconds by def
 ## Safety Rules
 
 - Never bind or expose the command API outside loopback. `command_bind` must use `127.0.0.1` or `[::1]`.
-- Treat config replacement as a full replacement. Fetch the current config first and preserve unrelated fields.
+- Treat config replacement as a boot-settings replacement. Fetch the current boot config first and preserve unrelated boot fields.
 - Preserve or intentionally update `public_password`; it controls public preview access and Git actions.
-- Preserve `share_links` unless intentionally creating or deleting deployment share links.
+- Manage share links with `latitude share ...` or `/api/shares`.
 - Remember listener bind changes are persisted but require a Latitude restart. Project and deployment changes apply immediately.
 - Use only URL-safe names for projects and deployments: ASCII letters, digits, `-`, and `_`.
 
@@ -198,7 +200,7 @@ Use direct HTTP requests only when the CLI is unavailable. Prefer idempotent `PU
 curl http://127.0.0.1:7600/health
 ```
 
-### Read Current Config
+### Read Boot Config
 
 ```bash
 curl http://127.0.0.1:7600/api/config
@@ -224,7 +226,7 @@ curl -X PUT \
   http://127.0.0.1:7600/api/projects/demo/pages/snapshot
 ```
 
-Use the real media type, such as `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, or `video/webm`. Latitude stores the bytes in the page deployment and serves them back with the same media type.
+Use the real media type, such as `image/jpeg`, `image/png`, `image/webp`, `video/mp4`, or `video/webm`. Latitude stores the bytes under the configured data directory and serves them back with the same media type.
 
 For a titled image or video through the direct API, send JSON with base64 content:
 
@@ -336,12 +338,19 @@ The response includes `href`, such as `/__latitude/share/<token>/`. Delete a sha
 curl -X DELETE http://127.0.0.1:7600/api/shares/<token>
 ```
 
-### Replace Full Config
+Page deployment responses contain metadata only. To fetch stored page bytes through the command API, call `GET /api/projects/{project}/pages/{name}/content`.
+
+### Replace Boot Config
 
 ```bash
 curl -X PUT \
   -H "Content-Type: application/json" \
-  --data @latitude.example.json \
+  -d '{
+    "public_bind": "0.0.0.0:8080",
+    "command_bind": "127.0.0.1:7600",
+    "public_password": "test",
+    "data_dir": "latitude-data"
+  }' \
   http://127.0.0.1:7600/api/config
 ```
 
@@ -352,8 +361,10 @@ The config shape is:
   "public_bind": "0.0.0.0:8080",
   "command_bind": "127.0.0.1:7600",
   "public_password": "test",
-  "share_links": [],
-  "projects": []
+  "data_dir": "latitude-data",
+  "desktop": {
+    "enabled": false
+  }
 }
 ```
 
@@ -362,8 +373,8 @@ The config shape is:
 | Method | Path | Use |
 | --- | --- | --- |
 | `GET` | `/health` | Check process health, listener binds, and counts. |
-| `GET` | `/api/config` | Read active config. |
-| `PUT` | `/api/config` | Replace and persist the full config. |
+| `GET` | `/api/config` | Read boot config. |
+| `PUT` | `/api/config` | Replace and persist boot config. |
 | `GET` | `/api/projects` | List projects. |
 | `POST` | `/api/projects` | Create a project, failing on duplicates. |
 | `GET` | `/api/projects/{project}` | Read one project. |
@@ -375,6 +386,7 @@ The config shape is:
 | `PUT` | `/api/projects/{project}/deployments/{name}` | Create or replace one deployment. |
 | `DELETE` | `/api/projects/{project}/deployments/{name}` | Delete one deployment. |
 | `PUT` or `POST` | `/api/projects/{project}/pages/{name}` | Create or replace a page deployment from raw text, raw image/video bytes, or JSON. |
+| `GET` | `/api/projects/{project}/pages/{name}/content` | Read stored page deployment bytes. |
 | `GET` | `/api/shares` | List deployment share links with password fields redacted. |
 | `POST` | `/api/shares` | Create a deployment share link. |
 | `GET` | `/api/shares/{token}` | Read one deployment share link with password fields redacted. |
@@ -394,4 +406,4 @@ Common API status codes:
 
 - `400`: Invalid config, invalid deployment payload, duplicate project or deployment, or invalid page payload.
 - `404`: Project or deployment not found.
-- `500`: File or config persistence failure.
+- `500`: File, database, or config persistence failure.

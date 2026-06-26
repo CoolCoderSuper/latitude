@@ -140,7 +140,7 @@ function parseSessions(rawSessions: string | null): SessionRecord[] {
   }
 }
 
-async function loadLegacySession(): Promise<SessionRecord | null> {
+async function loadSessionFallback(): Promise<SessionRecord | null> {
   const [baseUrl, token] = await Promise.all([
     getItem(BASE_URL_KEY),
     getItem(TOKEN_KEY),
@@ -174,14 +174,14 @@ async function saveActiveSession(session: SessionRecord | null): Promise<void> {
 }
 
 export async function loadSessions(): Promise<SessionRecord[]> {
-  const [rawSessions, legacySession] = await Promise.all([
+  const [rawSessions, fallbackSession] = await Promise.all([
     getItem(SESSIONS_KEY),
-    loadLegacySession(),
+    loadSessionFallback(),
   ]);
 
   return mergeSessions([
     ...parseSessions(rawSessions),
-    ...(legacySession ? [legacySession] : []),
+    ...(fallbackSession ? [fallbackSession] : []),
   ]);
 }
 

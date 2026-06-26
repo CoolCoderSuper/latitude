@@ -18,19 +18,48 @@ pub const DEFAULT_PUBLIC_PASSWORD: &str = "test";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LatitudeConfig {
+pub struct BootConfig {
     #[serde(default = "default_public_bind")]
     pub public_bind: String,
     #[serde(default = "default_command_bind")]
     pub command_bind: String,
     #[serde(default = "default_public_password")]
     pub public_password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<PathBuf>,
     #[serde(default)]
     pub desktop: DesktopConfig,
-    #[serde(default)]
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CatalogSeed {
     pub share_links: Vec<DeploymentShareConfig>,
+    pub projects: Vec<SeedProjectConfig>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LoadedConfig {
+    pub boot: BootConfig,
+    pub catalog_seed: CatalogSeed,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfigFile {
+    #[serde(default = "default_public_bind")]
+    public_bind: String,
+    #[serde(default = "default_command_bind")]
+    command_bind: String,
+    #[serde(default = "default_public_password")]
+    public_password: String,
     #[serde(default)]
-    pub projects: Vec<ProjectConfig>,
+    data_dir: Option<PathBuf>,
+    #[serde(default)]
+    desktop: DesktopConfig,
+    #[serde(default)]
+    share_links: Vec<DeploymentShareConfig>,
+    #[serde(default)]
+    projects: Vec<SeedProjectConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -119,6 +148,52 @@ pub enum ApplicationTarget {
         spa_fallback: bool,
     },
     Page {
+        #[serde(default)]
+        format: PageFormat,
+        #[serde(default)]
+        media_type: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SeedProjectConfig {
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub project_dir: PathBuf,
+    #[serde(default)]
+    pub deployments: Vec<SeedApplicationConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct SeedApplicationConfig {
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(flatten)]
+    pub target: SeedApplicationTarget,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SeedApplicationTarget {
+    ReverseProxy {
+        upstream: String,
+        #[serde(default = "default_true")]
+        strip_prefix: bool,
+    },
+    Static {
+        root: PathBuf,
+        #[serde(default = "default_index_file")]
+        index_file: String,
+        #[serde(default)]
+        spa_fallback: bool,
+    },
+    Page {
+        #[serde(default)]
         content: String,
         #[serde(default)]
         format: PageFormat,
@@ -142,21 +217,112 @@ pub enum PageFormat {
 pub enum ConfigError {
     #[error("failed to read or write config: {0}")]
     Io(#[from] std::io::Error),
-    #[error("config JSON is invalid: {0}")]
+    #[error("config file is not valid JSON: {0}")]
     Json(#[from] serde_json::Error),
     #[error("invalid config: {0}")]
     Invalid(String),
 }
 
-impl Default for LatitudeConfig {
+impl Default for BootConfig {
     fn default() -> Self {
         Self {
             public_bind: default_public_bind(),
             command_bind: default_command_bind(),
             public_password: default_public_password(),
+            data_dir: None,
             desktop: DesktopConfig::default(),
+        }
+    }
+}
+
+impl Default for ConfigFile {
+    fn default() -> Self {
+        BootConfig::default().into()
+    }
+}
+
+impl From<BootConfig> for ConfigFile {
+    fn from(config: BootConfig) -> Self {
+        Self {
+            public_bind: config.public_bind,
+            command_bind: config.command_bind,
+            public_password: config.public_password,
+            data_dir: config.data_dir,
+            desktop: config.desktop,
             share_links: Vec::new(),
             projects: Vec::new(),
+        }
+    }
+}
+
+impl ConfigFile {
+    fn into_loaded(self) -> LoadedConfig {
+        LoadedConfig {
+            boot: BootConfig {
+                public_bind: self.public_bind,
+                command_bind: self.command_bind,
+                public_password: self.public_password,
+                data_dir: self.data_dir,
+                desktop: self.desktop,
+            },
+            catalog_seed: CatalogSeed {
+                share_links: self.share_links,
+                projects: self.projects,
+            },
+        }
+    }
+}
+
+impl From<&SeedProjectConfig> for ProjectConfig {
+    fn from(project: &SeedProjectConfig) -> Self {
+        Self {
+            name: project.name.clone(),
+            enabled: project.enabled,
+            project_dir: project.project_dir.clone(),
+            deployments: project
+                .deployments
+                .iter()
+                .map(ApplicationConfig::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&SeedApplicationConfig> for ApplicationConfig {
+    fn from(app: &SeedApplicationConfig) -> Self {
+        let target = match &app.target {
+            SeedApplicationTarget::ReverseProxy {
+                upstream,
+                strip_prefix,
+            } => ApplicationTarget::ReverseProxy {
+                upstream: upstream.clone(),
+                strip_prefix: *strip_prefix,
+            },
+            SeedApplicationTarget::Static {
+                root,
+                index_file,
+                spa_fallback,
+            } => ApplicationTarget::Static {
+                root: root.clone(),
+                index_file: index_file.clone(),
+                spa_fallback: *spa_fallback,
+            },
+            SeedApplicationTarget::Page {
+                format,
+                media_type,
+                title,
+                ..
+            } => ApplicationTarget::Page {
+                format: *format,
+                media_type: media_type.clone(),
+                title: title.clone(),
+            },
+        };
+
+        Self {
+            name: app.name.clone(),
+            enabled: app.enabled,
+            target,
         }
     }
 }
@@ -177,15 +343,34 @@ impl Default for DesktopConfig {
     }
 }
 
-impl LatitudeConfig {
+impl LoadedConfig {
     pub async fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
         match fs::read(path).await {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Ok(bytes) => Ok(serde_json::from_slice::<ConfigFile>(&bytes)?.into_loaded()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ConfigFile::default().into_loaded())
+            }
             Err(error) => Err(error.into()),
         }
     }
 
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        self.boot.validate()?;
+        self.catalog_seed.validate()
+    }
+}
+
+impl CatalogSeed {
+    pub fn is_empty(&self) -> bool {
+        self.projects.is_empty() && self.share_links.is_empty()
+    }
+
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        validate_catalog(&self.projects, &self.share_links)
+    }
+}
+
+impl BootConfig {
     pub async fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -197,6 +382,20 @@ impl LatitudeConfig {
         bytes.push(b'\n');
         fs::write(path, bytes).await?;
         Ok(())
+    }
+
+    pub fn resolved_data_dir(&self, config_path: &Path) -> Result<PathBuf, ConfigError> {
+        let config_path = absolute_path(config_path)?;
+        let base = config_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+
+        Ok(match &self.data_dir {
+            Some(path) if path.is_absolute() => path.clone(),
+            Some(path) => base.join(path),
+            None => base.join("latitude-data"),
+        })
     }
 
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -224,30 +423,47 @@ impl LatitudeConfig {
 
         self.desktop.validate()?;
 
-        let mut seen_share_tokens = HashSet::new();
-        for share in &self.share_links {
-            share.validate()?;
-            if !seen_share_tokens.insert(share.token.clone()) {
-                return Err(ConfigError::Invalid(format!(
-                    "duplicate share link token '{}'",
-                    share.token
-                )));
-            }
-        }
-
-        let mut seen_names = HashSet::new();
-        for project in &self.projects {
-            project.validate()?;
-            if !seen_names.insert(project.name.clone()) {
-                return Err(ConfigError::Invalid(format!(
-                    "duplicate project name '{}'",
-                    project.name
-                )));
-            }
+        if self
+            .data_dir
+            .as_deref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(ConfigError::Invalid(
+                "data_dir must not be empty when configured".to_string(),
+            ));
         }
 
         Ok(())
     }
+}
+
+fn validate_catalog(
+    projects: &[SeedProjectConfig],
+    share_links: &[DeploymentShareConfig],
+) -> Result<(), ConfigError> {
+    let mut seen_share_tokens = HashSet::new();
+    for share in share_links {
+        share.validate()?;
+        if !seen_share_tokens.insert(share.token.clone()) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate share link token '{}'",
+                share.token
+            )));
+        }
+    }
+
+    let mut seen_names = HashSet::new();
+    for project in projects {
+        project.validate()?;
+        if !seen_names.insert(project.name.clone()) {
+            return Err(ConfigError::Invalid(format!(
+                "duplicate project name '{}'",
+                project.name
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 impl DesktopConfig {
@@ -385,83 +601,168 @@ impl ApplicationConfig {
 
         match &self.target {
             ApplicationTarget::ReverseProxy { upstream, .. } => {
-                let url = Url::parse(upstream).map_err(|error| {
-                    ConfigError::Invalid(format!(
-                        "application '{}' upstream is invalid: {error}",
-                        self.name
-                    ))
-                })?;
-
-                if url.scheme() != "http" && url.scheme() != "https" {
-                    return Err(ConfigError::Invalid(format!(
-                        "application '{}' upstream must use http or https",
-                        self.name
-                    )));
-                }
+                validate_upstream(&self.name, upstream)?;
             }
             ApplicationTarget::Static { index_file, .. } => {
-                if index_file.contains('/') || index_file.contains('\\') || index_file.is_empty() {
-                    return Err(ConfigError::Invalid(format!(
-                        "application '{}' index_file must be a single file name",
-                        self.name
-                    )));
-                }
+                validate_static_index_file(&self.name, index_file)?;
             }
             ApplicationTarget::Page {
+                format,
+                media_type,
+                title,
+            } => {
+                validate_page_metadata(
+                    &self.name,
+                    *format,
+                    media_type.as_deref(),
+                    title.as_deref(),
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_upstream(name: &str, upstream: &str) -> Result<(), ConfigError> {
+    let url = Url::parse(upstream).map_err(|error| {
+        ConfigError::Invalid(format!("application '{name}' upstream is invalid: {error}"))
+    })?;
+
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err(ConfigError::Invalid(format!(
+            "application '{name}' upstream must use http or https"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_static_index_file(name: &str, index_file: &str) -> Result<(), ConfigError> {
+    if index_file.contains('/') || index_file.contains('\\') || index_file.is_empty() {
+        return Err(ConfigError::Invalid(format!(
+            "application '{name}' index_file must be a single file name"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_page_metadata(
+    name: &str,
+    format: PageFormat,
+    media_type: Option<&str>,
+    title: Option<&str>,
+) -> Result<(), ConfigError> {
+    if format == PageFormat::Binary {
+        let Some(media_type) = media_type else {
+            return Err(ConfigError::Invalid(format!(
+                "application '{name}' binary page content must include media_type"
+            )));
+        };
+        if !is_binary_document_media_type(media_type) {
+            return Err(ConfigError::Invalid(format!(
+                "application '{name}' binary page media_type must be an image/* or video/* type"
+            )));
+        }
+    } else if media_type.is_some() {
+        return Err(ConfigError::Invalid(format!(
+            "application '{name}' page media_type is only supported for binary content"
+        )));
+    }
+
+    if let Some(title) = title
+        && title.chars().count() > MAX_PAGE_TITLE_CHARS
+    {
+        return Err(ConfigError::Invalid(format!(
+            "application '{name}' page title must be at most {MAX_PAGE_TITLE_CHARS} characters"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_page_content(name: &str, content: &str, format: PageFormat) -> Result<(), ConfigError> {
+    if format == PageFormat::Binary {
+        let bytes = decode_page_binary_content(content).map_err(|error| {
+            ConfigError::Invalid(format!(
+                "application '{name}' binary page content must be base64: {error}"
+            ))
+        })?;
+        if bytes.len() > MAX_PAGE_BINARY_CONTENT_BYTES {
+            return Err(ConfigError::Invalid(format!(
+                "application '{name}' binary page content must be at most {MAX_PAGE_BINARY_CONTENT_BYTES} bytes"
+            )));
+        }
+    } else if content.len() > MAX_PAGE_CONTENT_BYTES {
+        return Err(ConfigError::Invalid(format!(
+            "application '{name}' page content must be at most {MAX_PAGE_CONTENT_BYTES} bytes"
+        )));
+    }
+
+    Ok(())
+}
+
+impl SeedProjectConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !is_valid_url_segment(&self.name) {
+            return Err(ConfigError::Invalid(format!(
+                "project name '{}' must contain only ASCII letters, digits, '-' or '_'",
+                self.name
+            )));
+        }
+
+        if self.project_dir.as_os_str().is_empty() {
+            return Err(ConfigError::Invalid(format!(
+                "project '{}' project_dir must not be empty",
+                self.name
+            )));
+        }
+
+        let mut seen_names = HashSet::new();
+        for app in &self.deployments {
+            app.validate()?;
+            if !seen_names.insert(app.name.clone()) {
+                return Err(ConfigError::Invalid(format!(
+                    "project '{}' has duplicate deployment name '{}'",
+                    self.name, app.name
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl SeedApplicationConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !is_valid_url_segment(&self.name) {
+            return Err(ConfigError::Invalid(format!(
+                "application name '{}' must contain only ASCII letters, digits, '-' or '_'",
+                self.name
+            )));
+        }
+
+        match &self.target {
+            SeedApplicationTarget::ReverseProxy { upstream, .. } => {
+                validate_upstream(&self.name, upstream)?;
+            }
+            SeedApplicationTarget::Static { index_file, .. } => {
+                validate_static_index_file(&self.name, index_file)?;
+            }
+            SeedApplicationTarget::Page {
                 content,
                 format,
                 media_type,
                 title,
             } => {
-                if *format == PageFormat::Binary {
-                    let Some(media_type) = media_type.as_deref() else {
-                        return Err(ConfigError::Invalid(format!(
-                            "application '{}' binary page content must include media_type",
-                            self.name
-                        )));
-                    };
-                    if !is_binary_document_media_type(media_type) {
-                        return Err(ConfigError::Invalid(format!(
-                            "application '{}' binary page media_type must be an image/* or video/* type",
-                            self.name
-                        )));
-                    }
-
-                    let bytes = decode_page_binary_content(content).map_err(|error| {
-                        ConfigError::Invalid(format!(
-                            "application '{}' binary page content must be base64: {error}",
-                            self.name
-                        ))
-                    })?;
-                    if bytes.len() > MAX_PAGE_BINARY_CONTENT_BYTES {
-                        return Err(ConfigError::Invalid(format!(
-                            "application '{}' binary page content must be at most {} bytes",
-                            self.name, MAX_PAGE_BINARY_CONTENT_BYTES
-                        )));
-                    }
-                } else {
-                    if media_type.is_some() {
-                        return Err(ConfigError::Invalid(format!(
-                            "application '{}' page media_type is only supported for binary content",
-                            self.name
-                        )));
-                    }
-                    if content.len() > MAX_PAGE_CONTENT_BYTES {
-                        return Err(ConfigError::Invalid(format!(
-                            "application '{}' page content must be at most {} bytes",
-                            self.name, MAX_PAGE_CONTENT_BYTES
-                        )));
-                    }
-                }
-
-                if let Some(title) = title
-                    && title.chars().count() > MAX_PAGE_TITLE_CHARS
-                {
-                    return Err(ConfigError::Invalid(format!(
-                        "application '{}' page title must be at most {} characters",
-                        self.name, MAX_PAGE_TITLE_CHARS
-                    )));
-                }
+                validate_page_metadata(
+                    &self.name,
+                    *format,
+                    media_type.as_deref(),
+                    title.as_deref(),
+                )?;
+                validate_page_content(&self.name, content, *format)?;
             }
         }
 
@@ -510,6 +811,14 @@ pub fn current_unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
+fn absolute_path(path: &Path) -> Result<PathBuf, ConfigError> {
+    if path.is_absolute() {
+        Ok(path.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(path))
+    }
+}
+
 fn default_public_bind() -> String {
     "0.0.0.0:8080".to_string()
 }
@@ -552,9 +861,9 @@ mod tests {
 
     #[test]
     fn rejects_non_loopback_command_api_bind() {
-        let config = LatitudeConfig {
+        let config = BootConfig {
             command_bind: "0.0.0.0:7600".to_string(),
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         };
 
         assert!(config.validate().is_err());
@@ -562,7 +871,54 @@ mod tests {
 
     #[test]
     fn defaults_public_password_to_test() {
-        assert_eq!(LatitudeConfig::default().public_password, "test");
+        assert_eq!(BootConfig::default().public_password, "test");
+    }
+
+    #[test]
+    fn resolves_default_data_dir_next_to_config() {
+        let config_path = std::env::temp_dir()
+            .join("latitude-config-a")
+            .join("latitude.json");
+        let data_dir = BootConfig::default()
+            .resolved_data_dir(&config_path)
+            .unwrap();
+
+        assert_eq!(
+            data_dir,
+            config_path.parent().unwrap().join("latitude-data")
+        );
+    }
+
+    #[test]
+    fn resolves_relative_data_dir_next_to_config() {
+        let config_path = std::env::temp_dir()
+            .join("latitude-config-b")
+            .join("latitude.json");
+        let config = BootConfig {
+            data_dir: Some(PathBuf::from("catalog")),
+            ..BootConfig::default()
+        };
+
+        assert_eq!(
+            config.resolved_data_dir(&config_path).unwrap(),
+            config_path.parent().unwrap().join("catalog")
+        );
+    }
+
+    #[test]
+    fn preserves_absolute_data_dir() {
+        let data_dir = std::env::temp_dir().join("latitude-absolute-data");
+        let config = BootConfig {
+            data_dir: Some(data_dir.clone()),
+            ..BootConfig::default()
+        };
+
+        assert_eq!(
+            config
+                .resolved_data_dir(&PathBuf::from("latitude.json"))
+                .unwrap(),
+            data_dir
+        );
     }
 
     #[test]
@@ -584,13 +940,13 @@ mod tests {
 
     #[test]
     fn rejects_non_loopback_desktop_host_by_default() {
-        let config = LatitudeConfig {
+        let config = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
                 vnc_host: "192.168.1.25".to_string(),
                 ..DesktopConfig::default()
             },
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         };
 
         assert!(config.validate().is_err());
@@ -598,14 +954,14 @@ mod tests {
 
     #[test]
     fn accepts_non_loopback_desktop_host_when_explicitly_allowed() {
-        let config = LatitudeConfig {
+        let config = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
                 vnc_host: "192.168.1.25".to_string(),
                 allow_non_loopback: true,
                 ..DesktopConfig::default()
             },
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         };
 
         assert!(config.validate().is_ok());
@@ -613,7 +969,7 @@ mod tests {
 
     #[test]
     fn managed_desktop_skips_external_vnc_target_validation() {
-        let config = LatitudeConfig {
+        let config = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
                 mode: DesktopMode::Managed,
@@ -621,7 +977,7 @@ mod tests {
                 vnc_port: 0,
                 ..DesktopConfig::default()
             },
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         };
 
         assert!(config.validate().is_ok());
@@ -629,24 +985,24 @@ mod tests {
 
     #[test]
     fn rejects_empty_public_password() {
-        let config = LatitudeConfig {
+        let config = BootConfig {
             public_password: String::new(),
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         };
 
         assert!(config.validate().is_err());
     }
 
     #[test]
-    fn rejects_legacy_top_level_applications_config() {
-        let error = serde_json::from_str::<LatitudeConfig>(r#"{"applications":[]}"#).unwrap_err();
+    fn rejects_unknown_top_level_applications_config() {
+        let error = serde_json::from_str::<ConfigFile>(r#"{"applications":[]}"#).unwrap_err();
 
         assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
     fn requires_project_dir_for_projects() {
-        let error = serde_json::from_str::<LatitudeConfig>(
+        let error = serde_json::from_str::<ConfigFile>(
             r#"{"projects":[{"name":"demo","deployments":[]}]}"#,
         )
         .unwrap_err();
@@ -655,8 +1011,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_project_applications_field() {
-        let error = serde_json::from_str::<LatitudeConfig>(
+    fn rejects_unknown_project_applications_field() {
+        let error = serde_json::from_str::<ConfigFile>(
             r#"{"projects":[{"name":"demo","project_dir":".","applications":[]}]}"#,
         )
         .unwrap_err();
@@ -666,30 +1022,30 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_project_names() {
-        let config = LatitudeConfig {
+        let seed = CatalogSeed {
             projects: vec![
-                ProjectConfig {
+                SeedProjectConfig {
                     name: "demo".to_string(),
                     enabled: true,
                     project_dir: PathBuf::from("."),
                     deployments: Vec::new(),
                 },
-                ProjectConfig {
+                SeedProjectConfig {
                     name: "demo".to_string(),
                     enabled: true,
                     project_dir: PathBuf::from("./other"),
                     deployments: Vec::new(),
                 },
             ],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_err());
+        assert!(seed.validate().is_err());
     }
 
     #[test]
     fn accepts_deployment_share_links() {
-        let config = LatitudeConfig {
+        let seed = CatalogSeed {
             share_links: vec![DeploymentShareConfig {
                 token: "abc123".to_string(),
                 project: "demo".to_string(),
@@ -697,15 +1053,15 @@ mod tests {
                 password: Some("secret".to_string()),
                 expires_at: Some(4_102_444_800),
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_ok());
+        assert!(seed.validate().is_ok());
     }
 
     #[test]
     fn rejects_duplicate_share_link_tokens() {
-        let config = LatitudeConfig {
+        let seed = CatalogSeed {
             share_links: vec![
                 DeploymentShareConfig {
                     token: "abc123".to_string(),
@@ -722,10 +1078,10 @@ mod tests {
                     expires_at: None,
                 },
             ],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_err());
+        assert!(seed.validate().is_err());
     }
 
     #[test]
@@ -744,24 +1100,24 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_app_names_within_project() {
-        let config = LatitudeConfig {
-            projects: vec![ProjectConfig {
+        let seed = CatalogSeed {
+            projects: vec![SeedProjectConfig {
                 name: "demo".to_string(),
                 enabled: true,
                 project_dir: PathBuf::from("."),
                 deployments: vec![
-                    ApplicationConfig {
+                    SeedApplicationConfig {
                         name: "site".to_string(),
                         enabled: true,
-                        target: ApplicationTarget::ReverseProxy {
+                        target: SeedApplicationTarget::ReverseProxy {
                             upstream: "http://127.0.0.1:3000".to_string(),
                             strip_prefix: true,
                         },
                     },
-                    ApplicationConfig {
+                    SeedApplicationConfig {
                         name: "site".to_string(),
                         enabled: true,
-                        target: ApplicationTarget::Static {
+                        target: SeedApplicationTarget::Static {
                             root: PathBuf::from("public"),
                             index_file: "index.html".to_string(),
                             spa_fallback: false,
@@ -769,23 +1125,23 @@ mod tests {
                     },
                 ],
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_err());
+        assert!(seed.validate().is_err());
     }
 
     #[test]
     fn accepts_page_application_inside_project() {
-        let config = LatitudeConfig {
-            projects: vec![ProjectConfig {
+        let seed = CatalogSeed {
+            projects: vec![SeedProjectConfig {
                 name: "demo".to_string(),
                 enabled: true,
                 project_dir: PathBuf::from("."),
-                deployments: vec![ApplicationConfig {
+                deployments: vec![SeedApplicationConfig {
                     name: "agent-note".to_string(),
                     enabled: true,
-                    target: ApplicationTarget::Page {
+                    target: SeedApplicationTarget::Page {
                         content: "# Agent Note".to_string(),
                         format: PageFormat::Markdown,
                         media_type: None,
@@ -793,23 +1149,23 @@ mod tests {
                     },
                 }],
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_ok());
+        assert!(seed.validate().is_ok());
     }
 
     #[test]
     fn rejects_oversized_page_content() {
-        let config = LatitudeConfig {
-            projects: vec![ProjectConfig {
+        let seed = CatalogSeed {
+            projects: vec![SeedProjectConfig {
                 name: "demo".to_string(),
                 enabled: true,
                 project_dir: PathBuf::from("."),
-                deployments: vec![ApplicationConfig {
+                deployments: vec![SeedApplicationConfig {
                     name: "agent-note".to_string(),
                     enabled: true,
-                    target: ApplicationTarget::Page {
+                    target: SeedApplicationTarget::Page {
                         content: "x".repeat(MAX_PAGE_CONTENT_BYTES + 1),
                         format: PageFormat::Html,
                         media_type: None,
@@ -817,23 +1173,23 @@ mod tests {
                     },
                 }],
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_err());
+        assert!(seed.validate().is_err());
     }
 
     #[test]
     fn accepts_binary_image_page_application() {
-        let config = LatitudeConfig {
-            projects: vec![ProjectConfig {
+        let seed = CatalogSeed {
+            projects: vec![SeedProjectConfig {
                 name: "demo".to_string(),
                 enabled: true,
                 project_dir: PathBuf::from("."),
-                deployments: vec![ApplicationConfig {
+                deployments: vec![SeedApplicationConfig {
                     name: "snapshot".to_string(),
                     enabled: true,
-                    target: ApplicationTarget::Page {
+                    target: SeedApplicationTarget::Page {
                         content: encode_page_binary_content(b"png bytes"),
                         format: PageFormat::Binary,
                         media_type: Some("image/png".to_string()),
@@ -841,23 +1197,23 @@ mod tests {
                     },
                 }],
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_ok());
+        assert!(seed.validate().is_ok());
     }
 
     #[test]
     fn rejects_non_media_binary_page_application() {
-        let config = LatitudeConfig {
-            projects: vec![ProjectConfig {
+        let seed = CatalogSeed {
+            projects: vec![SeedProjectConfig {
                 name: "demo".to_string(),
                 enabled: true,
                 project_dir: PathBuf::from("."),
-                deployments: vec![ApplicationConfig {
+                deployments: vec![SeedApplicationConfig {
                     name: "asset".to_string(),
                     enabled: true,
-                    target: ApplicationTarget::Page {
+                    target: SeedApplicationTarget::Page {
                         content: encode_page_binary_content(b"pdf bytes"),
                         format: PageFormat::Binary,
                         media_type: Some("application/pdf".to_string()),
@@ -865,9 +1221,9 @@ mod tests {
                     },
                 }],
             }],
-            ..LatitudeConfig::default()
+            ..CatalogSeed::default()
         };
 
-        assert!(config.validate().is_err());
+        assert!(seed.validate().is_err());
     }
 }

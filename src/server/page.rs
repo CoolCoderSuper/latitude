@@ -3,7 +3,10 @@ use maud::{Markup, PreEscaped, html};
 use pulldown_cmark::{Options, Parser, html::push_html};
 use serde::Deserialize;
 
-use crate::config::{PageFormat, encode_page_binary_content, is_binary_document_media_type};
+use crate::config::{
+    PageFormat, decode_page_binary_content, encode_page_binary_content,
+    is_binary_document_media_type,
+};
 
 use super::{
     assets::PAGE_STYLE,
@@ -24,6 +27,20 @@ pub(super) struct PagePayload {
     pub(super) format: PageFormat,
     pub(super) media_type: Option<String>,
     pub(super) title: Option<String>,
+}
+
+impl PagePayload {
+    pub(super) fn payload_bytes(&self) -> Result<Vec<u8>, ApiError> {
+        match self.format {
+            PageFormat::Binary => decode_page_binary_content(&self.content).map_err(|error| {
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    format!("binary page content must be base64: {error}"),
+                )
+            }),
+            PageFormat::Html | PageFormat::Markdown => Ok(self.content.as_bytes().to_vec()),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

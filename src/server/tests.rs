@@ -4,16 +4,19 @@ use axum::{
     body::{Body, to_bytes},
     extract::State,
     http::{HeaderValue, Request, StatusCode, header},
+    response::IntoResponse,
 };
 
 use crate::{
     config::{
-        ApplicationConfig, ApplicationTarget, DeploymentShareConfig, DesktopConfig, DesktopMode,
-        LatitudeConfig, PageFormat, ProjectConfig, decode_page_binary_content,
+        ApplicationConfig, ApplicationTarget, BootConfig, CatalogSeed, DeploymentShareConfig,
+        DesktopConfig, DesktopMode, PageFormat, ProjectConfig, SeedApplicationConfig,
+        SeedApplicationTarget, SeedProjectConfig, decode_page_binary_content,
         encode_page_binary_content,
     },
     desktop::DesktopInfoResponse,
     state::AppState,
+    storage::CatalogStore,
 };
 
 use super::{
@@ -22,6 +25,7 @@ use super::{
         PROJECT_HOME_STYLE, TERMINAL_VIEWER_STYLE,
     },
     auth::{clean_next_path, public_password_matches, public_request_is_authenticated},
+    command::{get_config, get_project_deployment, get_project_page_content},
     constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
@@ -47,6 +51,73 @@ use super::{
 };
 
 const TEST_HOSTNAME: &str = "test-host";
+
+async fn test_state(config: BootConfig) -> AppState {
+    test_state_with_seed(config, CatalogSeed::default()).await
+}
+
+async fn test_state_with_seed(config: BootConfig, seed: CatalogSeed) -> AppState {
+    let data_dir = std::env::temp_dir().join(format!(
+        "latitude-test-data-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let catalog = CatalogStore::open_for_tests(data_dir).await.unwrap();
+    catalog.import_config_seed_if_needed(&seed).await.unwrap();
+    AppState::new(PathBuf::from("latitude.test.json"), config, catalog)
+}
+
+fn demo_seed(deployments: Vec<SeedApplicationConfig>) -> CatalogSeed {
+    demo_seed_with_shares(deployments, Vec::new())
+}
+
+fn demo_seed_with_shares(
+    deployments: Vec<SeedApplicationConfig>,
+    share_links: Vec<DeploymentShareConfig>,
+) -> CatalogSeed {
+    CatalogSeed {
+        share_links,
+        projects: vec![SeedProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments,
+        }],
+    }
+}
+
+fn seed_page(
+    name: &str,
+    content: &str,
+    format: PageFormat,
+    media_type: Option<&str>,
+    title: Option<&str>,
+) -> SeedApplicationConfig {
+    SeedApplicationConfig {
+        name: name.to_string(),
+        enabled: true,
+        target: SeedApplicationTarget::Page {
+            content: content.to_string(),
+            format,
+            media_type: media_type.map(str::to_string),
+            title: title.map(str::to_string),
+        },
+    }
+}
+
+fn seed_static(name: &str, root: PathBuf, index_file: &str) -> SeedApplicationConfig {
+    SeedApplicationConfig {
+        name: name.to_string(),
+        enabled: true,
+        target: SeedApplicationTarget::Static {
+            root,
+            index_file: index_file.to_string(),
+            spa_fallback: false,
+        },
+    }
+}
 
 #[test]
 fn splits_project_home_and_deployment_paths() {
@@ -98,10 +169,10 @@ fn rejects_path_traversal_for_static_files() {
     assert!(sanitized_relative_path("/nested%2fsecret.txt").is_none());
 }
 
-#[test]
-fn authenticates_public_requests_with_signed_cookie() {
-    let config = LatitudeConfig::default();
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+#[tokio::test]
+async fn authenticates_public_requests_with_signed_cookie() {
+    let config = BootConfig::default();
+    let state = test_state(config.clone()).await;
     let cookie = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .header(header::COOKIE, format!("{AUTH_COOKIE_NAME}={cookie}"))
@@ -110,7 +181,7 @@ fn authenticates_public_requests_with_signed_cookie() {
 
     assert!(public_request_is_authenticated(&state, &config, &req));
 
-    let changed_config = LatitudeConfig {
+    let changed_config = BootConfig {
         public_password: "changed".to_string(),
         ..config
     };
@@ -121,10 +192,10 @@ fn authenticates_public_requests_with_signed_cookie() {
     ));
 }
 
-#[test]
-fn authenticates_public_requests_with_bearer_token() {
-    let config = LatitudeConfig::default();
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+#[tokio::test]
+async fn authenticates_public_requests_with_bearer_token() {
+    let config = BootConfig::default();
+    let state = test_state(config.clone()).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
@@ -202,7 +273,7 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         );
     }
 
-    let rendered = render_server_home(&LatitudeConfig::default(), TEST_HOSTNAME);
+    let rendered = render_server_home(&BootConfig::default(), &[], TEST_HOSTNAME);
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
     assert!(!rendered.contains("__LATITUDE_THEME_COOKIE__"));
@@ -274,6 +345,89 @@ fn infers_html_for_raw_html_payload() {
     let payload = parse_page_payload(None, b"<section><h1>Hello</h1></section>").unwrap();
 
     assert_eq!(payload.format, PageFormat::Html);
+}
+
+#[tokio::test]
+async fn command_config_response_is_boot_only() {
+    let seed = CatalogSeed {
+        projects: vec![SeedProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: Vec::new(),
+        }],
+        share_links: vec![DeploymentShareConfig {
+            token: "abc123".to_string(),
+            project: "demo".to_string(),
+            deployment: "missing".to_string(),
+            password: None,
+            expires_at: None,
+        }],
+        ..CatalogSeed::default()
+    };
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
+
+    let response = get_config(State(state)).await.into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert!(value.get("public_bind").is_some());
+    assert!(value.get("projects").is_none());
+    assert!(value.get("share_links").is_none());
+}
+
+#[tokio::test]
+async fn command_deployment_response_omits_page_content_and_content_endpoint_returns_bytes() {
+    let seed = CatalogSeed {
+        projects: vec![SeedProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![SeedApplicationConfig {
+                name: "report".to_string(),
+                enabled: true,
+                target: SeedApplicationTarget::Page {
+                    content: "# Report".to_string(),
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: Some("Report".to_string()),
+                },
+            }],
+        }],
+        ..CatalogSeed::default()
+    };
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
+
+    let response = get_project_deployment(
+        axum::extract::Path(("demo".to_string(), "report".to_string())),
+        State(state.clone()),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(value["kind"], "page");
+    assert_eq!(value["title"], "Report");
+    assert!(value.get("content").is_none());
+
+    let response = get_project_page_content(
+        axum::extract::Path(("demo".to_string(), "report".to_string())),
+        State(state),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/markdown; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&body[..], b"# Report");
 }
 
 #[test]
@@ -354,7 +508,6 @@ fn renders_project_home_with_enabled_deployments() {
                     name: "report".to_string(),
                     enabled: true,
                     target: ApplicationTarget::Page {
-                        content: "# Report".to_string(),
                         format: PageFormat::Markdown,
                         media_type: None,
                         title: Some("Weekly Report".to_string()),
@@ -364,7 +517,6 @@ fn renders_project_home_with_enabled_deployments() {
                     name: "draft".to_string(),
                     enabled: false,
                     target: ApplicationTarget::Page {
-                        content: "# Draft".to_string(),
                         format: PageFormat::Markdown,
                         media_type: None,
                         title: None,
@@ -391,25 +543,15 @@ fn renders_project_home_with_enabled_deployments() {
 
 #[tokio::test]
 async fn serves_binary_page_document_shell_by_default() {
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "snapshot".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: encode_page_binary_content(b"png bytes"),
-                    format: PageFormat::Binary,
-                    media_type: Some("image/png".to_string()),
-                    title: None,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_page(
+        "snapshot",
+        &encode_page_binary_content(b"png bytes"),
+        PageFormat::Binary,
+        Some("image/png"),
+        None,
+    )]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -436,25 +578,15 @@ async fn serves_binary_page_document_shell_by_default() {
 
 #[tokio::test]
 async fn serves_binary_page_document_shell_for_media_accept_requests() {
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "snapshot".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: encode_page_binary_content(b"png bytes"),
-                    format: PageFormat::Binary,
-                    media_type: Some("image/png".to_string()),
-                    title: Some("Build Snapshot".to_string()),
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_page(
+        "snapshot",
+        &encode_page_binary_content(b"png bytes"),
+        PageFormat::Binary,
+        Some("image/png"),
+        Some("Build Snapshot"),
+    )]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -482,25 +614,15 @@ async fn serves_binary_page_document_shell_for_media_accept_requests() {
 
 #[tokio::test]
 async fn serves_binary_page_document_raw_query_with_media_type() {
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "snapshot".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: encode_page_binary_content(b"png bytes"),
-                    format: PageFormat::Binary,
-                    media_type: Some("image/png".to_string()),
-                    title: Some("Build Snapshot".to_string()),
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_page(
+        "snapshot",
+        &encode_page_binary_content(b"png bytes"),
+        PageFormat::Binary,
+        Some("image/png"),
+        Some("Build Snapshot"),
+    )]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot?raw=1")
@@ -535,24 +657,9 @@ async fn serves_static_media_document_shell_by_default() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
 
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "snapshot".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Static {
-                    root: root.clone(),
-                    index_file: "snapshot.png".to_string(),
-                    spa_fallback: false,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_static("snapshot", root.clone(), "snapshot.png")]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -591,24 +698,9 @@ async fn serves_static_media_document_raw_query_with_media_type() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
 
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "snapshot".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Static {
-                    root: root.clone(),
-                    index_file: "snapshot.png".to_string(),
-                    spa_fallback: false,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_static("snapshot", root.clone(), "snapshot.png")]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot?raw=1")
@@ -644,24 +736,9 @@ async fn serves_static_site_without_document_shell() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("index.html"), b"<!doctype html><h1>Site</h1>").unwrap();
 
-    let config = LatitudeConfig {
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "website".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Static {
-                    root: root.clone(),
-                    index_file: "index.html".to_string(),
-                    spa_fallback: false,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let seed = demo_seed(vec![seed_static("website", root.clone(), "index.html")]);
+    let state = test_state_with_seed(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/website")
@@ -689,32 +766,23 @@ async fn serves_static_site_without_document_shell() {
 
 #[tokio::test]
 async fn serves_unprotected_deployment_share_without_public_auth() {
-    let config = LatitudeConfig {
-        share_links: vec![DeploymentShareConfig {
+    let seed = demo_seed_with_shares(
+        vec![seed_page(
+            "report",
+            "# Shared Report",
+            PageFormat::Markdown,
+            None,
+            None,
+        )],
+        vec![DeploymentShareConfig {
             token: "open123".to_string(),
             project: "demo".to_string(),
             deployment: "report".to_string(),
             password: None,
             expires_at: None,
         }],
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "report".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: "# Shared Report".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: None,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    );
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/open123/")
         .body(Body::empty())
@@ -731,32 +799,23 @@ async fn serves_unprotected_deployment_share_without_public_auth() {
 
 #[tokio::test]
 async fn password_protected_deployment_share_sets_scoped_cookie() {
-    let config = LatitudeConfig {
-        share_links: vec![DeploymentShareConfig {
+    let seed = demo_seed_with_shares(
+        vec![seed_page(
+            "report",
+            "# Locked Report",
+            PageFormat::Markdown,
+            None,
+            None,
+        )],
+        vec![DeploymentShareConfig {
             token: "locked123".to_string(),
             project: "demo".to_string(),
             deployment: "report".to_string(),
             password: Some("secret".to_string()),
             expires_at: None,
         }],
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "report".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: "# Locked Report".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: None,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    );
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/locked123/")
         .body(Body::empty())
@@ -809,32 +868,23 @@ async fn password_protected_deployment_share_sets_scoped_cookie() {
 
 #[tokio::test]
 async fn expired_deployment_share_returns_gone() {
-    let config = LatitudeConfig {
-        share_links: vec![DeploymentShareConfig {
+    let seed = demo_seed_with_shares(
+        vec![seed_page(
+            "report",
+            "# Old Report",
+            PageFormat::Markdown,
+            None,
+            None,
+        )],
+        vec![DeploymentShareConfig {
             token: "expired123".to_string(),
             project: "demo".to_string(),
             deployment: "report".to_string(),
             password: None,
             expires_at: Some(1),
         }],
-        projects: vec![ProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: vec![ApplicationConfig {
-                name: "report".to_string(),
-                enabled: true,
-                target: ApplicationTarget::Page {
-                    content: "# Old Report".to_string(),
-                    format: PageFormat::Markdown,
-                    media_type: None,
-                    title: None,
-                },
-            }],
-        }],
-        ..LatitudeConfig::default()
-    };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config);
+    );
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/expired123/")
         .body(Body::empty())
@@ -1139,8 +1189,8 @@ fn renders_root_desktop_page() {
 
 #[tokio::test]
 async fn serves_root_terminal_viewer() {
-    let config = LatitudeConfig::default();
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let state = test_state(config.clone()).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/_terminal")
@@ -1167,14 +1217,14 @@ async fn serves_root_terminal_viewer() {
 
 #[tokio::test]
 async fn serves_root_desktop_viewer_when_enabled() {
-    let config = LatitudeConfig {
+    let config = BootConfig {
         desktop: DesktopConfig {
             enabled: true,
             ..DesktopConfig::default()
         },
-        ..LatitudeConfig::default()
+        ..BootConfig::default()
     };
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let state = test_state(config.clone()).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/_desktop")
@@ -1201,8 +1251,8 @@ async fn serves_root_desktop_viewer_when_enabled() {
 
 #[tokio::test]
 async fn root_desktop_viewer_returns_not_found_when_disabled() {
-    let config = LatitudeConfig::default();
-    let state = AppState::new(PathBuf::from("latitude.test.json"), config.clone());
+    let config = BootConfig::default();
+    let state = test_state(config.clone()).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/_desktop")
@@ -1404,34 +1454,29 @@ fn trims_windows_extended_path_prefix_for_display() {
 
 #[test]
 fn renders_server_home_with_enabled_projects() {
-    let rendered = render_server_home(
-        &LatitudeConfig {
-            projects: vec![
-                ProjectConfig {
-                    name: "mock".to_string(),
-                    enabled: true,
-                    project_dir: PathBuf::from("."),
-                    deployments: vec![ApplicationConfig {
-                        name: "website".to_string(),
-                        enabled: true,
-                        target: ApplicationTarget::Static {
-                            root: PathBuf::from("."),
-                            index_file: "index.html".to_string(),
-                            spa_fallback: true,
-                        },
-                    }],
+    let projects = vec![
+        ProjectConfig {
+            name: "mock".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "website".to_string(),
+                enabled: true,
+                target: ApplicationTarget::Static {
+                    root: PathBuf::from("."),
+                    index_file: "index.html".to_string(),
+                    spa_fallback: true,
                 },
-                ProjectConfig {
-                    name: "hidden".to_string(),
-                    enabled: false,
-                    project_dir: PathBuf::from("."),
-                    deployments: Vec::new(),
-                },
-            ],
-            ..LatitudeConfig::default()
+            }],
         },
-        TEST_HOSTNAME,
-    );
+        ProjectConfig {
+            name: "hidden".to_string(),
+            enabled: false,
+            project_dir: PathBuf::from("."),
+            deployments: Vec::new(),
+        },
+    ];
+    let rendered = render_server_home(&BootConfig::default(), &projects, TEST_HOSTNAME);
 
     assert!(rendered.contains("<title>Latitude Projects - test-host</title>"));
     assert!(rendered.contains("data-latitude-theme-toggle"));
@@ -1448,13 +1493,14 @@ fn renders_server_home_with_enabled_projects() {
 #[test]
 fn renders_server_home_with_enabled_desktop() {
     let rendered = render_server_home(
-        &LatitudeConfig {
+        &BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
                 ..DesktopConfig::default()
             },
-            ..LatitudeConfig::default()
+            ..BootConfig::default()
         },
+        &[],
         TEST_HOSTNAME,
     );
 
@@ -1483,7 +1529,6 @@ fn builds_public_project_detail_with_enabled_deployments() {
                     name: "report".to_string(),
                     enabled: true,
                     target: ApplicationTarget::Page {
-                        content: "# Report".to_string(),
                         format: PageFormat::Markdown,
                         media_type: None,
                         title: Some("Weekly Report".to_string()),
@@ -1493,7 +1538,6 @@ fn builds_public_project_detail_with_enabled_deployments() {
                     name: "clip".to_string(),
                     enabled: true,
                     target: ApplicationTarget::Page {
-                        content: encode_page_binary_content(b"mp4 bytes"),
                         format: PageFormat::Binary,
                         media_type: Some("video/mp4".to_string()),
                         title: Some("Demo Clip".to_string()),

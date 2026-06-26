@@ -7,7 +7,7 @@ use axum::{
 };
 use tracing::error;
 
-use crate::state::AppState;
+use crate::{config::ProjectConfig, state::AppState};
 
 use super::{
     super::{
@@ -148,8 +148,11 @@ pub(in crate::server) async fn public_api_list_projects(
         return public_api_auth_challenge();
     }
 
-    let projects = config
-        .projects
+    let catalog_projects = match list_catalog_projects_or_response(&state).await {
+        Ok(projects) => projects,
+        Err(response) => return response,
+    };
+    let projects = catalog_projects
         .iter()
         .filter(|project| project.enabled)
         .map(public_project_summary)
@@ -174,18 +177,22 @@ pub(in crate::server) async fn public_api_get_project(
         return public_api_auth_challenge();
     }
 
-    let Some(project) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
-    Json(public_project_detail(project, state.device_hostname())).into_response()
+    Json(public_project_detail(
+        &project_config,
+        state.device_hostname(),
+    ))
+    .into_response()
 }
 
 pub(in crate::server) async fn public_api_get_project_diff(
@@ -198,19 +205,19 @@ pub(in crate::server) async fn public_api_get_project_diff(
         return public_api_auth_challenge();
     }
 
-    let Some(project) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     Json(public_diff_response(
-        collect_project_diff(&project.project_dir).await,
+        collect_project_diff(&project_config.project_dir).await,
     ))
     .into_response()
 }
@@ -225,15 +232,15 @@ pub(in crate::server) async fn public_api_patch_project_diff(
         return public_api_auth_challenge();
     }
 
-    let Some(project_config) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     let content_type = req
@@ -279,15 +286,15 @@ pub(in crate::server) async fn public_api_get_project_terminal(
         return public_api_auth_challenge();
     }
 
-    let Some(project_config) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     Json(terminal_info_response(&project, &project_config.project_dir).await).into_response()
@@ -303,15 +310,15 @@ pub(in crate::server) async fn public_api_post_project_terminal(
         return public_api_auth_challenge();
     }
 
-    let Some(project_config) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     let content_type = req
@@ -441,15 +448,15 @@ pub(in crate::server) async fn public_api_list_terminal_sessions(
         return public_api_auth_challenge();
     }
 
-    if !config
-        .projects
-        .iter()
-        .any(|item| item.enabled && item.name == project)
-    {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    match enabled_project_or_response(&state, &project).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     }
 
     Json(PublicTerminalSessionListResponse {
@@ -468,15 +475,15 @@ pub(in crate::server) async fn public_api_create_terminal_session(
         return public_api_auth_challenge();
     }
 
-    let Some(project_config) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     match state
@@ -499,15 +506,15 @@ pub(in crate::server) async fn public_api_delete_terminal_session(
         return public_api_auth_challenge();
     }
 
-    if !config
-        .projects
-        .iter()
-        .any(|item| item.enabled && item.name == project)
-    {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    match enabled_project_or_response(&state, &project).await {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     }
 
     if state
@@ -536,16 +543,15 @@ pub(in crate::server) async fn public_terminal_ws(
         return public_api_auth_challenge();
     }
 
-    let Some(project_config) = config
-        .projects
-        .iter()
-        .find(|item| item.enabled && item.name == project)
-        .cloned()
-    else {
-        return json_error(
-            StatusCode::NOT_FOUND,
-            format!("project '{project}' was not found"),
-        );
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => {
+            return json_error(
+                StatusCode::NOT_FOUND,
+                format!("project '{project}' was not found"),
+            );
+        }
+        Err(response) => return response,
     };
 
     let terminal_sessions = state.terminal_sessions();
@@ -573,6 +579,36 @@ pub(in crate::server) async fn public_terminal_ws(
     };
 
     ws.on_upgrade(move |socket| terminal_websocket_session(socket, session))
+}
+
+async fn list_catalog_projects_or_response(
+    state: &AppState,
+) -> Result<Vec<ProjectConfig>, Response<Body>> {
+    state.catalog().list_projects().await.map_err(|error| {
+        error!(%error, "project list failed");
+        json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "catalog could not be read",
+        )
+    })
+}
+
+async fn enabled_project_or_response(
+    state: &AppState,
+    project: &str,
+) -> Result<Option<ProjectConfig>, Response<Body>> {
+    state
+        .catalog()
+        .get_project(project)
+        .await
+        .map(|project| project.filter(|project| project.enabled))
+        .map_err(|error| {
+            error!(%error, project, "project lookup failed");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "catalog could not be read",
+            )
+        })
 }
 
 pub(in crate::server) async fn public_root_terminal_ws(

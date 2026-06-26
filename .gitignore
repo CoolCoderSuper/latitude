@@ -3,6 +3,7 @@
 /.vscode/
 *.pdb
 latitude.json
+latitude-data/
 .codex-remote-attachments/
 logs/
 /tools/ultravnc/*

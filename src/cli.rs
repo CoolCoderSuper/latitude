@@ -87,7 +87,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {
-    /// List configured projects.
+    /// List projects.
     List,
     /// Print one configured project as JSON.
     Get { name: String },

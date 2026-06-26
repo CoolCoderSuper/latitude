@@ -17,7 +17,7 @@ pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines};
 use maud::{PreEscaped, html};
 
 use crate::config::{
-    ApplicationConfig, ApplicationTarget, LatitudeConfig, PageFormat, ProjectConfig,
+    ApplicationConfig, ApplicationTarget, BootConfig, PageFormat, ProjectConfig,
     is_binary_document_media_type,
 };
 use crate::desktop::DesktopInfoResponse;
@@ -272,9 +272,12 @@ pub(super) fn render_share_login(
     )
 }
 
-pub(super) fn render_server_home(config: &LatitudeConfig, device_hostname: &str) -> String {
-    let enabled_projects = config
-        .projects
+pub(super) fn render_server_home(
+    config: &BootConfig,
+    projects: &[ProjectConfig],
+    device_hostname: &str,
+) -> String {
+    let enabled_projects = projects
         .iter()
         .filter(|project| project.enabled)
         .collect::<Vec<_>>();

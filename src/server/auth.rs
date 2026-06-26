@@ -3,7 +3,7 @@ use axum::{
     http::{HeaderMap, Method, Request, Response, StatusCode, header},
 };
 
-use crate::{config::LatitudeConfig, state::AppState};
+use crate::{config::BootConfig, state::AppState};
 
 use super::{
     constants::{AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, LOGIN_PATH},
@@ -19,7 +19,7 @@ pub(super) struct PublicLoginForm {
 
 pub(super) fn public_request_is_authenticated(
     state: &AppState,
-    config: &LatitudeConfig,
+    config: &BootConfig,
     req: &Request<Body>,
 ) -> bool {
     public_headers_are_authenticated(state, config, req.headers(), None)
@@ -27,7 +27,7 @@ pub(super) fn public_request_is_authenticated(
 
 pub(super) fn public_headers_are_authenticated(
     state: &AppState,
-    config: &LatitudeConfig,
+    config: &BootConfig,
     headers: &HeaderMap,
     query_token: Option<&str>,
 ) -> bool {

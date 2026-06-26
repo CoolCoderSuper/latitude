@@ -21,6 +21,8 @@ cargo run -- --config latitude.json
 
 Open `http://127.0.0.1:8080/` and sign in with the configured public password. The example config uses `test`; change it before exposing Latitude outside your machine.
 
+Latitude stores projects, deployments, page content, and share links in the configured data directory. The config file contains boot settings such as listener binds, public password, desktop options, and `data_dir`.
+
 ## Desktop VNC
 
 Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.enabled` is set to `true`.
