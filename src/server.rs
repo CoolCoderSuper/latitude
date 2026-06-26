@@ -40,7 +40,9 @@ use constants::{
     PUBLIC_API_SESSION_PATH, PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH,
     PUBLIC_TERMINAL_WS_PATH,
 };
-use desktop_api::{public_api_get_root_desktop, public_root_desktop_ws};
+use desktop_api::{
+    public_api_get_root_desktop, public_api_patch_root_desktop, public_root_desktop_ws,
+};
 use public::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
     public_api_create_terminal_session, public_api_delete_root_terminal_session,
@@ -91,7 +93,7 @@ fn public_router(state: AppState) -> Router {
         )
         .route(
             PUBLIC_API_ROOT_DESKTOP_PATH,
-            get(public_api_get_root_desktop),
+            get(public_api_get_root_desktop).patch(public_api_patch_root_desktop),
         )
         .route(
             PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH,

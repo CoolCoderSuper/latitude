@@ -25,14 +25,22 @@ fn workspace_markup(
     websocket_token: Option<&str>,
 ) -> Markup {
     let screen_layout = serde_json::to_string(&info.screens).unwrap_or_else(|_| "[]".to_string());
+    let resolution_options =
+        serde_json::to_string(&info.resolutions).unwrap_or_else(|_| "[]".to_string());
+    let action_path = info
+        .websocket_href
+        .strip_suffix("/ws")
+        .unwrap_or(&info.websocket_href);
 
     html! {
         section
             class="desktop-workspace"
             data-desktop-workspace
+            data-action-path=(action_path)
             data-ws-path=(&info.websocket_href)
             data-view-only=(view_only)
             data-screen-layout=(screen_layout)
+            data-resolution-options=(resolution_options)
             data-ws-token=[websocket_token] {
             div class="desktop-toolbar" {
                 div class="desktop-mode" {
@@ -43,6 +51,7 @@ fn workspace_markup(
                     }
                 }
                 div class="desktop-screen-switcher" data-desktop-screens hidden aria-label="Screens" {}
+                select class="desktop-resolution-select" data-desktop-resolution hidden aria-label="Resolution" title="Change desktop resolution" {}
                 button class="desktop-control-button active" data-desktop-scale type="button" aria-pressed="true" title="Toggle auto scale" { "Fit" }
                 button class="desktop-control-button" data-desktop-fullscreen type="button" aria-pressed="false" title="Toggle fullscreen" { "Full" }
                 div class="desktop-status" data-desktop-status { "Connecting" }

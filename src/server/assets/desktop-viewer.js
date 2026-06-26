@@ -6,6 +6,7 @@ if (workspace) {
   const target = workspace.querySelector('[data-desktop-target]');
   const status = workspace.querySelector('[data-desktop-status]');
   const screenSwitcher = workspace.querySelector('[data-desktop-screens]');
+  const resolutionSelect = workspace.querySelector('[data-desktop-resolution]');
   const scaleButton = workspace.querySelector('[data-desktop-scale]');
   const fullscreenButton = workspace.querySelector('[data-desktop-fullscreen]');
   const credentials = workspace.querySelector('[data-desktop-credentials]');
@@ -25,6 +26,9 @@ if (workspace) {
   let lastAppliedViewport = '';
   let layoutRetryTimers = [];
   let fullRefreshTimers = [];
+  let configuredScreens = [];
+  let resolutionOptions = [];
+  let resolutionChanging = false;
 
   const setStatus = (message, isError = false) => {
     if (!status) {
@@ -226,7 +230,59 @@ if (workspace) {
     }
   };
 
-  const configuredScreens = parseConfiguredScreens();
+  const commonResolutionOptions = [
+    { width: 1024, height: 768 },
+    { width: 1280, height: 720 },
+    { width: 1280, height: 800 },
+    { width: 1366, height: 768 },
+    { width: 1440, height: 900 },
+    { width: 1600, height: 900 },
+    { width: 1920, height: 1080 },
+    { width: 2560, height: 1440 },
+    { width: 3840, height: 2160 },
+  ];
+
+  const normalizeResolutionOptions = (value) => {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set();
+    return value
+      .map((resolution) => ({
+        width: normalizedInteger(resolution?.width),
+        height: normalizedInteger(resolution?.height),
+        current: Boolean(resolution?.current),
+      }))
+      .filter((resolution) => {
+        if (resolution.width < 640 || resolution.height < 480) {
+          return false;
+        }
+
+        const key = `${resolution.width}x${resolution.height}`;
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      })
+      .sort((left, right) => {
+        const leftPixels = left.width * left.height;
+        const rightPixels = right.width * right.height;
+        return leftPixels - rightPixels || left.width - right.width || left.height - right.height;
+      });
+  };
+
+  const parseResolutionOptions = () => {
+    try {
+      return normalizeResolutionOptions(JSON.parse(workspace.dataset.resolutionOptions || '[]'));
+    } catch (_) {
+      return [];
+    }
+  };
+
+  configuredScreens = parseConfiguredScreens();
+  resolutionOptions = parseResolutionOptions();
 
   const configuredScreensFor = (width, height) => {
     if (configuredScreens.length < 2) {
@@ -373,6 +429,7 @@ if (workspace) {
         selectedScreenId = screen.id;
         lastAppliedViewport = '';
         renderScreenSwitcher();
+        renderResolutionSelect();
         applySelectedScreen(true);
         scheduleLayoutRetry();
       });
@@ -382,6 +439,71 @@ if (workspace) {
 
   const selectedScreen = () =>
     screenOptions.find((screen) => screen.id === selectedScreenId) || screenOptions[0] || null;
+
+  const resolutionKey = (resolution) => `${resolution.width}x${resolution.height}`;
+
+  const currentResolutionForSelect = () => {
+    const screen = selectedScreen();
+    if (screen?.id && screen.id !== 'all' && screen.width && screen.height) {
+      return { width: screen.width, height: screen.height };
+    }
+
+    const size = displaySize(rfb);
+    if (size.width && size.height) {
+      return { width: Math.round(size.width), height: Math.round(size.height) };
+    }
+
+    return resolutionOptions.find((resolution) => resolution.current) || null;
+  };
+
+  const availableResolutionOptions = () => {
+    const current = currentResolutionForSelect();
+    const baseOptions = resolutionOptions.length > 0 ? resolutionOptions : commonResolutionOptions;
+    const seen = new Set();
+    const options = [];
+
+    for (const resolution of [...baseOptions, current].filter(Boolean)) {
+      const width = normalizedInteger(resolution.width);
+      const height = normalizedInteger(resolution.height);
+      if (width < 640 || height < 480) {
+        continue;
+      }
+
+      const key = `${width}x${height}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      options.push({ width, height });
+    }
+
+    return options.sort((left, right) => {
+      const leftPixels = left.width * left.height;
+      const rightPixels = right.width * right.height;
+      return leftPixels - rightPixels || left.width - right.width || left.height - right.height;
+    });
+  };
+
+  const renderResolutionSelect = () => {
+    if (!resolutionSelect) {
+      return;
+    }
+
+    const options = availableResolutionOptions();
+    const current = currentResolutionForSelect();
+    const currentKey = current ? resolutionKey(current) : '';
+    resolutionSelect.hidden = options.length === 0;
+    resolutionSelect.disabled = resolutionChanging || options.length === 0;
+    resolutionSelect.replaceChildren();
+
+    for (const resolution of options) {
+      const option = document.createElement('option');
+      option.value = resolutionKey(resolution);
+      option.textContent = `${resolution.width} x ${resolution.height}`;
+      option.selected = option.value === currentKey;
+      resolutionSelect.appendChild(option);
+    }
+  };
 
   const applySelectedScreen = (force = false) => {
     const display = displayFor(rfb);
@@ -445,17 +567,23 @@ if (workspace) {
   const refreshScreenOptions = () => {
     const nextOptions = buildScreenOptions();
     const selectedExists = nextOptions.some((screen) => screen.id === selectedScreenId);
+    let selectedChanged = false;
     if (!selectedExists) {
       selectedScreenId = 'all';
+      selectedChanged = true;
     }
 
     if (!sameScreenOptions(screenOptions, nextOptions)) {
       screenOptions = nextOptions;
       lastAppliedViewport = '';
       renderScreenSwitcher();
+    } else if (selectedChanged) {
+      lastAppliedViewport = '';
+      renderScreenSwitcher();
     }
 
     applySelectedScreen();
+    renderResolutionSelect();
   };
 
   const clearLayoutRetries = () => {
@@ -498,6 +626,7 @@ if (workspace) {
     selectedScreenId = 'all';
     lastAppliedViewport = '';
     renderScreenSwitcher();
+    renderResolutionSelect();
   };
 
   const startScreenRefresh = () => {
@@ -515,6 +644,89 @@ if (workspace) {
     window.setTimeout(refreshScreenOptions, 500);
     scheduleLayoutRetry();
   };
+
+  const desktopActionUrl = () => new URL(workspace.dataset.actionPath || window.location.pathname, window.location.href);
+
+  const parseResolutionValue = (value) => {
+    const match = /^(\d+)x(\d+)$/.exec(String(value || ''));
+    if (!match) {
+      return null;
+    }
+
+    return {
+      width: Number(match[1]),
+      height: Number(match[2]),
+    };
+  };
+
+  const refreshResolutionData = (payload) => {
+    if (Array.isArray(payload?.screens)) {
+      configuredScreens = normalizeScreenLayout(payload.screens);
+      workspace.dataset.screenLayout = JSON.stringify(configuredScreens);
+    }
+    if (Array.isArray(payload?.resolutions)) {
+      resolutionOptions = normalizeResolutionOptions(payload.resolutions);
+      workspace.dataset.resolutionOptions = JSON.stringify(resolutionOptions);
+    }
+  };
+
+  const applyResolution = async (resolution) => {
+    if (!resolution || resolutionChanging) {
+      return;
+    }
+
+    const current = currentResolutionForSelect();
+    if (current && current.width === resolution.width && current.height === resolution.height) {
+      renderResolutionSelect();
+      return;
+    }
+
+    resolutionChanging = true;
+    renderResolutionSelect();
+    setStatus('Changing resolution');
+
+    try {
+      const headers = { 'content-type': 'application/json' };
+      if (workspace.dataset.wsToken) {
+        headers.authorization = `Bearer ${workspace.dataset.wsToken}`;
+      }
+      const response = await fetch(desktopActionUrl(), {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers,
+        body: JSON.stringify({
+          action: 'set_resolution',
+          width: resolution.width,
+          height: resolution.height,
+          screen_id: selectedScreenId.startsWith('display-') ? selectedScreenId : null,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.error || 'Resolution change failed');
+      }
+
+      refreshResolutionData(payload);
+      lastAppliedViewport = '';
+      setStatus('Resolution changed');
+      window.latitudeReconnect?.(true);
+      scheduleLayoutRetry();
+      window.setTimeout(scheduleLayoutRetry, 600);
+      window.setTimeout(scheduleFullFramebufferRefresh, 1000);
+      window.setTimeout(() => {
+        setStatus('');
+      }, 1400);
+    } catch (error) {
+      setStatus(error.message || 'Resolution change failed', true);
+    } finally {
+      resolutionChanging = false;
+      renderResolutionSelect();
+    }
+  };
+
+  resolutionSelect?.addEventListener('change', () => {
+    applyResolution(parseResolutionValue(resolutionSelect.value));
+  });
 
   scaleButton?.addEventListener('click', () => {
     autoScale = !autoScale;
@@ -655,6 +867,7 @@ if (workspace) {
 
   updateScaleButton();
   updateFullscreenButton();
+  renderResolutionSelect();
 
   if (target) {
     connect();

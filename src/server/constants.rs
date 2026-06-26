@@ -33,6 +33,7 @@ pub(super) const AUTH_COOKIE_NAME: &str = "latitude_public_session";
 pub(super) const AUTH_COOKIE_MAX_AGE_SECONDS: u64 = 60 * 60 * 24;
 pub(super) const MAX_LOGIN_PAYLOAD_BYTES: usize = 8 * 1024;
 pub(super) const MAX_DIFF_ACTION_PAYLOAD_BYTES: usize = 64 * 1024;
+pub(super) const MAX_DESKTOP_ACTION_PAYLOAD_BYTES: usize = 8 * 1024;
 pub(super) const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 pub(super) const MAX_TERMINAL_COMMAND_BYTES: usize = 8 * 1024;
 pub(super) const MAX_TERMINAL_OUTPUT_BYTES: usize = 128 * 1024;

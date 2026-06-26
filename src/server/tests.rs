@@ -1114,6 +1114,7 @@ fn renders_root_desktop_page() {
         view_only: true,
         websocket_href: "/_desktop/ws".to_string(),
         screens: Vec::new(),
+        resolutions: Vec::new(),
     };
     let rendered = render_root_desktop(&info, Some("signed-token"), TEST_HOSTNAME);
 
@@ -1124,12 +1125,15 @@ fn renders_root_desktop_page() {
     assert!(!rendered.contains("desktop-target-label"));
     assert!(rendered.contains("data-desktop-workspace"));
     assert!(rendered.contains("data-desktop-screens"));
+    assert!(rendered.contains("data-desktop-resolution"));
     assert!(rendered.contains("data-desktop-scale"));
     assert!(rendered.contains("data-desktop-fullscreen"));
+    assert!(rendered.contains("data-action-path=\"/_desktop\""));
     assert!(rendered.contains("data-ws-path=\"/_desktop/ws\""));
     assert!(rendered.contains("data-ws-token=\"signed-token\""));
     assert!(rendered.contains("data-view-only=\"true\""));
     assert!(rendered.contains("data-screen-layout=\"[]\""));
+    assert!(rendered.contains("data-resolution-options=\"[]\""));
     assert!(rendered.contains("@novnc/novnc@1.7.0/core/rfb.js"));
 }
 

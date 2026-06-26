@@ -31,6 +31,7 @@ use super::super::{
         MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH,
         PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
+    desktop_api::execute_desktop_action_request,
     git::{GitActionResponse, collect_project_diff, handle_git_action_request},
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
@@ -899,10 +900,10 @@ async fn serve_root_desktop(
     device_hostname: &str,
 ) -> Response<Body> {
     let method = req.method().clone();
-    if method != Method::GET && method != Method::HEAD {
+    if method != Method::GET && method != Method::HEAD && method != Method::PATCH {
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
-            "desktop viewers support GET and HEAD\n",
+            "desktop viewers support GET, HEAD, and PATCH\n",
         );
     }
 
@@ -915,6 +916,10 @@ async fn serve_root_desktop(
 
     if !config.desktop.enabled {
         return plain_response(StatusCode::NOT_FOUND, "desktop is not enabled\n");
+    }
+
+    if method == Method::PATCH {
+        return execute_desktop_action_request(req).await;
     }
 
     let target = match state.desktop_manager().target_for(&config.desktop).await {

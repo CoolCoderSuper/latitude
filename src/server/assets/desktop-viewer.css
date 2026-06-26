@@ -164,6 +164,36 @@ a:hover {
   background: var(--desktop-active-bg);
 }
 
+.desktop-resolution-select {
+  flex: 0 0 auto;
+  min-height: 30px;
+  max-width: 132px;
+  border: 1px solid var(--desktop-control-border);
+  border-radius: 8px;
+  padding: 0 8px;
+  color: var(--desktop-control-text);
+  background: var(--desktop-control-bg);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.desktop-resolution-select[hidden] {
+  display: none;
+}
+
+.desktop-resolution-select:hover,
+.desktop-resolution-select:focus {
+  color: var(--desktop-control-hover-text);
+  background: var(--desktop-control-hover-bg);
+}
+
+.desktop-resolution-select:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
 .desktop-control-button {
   flex: 0 0 auto;
   min-width: 42px;
@@ -336,6 +366,11 @@ a:hover {
   .desktop-screen-switcher button {
     min-width: 32px;
     padding: 0 8px;
+  }
+
+  .desktop-resolution-select {
+    max-width: 116px;
+    padding: 0 6px;
   }
 
   .desktop-control-button {
