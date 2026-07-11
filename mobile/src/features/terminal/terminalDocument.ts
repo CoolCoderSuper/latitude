@@ -273,13 +273,14 @@ ${cssVariables}
       }
 
       terminal = new window.Terminal({
-        convertEol: true,
+        convertEol: false,
         cursorBlink: true,
         cursorStyle: 'block',
         disableStdin: false,
-        fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-        fontSize: 12,
-        lineHeight: 1.18,
+        fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
+        fontSize: 14,
+        lineHeight: 1,
+        letterSpacing: 0,
         scrollback: 5000,
         theme: currentTheme.xterm,
       });
@@ -305,6 +306,22 @@ ${cssVariables}
       const fitAndResize = () => {
         try {
           fitAddon.fit();
+          const terminalRect = terminalElement.getBoundingClientRect();
+          const terminalStyles = window.getComputedStyle(terminalElement);
+          const contentBottom =
+            terminalRect.bottom -
+            (Number.parseFloat(terminalStyles.paddingBottom) || 0);
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const screen = terminalElement.querySelector('.xterm-screen');
+            if (
+              !screen ||
+              screen.getBoundingClientRect().bottom <= contentBottom + 0.5 ||
+              terminal.rows <= 2
+            ) {
+              break;
+            }
+            terminal.resize(terminal.cols, terminal.rows - 1);
+          }
         } catch (_) {
           return;
         }

@@ -148,12 +148,13 @@ if (workspace) {
 
   const terminalOptions = () => ({
     allowProposedApi: false,
-    convertEol: true,
+    convertEol: false,
     cursorBlink: true,
     cursorStyle: 'block',
-    fontFamily: '"SFMono-Regular", Consolas, "Liberation Mono", monospace',
-    fontSize: window.matchMedia('(max-width: 720px)').matches ? 12 : 13,
-    lineHeight: 1.2,
+    fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
+    fontSize: 14,
+    lineHeight: 1,
+    letterSpacing: 0,
     scrollback: 5000,
     theme: terminalTheme(),
   });
@@ -193,6 +194,22 @@ if (workspace) {
       fitAndSend() {
         try {
           this.fitAddon.fit();
+          const surfaceRect = surface.getBoundingClientRect();
+          const surfaceStyles = window.getComputedStyle(surface);
+          const contentBottom =
+            surfaceRect.bottom -
+            (Number.parseFloat(surfaceStyles.paddingBottom) || 0);
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const screen = surface.querySelector('.xterm-screen');
+            if (
+              !screen ||
+              screen.getBoundingClientRect().bottom <= contentBottom + 0.5 ||
+              this.terminal.rows <= 2
+            ) {
+              break;
+            }
+            this.terminal.resize(this.terminal.cols, this.terminal.rows - 1);
+          }
         } catch (_) {
           return;
         }
