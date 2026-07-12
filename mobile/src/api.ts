@@ -5,6 +5,7 @@ import type {
   GitDiffResponse,
   LoginResponse,
   ProjectDetail,
+  ProjectDirectoryResponse,
   ProjectListResponse,
   SessionResponse,
   TerminalCommandPayload,
@@ -91,6 +92,12 @@ export class LatitudePublicApi {
   async diff(projectName: string): Promise<GitDiffResponse> {
     return this.get<GitDiffResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff`,
+    );
+  }
+
+  async files(projectName: string, path = ''): Promise<ProjectDirectoryResponse> {
+    return this.get<ProjectDirectoryResponse>(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/files?path=${encodeURIComponent(path)}`,
     );
   }
 

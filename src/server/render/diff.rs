@@ -112,6 +112,9 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
                     }
                 }
                 div class="file-summary-action" {
+                    @if change.can_open_in_editor() {
+                        a class="editor-link" data-open-editor href=(editor_href(&change.path)) target="_blank" rel="noopener" { "Open in editor" }
+                    }
                     @match kind {
                         FileSectionKind::Unstaged => {
                             (git_file_action_button("stage_file", "Stage", &change.path))
@@ -139,6 +142,13 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
             }
         }
     }
+}
+
+fn editor_href(path: &str) -> String {
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("path", path)
+        .finish();
+    format!("./_files?{query}")
 }
 
 fn git_destructive_action_button(action: &str, label: &str, confirm: &str) -> Markup {

@@ -3,6 +3,7 @@ mod auth;
 mod command;
 mod constants;
 mod desktop_api;
+mod files_api;
 mod git;
 mod html;
 mod page;
@@ -32,16 +33,19 @@ use command::{
     replace_project_deployment, upsert_project_page,
 };
 use constants::{
-    LOGIN_PATH, PUBLIC_API_PROJECT_DIFF_PATH, PUBLIC_API_PROJECT_PATH,
-    PUBLIC_API_PROJECT_TERMINAL_PATH, PUBLIC_API_PROJECT_TERMINAL_SESSION_PATH,
-    PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH, PUBLIC_API_PROJECTS_PATH,
-    PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
+    LOGIN_PATH, PUBLIC_API_PROJECT_DIFF_PATH, PUBLIC_API_PROJECT_FILES_PATH,
+    PUBLIC_API_PROJECT_PATH, PUBLIC_API_PROJECT_TERMINAL_PATH,
+    PUBLIC_API_PROJECT_TERMINAL_SESSION_PATH, PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH,
+    PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
     PUBLIC_API_ROOT_TERMINAL_SESSION_PATH, PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH,
     PUBLIC_API_SESSION_PATH, PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH,
     PUBLIC_TERMINAL_WS_PATH,
 };
 use desktop_api::{
     public_api_get_root_desktop, public_api_patch_root_desktop, public_root_desktop_ws,
+};
+use files_api::{
+    public_api_get_project_files, public_api_highlight_project_file, public_api_put_project_file,
 };
 use public::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
@@ -108,6 +112,12 @@ fn public_router(state: AppState) -> Router {
         .route(
             PUBLIC_API_PROJECT_DIFF_PATH,
             get(public_api_get_project_diff).patch(public_api_patch_project_diff),
+        )
+        .route(
+            PUBLIC_API_PROJECT_FILES_PATH,
+            get(public_api_get_project_files)
+                .post(public_api_highlight_project_file)
+                .put(public_api_put_project_file),
         )
         .route(
             PUBLIC_API_PROJECT_TERMINAL_PATH,

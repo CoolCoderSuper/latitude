@@ -89,6 +89,13 @@ if (workspace) {
   });
 
   workspace.addEventListener('click', async (event) => {
+    const editorLink = event.target instanceof Element
+      ? event.target.closest('a[data-open-editor]')
+      : null;
+    if (editorLink) {
+      event.stopPropagation();
+      return;
+    }
     const button = actionButton(event.target);
     if (!button || !workspace.contains(button)) {
       return;

@@ -11,6 +11,7 @@
     },
     "android": {
       "package": "com.joseph.latitude",
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

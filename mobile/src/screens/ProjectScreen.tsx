@@ -1,10 +1,11 @@
 import {
   ArrowLeft,
+  FolderCode,
   GitBranch,
   Globe2,
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { PanResponder, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../api';
@@ -12,6 +13,7 @@ import { IconButton, ScreenHeader, SegmentButton } from '../components/ui';
 import { PROJECT_TABS } from '../constants';
 import { DeploymentsPanel } from '../features/deployments/DeploymentsPanel';
 import { DiffPanel } from '../features/git/DiffPanel';
+import { FilesPanel, type FilesPanelHandle } from '../features/files/FilesPanel';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import type { ProjectTab } from '../navigationTypes';
 import { useTheme } from '../theme';
@@ -43,6 +45,8 @@ export function ProjectScreen({
 }) {
   const { colors, styles } = useTheme();
   const [codeInteractionActive, setCodeInteractionActive] = useState(false);
+  const [filesCanGoBack, setFilesCanGoBack] = useState(false);
+  const filesPanelRef = useRef<FilesPanelHandle>(null);
 
   const selectTab = useCallback(
     (nextTab: ProjectTab) => {
@@ -70,7 +74,7 @@ export function ProjectScreen({
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_event, gesture) => {
-          if (codeInteractionActive) {
+          if (codeInteractionActive || tab === 'files') {
             return false;
           }
 
@@ -93,7 +97,7 @@ export function ProjectScreen({
         },
         onPanResponderTerminationRequest: () => true,
       }),
-    [codeInteractionActive, selectAdjacentTab],
+    [codeInteractionActive, selectAdjacentTab, tab],
   );
 
   return (
@@ -104,7 +108,13 @@ export function ProjectScreen({
           <IconButton
             accessibilityLabel="Back"
             icon={<ArrowLeft color={colors.text} size={22} />}
-            onPress={onBack}
+            onPress={() => {
+              if (tab === 'files' && filesCanGoBack) {
+                filesPanelRef.current?.goBack();
+              } else {
+                onBack();
+              }
+            }}
           />
         }
         title={project.name}
@@ -113,7 +123,7 @@ export function ProjectScreen({
         <SegmentButton
           active={tab === 'deployments'}
           icon={<Globe2 color={tab === 'deployments' ? colors.onAccent : colors.text} size={17} />}
-          label="Deployments"
+          label="Apps"
           onPress={() => selectTab('deployments')}
         />
         <SegmentButton
@@ -121,6 +131,12 @@ export function ProjectScreen({
           icon={<GitBranch color={tab === 'code' ? colors.onAccent : colors.text} size={17} />}
           label="Code"
           onPress={() => selectTab('code')}
+        />
+        <SegmentButton
+          active={tab === 'files'}
+          icon={<FolderCode color={tab === 'files' ? colors.onAccent : colors.text} size={17} />}
+          label="Files"
+          onPress={() => selectTab('files')}
         />
         <SegmentButton
           active={tab === 'terminal'}
@@ -155,6 +171,22 @@ export function ProjectScreen({
             api={api}
             onCodeInteractionChange={handleCodeInteractionChange}
             projectName={project.name}
+          />
+        </View>
+        <View
+          pointerEvents={tab === 'files' ? 'auto' : 'none'}
+          style={[
+            styles.tabPage,
+            tab === 'files' ? styles.tabPageActive : styles.tabPageHidden,
+          ]}
+        >
+          <FilesPanel
+            ref={filesPanelRef}
+            active={tab === 'files'}
+            api={api}
+            projectName={project.name}
+            session={session}
+            onFolderNavigationChange={setFilesCanGoBack}
           />
         </View>
         <View

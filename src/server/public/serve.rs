@@ -28,8 +28,8 @@ use super::super::{
     },
     constants::{
         AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
-        MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH,
-        PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
+        FILES_ROUTE_SEGMENT, MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES,
+        PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     desktop_api::execute_desktop_action_request,
     git::{GitActionResponse, collect_project_diff, handle_git_action_request},
@@ -39,9 +39,9 @@ use super::super::{
         sanitized_relative_path, split_project_path,
     },
     render::{
-        render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_root_desktop, render_root_terminal, render_server_home,
-        render_share_login,
+        render_diff_workspace_fragment, render_project_diff, render_project_files,
+        render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
+        render_server_home, render_share_login,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
@@ -113,6 +113,24 @@ pub(in crate::server) async fn public_entry(
 
     if app_mount == DIFF_ROUTE_SEGMENT {
         return serve_project_diff(req, &project, remainder.as_str(), &device_hostname).await;
+    }
+    if app_mount == FILES_ROUTE_SEGMENT {
+        if remainder.as_str() != "/" {
+            return plain_response(
+                StatusCode::NOT_FOUND,
+                "file viewer only serves one document\n",
+            );
+        }
+        if req.method() != Method::GET && req.method() != Method::HEAD {
+            return plain_response(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "file viewer supports GET and HEAD\n",
+            );
+        }
+        return html_response(
+            req.method(),
+            render_project_files(&project, &device_hostname),
+        );
     }
     if app_mount == TERMINAL_ROUTE_SEGMENT {
         return serve_project_terminal(req, &project, remainder.as_str(), &device_hostname).await;

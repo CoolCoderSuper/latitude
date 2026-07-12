@@ -4,6 +4,7 @@ use crate::config::MAX_PAGE_BINARY_CONTENT_BYTES;
 
 pub(super) const DEFAULT_PAGE_TITLE: &str = "Latitude Page";
 pub(super) const DIFF_ROUTE_SEGMENT: &str = "_diff";
+pub(super) const FILES_ROUTE_SEGMENT: &str = "_files";
 pub(super) const DESKTOP_ROUTE_SEGMENT: &str = "_desktop";
 pub(super) const TERMINAL_ROUTE_SEGMENT: &str = "_terminal";
 pub(super) const TERMINAL_WS_SUFFIX: &str = "ws";
@@ -21,6 +22,8 @@ pub(super) const PUBLIC_API_ROOT_TERMINAL_SESSION_PATH: &str =
 pub(super) const PUBLIC_API_PROJECTS_PATH: &str = "/__latitude/api/projects";
 pub(super) const PUBLIC_API_PROJECT_PATH: &str = "/__latitude/api/projects/{project}";
 pub(super) const PUBLIC_API_PROJECT_DIFF_PATH: &str = "/__latitude/api/projects/{project}/diff";
+pub(super) const PUBLIC_API_PROJECT_FILES_PATH: &str = "/__latitude/api/projects/{project}/files";
+pub(super) const MAX_FILE_EDITOR_BYTES: usize = 5 * 1024 * 1024;
 pub(super) const PUBLIC_API_PROJECT_TERMINAL_PATH: &str =
     "/__latitude/api/projects/{project}/terminal";
 pub(super) const PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH: &str =

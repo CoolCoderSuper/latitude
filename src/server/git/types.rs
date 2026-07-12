@@ -56,6 +56,10 @@ impl GitFileChange {
     pub(in crate::server) fn can_unstage(&self) -> bool {
         self.index_status != ' ' && self.index_status != '?' && self.index_status != '!'
     }
+
+    pub(in crate::server) fn can_open_in_editor(&self) -> bool {
+        self.index_status != 'D' && self.worktree_status != 'D'
+    }
 }
 
 #[derive(Clone, Copy)]

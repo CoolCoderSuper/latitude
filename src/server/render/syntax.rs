@@ -140,6 +140,31 @@ pub(in crate::server) fn highlight_diff_lines(
     lines
 }
 
+pub(in crate::server) fn highlight_source_lines(
+    content: &str,
+    path: &str,
+) -> Vec<HighlightedDiffLine> {
+    let syntax_set = &SYNTAX_SET;
+    let syntax = syntax_for_file_name(syntax_set, path)
+        .or_else(|| {
+            content
+                .lines()
+                .next()
+                .and_then(|line| syntax_set.find_syntax_by_first_line(line))
+        })
+        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    let is_rust = syntax.name == "Rust";
+    let mut highlighter = HighlightLines::new(syntax, &TOKEN_THEME);
+
+    content
+        .split('\n')
+        .map(|line| HighlightedDiffLine {
+            kind: None,
+            tokens: highlight_syntax_line(&mut highlighter, syntax_set, is_rust, line),
+        })
+        .collect()
+}
+
 pub(in crate::server) fn diff_line_class(line: &str) -> Option<&'static str> {
     if line.starts_with("diff --git")
         || line.starts_with("index ")

@@ -91,6 +91,18 @@ export type ProjectDetail = {
   deployments: DeploymentSummary[];
 };
 
+export type ProjectFileEntry = {
+  name: string;
+  path: string;
+  kind: 'directory' | 'file';
+  size: number;
+};
+
+export type ProjectDirectoryResponse = {
+  path: string;
+  entries: ProjectFileEntry[];
+};
+
 export type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove';
 
 export type DiffTokenKind =

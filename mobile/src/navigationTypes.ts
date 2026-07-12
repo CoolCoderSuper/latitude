@@ -6,7 +6,7 @@ export type ViewerState = {
   kind?: DeploymentKind;
   mediaType?: string | null;
 };
-export type ProjectTab = 'deployments' | 'code' | 'terminal';
+export type ProjectTab = 'deployments' | 'code' | 'files' | 'terminal';
 export type RootStackParamList = {
   Connect: undefined;
   Home: undefined;

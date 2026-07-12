@@ -7,12 +7,12 @@ pub(super) use diff::render_diff_workspace_fragment;
 
 #[cfg(test)]
 pub(super) use syntax::{
-    HighlightedDiffLine, diff_line_class, highlight_diff_lines, render_diff_code_output,
-    syntax_name_for_path,
+    HighlightedDiffLine, diff_line_class, highlight_diff_lines, highlight_source_lines,
+    render_diff_code_output, syntax_name_for_path,
 };
 
 #[cfg(not(test))]
-pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines};
+pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines, highlight_source_lines};
 
 use maud::{PreEscaped, html};
 
@@ -25,14 +25,16 @@ use crate::desktop::DesktopInfoResponse;
 use super::{
     assets::{
         AUTH_PAGE_STYLE, DESKTOP_VIEWER_SCRIPT, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_SCRIPT,
-        DIFF_VIEWER_STYLE, PROJECT_HOME_STYLE, TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
+        DIFF_VIEWER_STYLE, FILE_VIEWER_SCRIPT, FILE_VIEWER_STYLE, PROJECT_HOME_STYLE,
+        TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
     },
     constants::{
-        DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, LOGIN_PATH, TERMINAL_ROUTE_SEGMENT,
-        TERMINAL_WS_SUFFIX,
+        DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, FILES_ROUTE_SEGMENT, LOGIN_PATH,
+        TERMINAL_ROUTE_SEGMENT, TERMINAL_WS_SUFFIX,
     },
     git::GitDiffReport,
     html as html_page,
+    paths::display_path,
     terminal_api::PublicTerminalInfoResponse,
 };
 
@@ -57,6 +59,12 @@ pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str
                     p { "Project tools and deployments on " (device_hostname) }
                 }
                 ul {
+                    li {
+                        a href=(format!("/{}/{}", project.name, FILES_ROUTE_SEGMENT)) {
+                            strong { "Files" }
+                            span { "Browse, preview, and edit project files" }
+                        }
+                    }
                     li {
                         a href=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
                             strong { "Code changes" }
@@ -91,6 +99,37 @@ pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str
     )
 }
 
+pub(super) fn render_project_files(project: &ProjectConfig, device_hostname: &str) -> String {
+    html_page::document(
+        &format!("{} files - Latitude", project.name),
+        device_hostname,
+        FILE_VIEWER_STYLE,
+        html! {},
+        html! {
+            main class="files-page" data-file-workspace data-api-url=(format!("/__latitude/api/projects/{}/files", project.name)) {
+                header class="files-header" {
+                    a href=(format!("/{}", project.name)) { "Back to project" }
+                    h1 { "Files" }
+                    p { (&project.name) " on " (device_hostname) }
+                    p class="project-path" { (display_path(&project.project_dir)) }
+                }
+                div class="file-workspace" {
+                    aside class="file-sidebar" { div class="file-tree" data-file-tree { "Loading…" } }
+                    div class="file-resizer" data-file-resizer role="separator" aria-orientation="vertical" aria-label="Resize file explorer" tabindex="0" {}
+                    section class="file-main" {
+                        span class="visually-hidden" data-file-title { "Select a file to preview" }
+                        div class="file-actions" data-file-actions hidden { span data-save-state {} button type="button" data-save disabled { "Save" } }
+                        div class="file-preview" data-file-preview {
+                            div class="file-empty" { "Choose a file from the explorer." }
+                        }
+                    }
+                }
+                script type="module" { (PreEscaped(FILE_VIEWER_SCRIPT)) }
+            }
+        },
+    )
+}
+
 pub(super) fn render_project_diff(
     project: &ProjectConfig,
     report: &GitDiffReport,
@@ -110,6 +149,7 @@ pub(super) fn render_project_diff(
                     a href=(format!("/{}", project.name)) { "Back to project" }
                     h1 { "Code changes" }
                     p { (&project.name) " on " (device_hostname) }
+                    p class="project-path" { (display_path(&report.repo_dir)) }
                 }
                 div class="diff-workspace" data-diff-workspace data-action-url=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
                     (PreEscaped(workspace_html))
