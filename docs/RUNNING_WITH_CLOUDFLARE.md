@@ -31,7 +31,7 @@ Check the local server:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:7600/health
-Invoke-WebRequest http://127.0.0.1:5597/mock/ -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:5597/ -UseBasicParsing
 ```
 
 ## Development Tunnel
@@ -110,7 +110,7 @@ Then add a published application route:
 After saving, open:
 
 ```text
-https://latitude.example.com/mock/
+https://latitude.example.com/
 ```
 
 ### Option B: Locally Managed
@@ -150,7 +150,7 @@ Validate the config:
 
 ```powershell
 cloudflared tunnel ingress validate
-cloudflared tunnel ingress rule https://latitude.example.com/mock/
+cloudflared tunnel ingress rule https://latitude.example.com/
 ```
 
 Run the tunnel:
@@ -211,11 +211,11 @@ Check local health:
 Invoke-RestMethod http://127.0.0.1:7600/health
 ```
 
-Check the public mock site:
+Check the public gateway:
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:5597/mock/ -UseBasicParsing
-Invoke-WebRequest https://latitude.example.com/mock/ -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:5597/ -UseBasicParsing
+Invoke-WebRequest https://latitude.example.com/ -UseBasicParsing
 ```
 
 Check running processes:
@@ -240,7 +240,7 @@ If the quick tunnel hostname stops resolving, the quick tunnel process probably 
 If Cloudflare returns an origin error, make sure Latitude is listening locally:
 
 ```powershell
-Invoke-WebRequest http://127.0.0.1:5597/mock/ -UseBasicParsing
+Invoke-WebRequest http://127.0.0.1:5597/ -UseBasicParsing
 ```
 
 If `cloudflared` is not found after installation, refresh the shell environment:
@@ -257,7 +257,7 @@ If a named tunnel does not route, check:
 cloudflared tunnel list
 cloudflared tunnel info latitude
 cloudflared tunnel ingress validate
-cloudflared tunnel ingress rule https://latitude.example.com/mock/
+cloudflared tunnel ingress rule https://latitude.example.com/
 ```
 
 ## References

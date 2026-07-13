@@ -38,8 +38,8 @@ use constants::{
     PUBLIC_API_PROJECT_TERMINAL_SESSION_PATH, PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH,
     PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
     PUBLIC_API_ROOT_TERMINAL_SESSION_PATH, PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH,
-    PUBLIC_API_SESSION_PATH, PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH,
-    PUBLIC_TERMINAL_WS_PATH,
+    PUBLIC_API_SESSION_PATH, PUBLIC_API_SHARE_PATH, PUBLIC_API_SHARES_PATH,
+    PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH, PUBLIC_TERMINAL_WS_PATH,
 };
 use desktop_api::{
     public_api_get_root_desktop, public_api_patch_root_desktop, public_root_desktop_ws,
@@ -49,12 +49,14 @@ use files_api::{
 };
 use public::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
-    public_api_create_terminal_session, public_api_delete_root_terminal_session,
+    public_api_create_share, public_api_create_terminal_session,
+    public_api_delete_root_terminal_session, public_api_delete_share,
     public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
-    public_api_list_root_terminal_sessions, public_api_list_terminal_sessions, public_api_login,
-    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
-    public_api_session, public_entry, public_root_terminal_ws, public_terminal_ws,
+    public_api_list_root_terminal_sessions, public_api_list_shares,
+    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_diff,
+    public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
+    public_entry, public_root_terminal_ws, public_terminal_ws,
 };
 
 pub async fn run(state: AppState) -> anyhow::Result<()> {
@@ -91,6 +93,11 @@ fn public_router(state: AppState) -> Router {
             get(public_api_session).post(public_api_login),
         )
         .route(PUBLIC_API_PROJECTS_PATH, get(public_api_list_projects))
+        .route(
+            PUBLIC_API_SHARES_PATH,
+            get(public_api_list_shares).post(public_api_create_share),
+        )
+        .route(PUBLIC_API_SHARE_PATH, delete(public_api_delete_share))
         .route(
             PUBLIC_API_ROOT_TERMINAL_PATH,
             get(public_api_get_root_terminal).post(public_api_post_root_terminal),

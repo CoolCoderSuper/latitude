@@ -20,6 +20,8 @@ pub(super) const PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH: &str = "/__latitude/api
 pub(super) const PUBLIC_API_ROOT_TERMINAL_SESSION_PATH: &str =
     "/__latitude/api/terminal/sessions/{session}";
 pub(super) const PUBLIC_API_PROJECTS_PATH: &str = "/__latitude/api/projects";
+pub(super) const PUBLIC_API_SHARES_PATH: &str = "/__latitude/api/shares";
+pub(super) const PUBLIC_API_SHARE_PATH: &str = "/__latitude/api/shares/{token}";
 pub(super) const PUBLIC_API_PROJECT_PATH: &str = "/__latitude/api/projects/{project}";
 pub(super) const PUBLIC_API_PROJECT_DIFF_PATH: &str = "/__latitude/api/projects/{project}/diff";
 pub(super) const PUBLIC_API_PROJECT_FILES_PATH: &str = "/__latitude/api/projects/{project}/files";

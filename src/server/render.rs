@@ -25,8 +25,8 @@ use crate::desktop::DesktopInfoResponse;
 use super::{
     assets::{
         AUTH_PAGE_STYLE, DESKTOP_VIEWER_SCRIPT, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_SCRIPT,
-        DIFF_VIEWER_STYLE, FILE_VIEWER_SCRIPT, FILE_VIEWER_STYLE, PROJECT_HOME_STYLE,
-        TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
+        DIFF_VIEWER_STYLE, FILE_VIEWER_SCRIPT, FILE_VIEWER_STYLE, PROJECT_HOME_SCRIPT,
+        PROJECT_HOME_STYLE, TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
     },
     constants::{
         DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, FILES_ROUTE_SEGMENT, LOGIN_PATH,
@@ -52,7 +52,7 @@ pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str
         PROJECT_HOME_STYLE,
         html! {},
         html! {
-            main {
+            main data-project-shell data-project=(&project.name) {
                 header {
                     a class="back-link" href="/" { "Back to projects" }
                     h1 { (&project.name) }
@@ -78,8 +78,8 @@ pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str
                         }
                     }
                     @for deployment in enabled_deployments {
-                        li {
-                            a href=(format!("/{}/{}", project.name, deployment.name)) {
+                        li class="deployment-item" {
+                            a class="deployment-link" href=(format!("/{}/{}", project.name, deployment.name)) {
                                 strong { (&deployment.name) }
                                 span {
                                     (deployment_home_label(deployment))
@@ -88,12 +88,55 @@ pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str
                                     }
                                 }
                             }
+                            button
+                                class="share-trigger"
+                                type="button"
+                                data-share-trigger
+                                data-deployment=(&deployment.name)
+                                aria-label=(format!("Manage shares for {}", deployment.name))
+                                title="Manage share links"
+                            { "Share" }
                         }
                     }
                     @if project.deployments.iter().all(|deployment| !deployment.enabled) {
                         li class="empty" { "No enabled deployments yet." }
                     }
                 }
+                dialog class="share-dialog" data-share-dialog {
+                    div class="share-dialog-shell" {
+                        div class="share-dialog-header" {
+                            div {
+                                h2 data-share-title { "Share deployment" }
+                            }
+                            button class="share-close" type="button" data-share-close aria-label="Close share manager" { "×" }
+                        }
+                        div class="share-status" data-share-status aria-live="polite" hidden {}
+                        form class="share-form" data-share-form {
+                            label {
+                                "Password (optional)"
+                                input type="password" name="password" autocomplete="new-password" placeholder="Open link when blank";
+                            }
+                            label {
+                                "Expires"
+                                select name="expiry" {
+                                    option value="" { "Never" }
+                                    option value="3600" { "1 hour" }
+                                    option value="86400" { "1 day" }
+                                    option value="604800" { "7 days" }
+                                }
+                            }
+                            button class="share-create" type="submit" { "Create link" }
+                        }
+                        section class="share-existing" {
+                            div class="share-section-heading" {
+                                h3 { "Links" }
+                                button class="share-refresh" type="button" data-share-refresh { "Refresh" }
+                            }
+                            div class="share-list" data-share-list { "Loading…" }
+                        }
+                    }
+                }
+                script { (PreEscaped(PROJECT_HOME_SCRIPT)) }
             }
         },
     )

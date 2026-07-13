@@ -50,6 +50,35 @@ li {
   background: #fff;
 }
 
+.deployment-item {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.deployment-link {
+  flex: 1;
+  min-width: 0;
+}
+
+.share-trigger {
+  flex: none;
+  margin: 10px;
+  border: 1px solid #b7c2cf;
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #0f766e;
+  background: #f7faf9;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.share-trigger:hover {
+  border-color: #0f766e;
+  background: #e5f4f1;
+}
+
 a {
   display: block;
   padding: 14px 16px;
@@ -118,6 +147,241 @@ span {
   background: #fff;
 }
 
+.share-dialog {
+  width: min(calc(100% - 28px), 650px);
+  max-height: min(720px, calc(100vh - 32px));
+  border: 1px solid #d7dde8;
+  border-radius: 14px;
+  padding: 0;
+  color: #1c2433;
+  background: #fff;
+  box-shadow: 0 24px 80px rgb(15 23 42 / 32%);
+}
+
+.share-dialog::backdrop {
+  background: rgb(15 23 42 / 55%);
+  backdrop-filter: blur(2px);
+}
+
+.share-dialog-shell {
+  box-sizing: border-box;
+  display: grid;
+  gap: 20px;
+  max-height: inherit;
+  overflow-y: auto;
+  padding: 22px;
+}
+
+.share-dialog-header,
+.share-section-heading,
+.share-card,
+.share-card-actions {
+  display: flex;
+  align-items: center;
+}
+
+.share-dialog-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.share-dialog-header h2,
+.share-existing h3 {
+  margin: 0;
+}
+
+.share-dialog-header h2 {
+  font-size: 1.5rem;
+  letter-spacing: -0.025em;
+}
+
+.share-close {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border: 0;
+  border-radius: 999px;
+  color: inherit;
+  background: #eef2f6;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.share-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.share-existing {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid #e2e7ee;
+  padding-top: 18px;
+}
+
+.share-form label {
+  display: grid;
+  gap: 6px;
+  color: #526173;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.share-form input,
+.share-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #cbd4df;
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: #1c2433;
+  background: #f8fafc;
+  font: inherit;
+}
+
+.share-create,
+.share-refresh,
+.share-send,
+.share-revoke {
+  min-height: 38px;
+  border: 1px solid #0f766e;
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: #fff;
+  background: #0f766e;
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.share-create {
+  min-height: 42px;
+  white-space: nowrap;
+}
+
+.share-refresh,
+.share-send {
+  border-color: #c8d0dc;
+  color: #1c2433;
+  background: #fff;
+}
+
+.share-refresh {
+  min-height: 34px;
+  padding-block: 5px;
+}
+
+.share-revoke {
+  border-color: #b42318;
+  color: #b42318;
+  background: #fff0ed;
+}
+
+.share-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.share-status {
+  border: 1px solid #b6dfc6;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #18794e;
+  background: #eaf7ef;
+  font-weight: 700;
+}
+
+.share-status[data-tone="error"] {
+  border-color: #f0b8ae;
+  color: #b42318;
+  background: #fff0ed;
+}
+
+.share-section-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.share-section-heading h3 {
+  font-size: 1rem;
+}
+
+.share-list {
+  display: grid;
+  gap: 10px;
+}
+
+.share-card {
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #e0e6ed;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #f8fafc;
+}
+
+.share-card-details {
+  min-width: 0;
+}
+
+.share-card-details strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-card-details span {
+  font-size: 0.78rem;
+}
+
+.share-card-actions {
+  flex: none;
+  gap: 8px;
+}
+
+.share-expired {
+  color: #b42318;
+}
+
+.share-empty {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #f5f7fa;
+}
+
+.share-empty-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: 999px;
+  color: #0f766e;
+  background: #dff3ef;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.share-empty strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.share-empty div > span {
+  margin-top: 2px;
+  font-size: 0.78rem;
+}
+
 :root[data-latitude-theme="dark"] {
   background: #10141d;
   color: #dbe4ef;
@@ -146,4 +410,93 @@ span {
   border-color: #a8791b;
   color: #f2cf72;
   background: #342b16;
+}
+
+:root[data-latitude-theme="dark"] .share-trigger {
+  border-color: #465568;
+  color: #6dd4ca;
+  background: #1a2430;
+}
+
+:root[data-latitude-theme="dark"] .share-trigger:hover {
+  border-color: #2aa79c;
+  background: #1d2d2f;
+}
+
+:root[data-latitude-theme="dark"] .share-dialog {
+  border-color: #303d4f;
+  color: #dbe4ef;
+  background: #131a25;
+}
+
+:root[data-latitude-theme="dark"] .share-close,
+:root[data-latitude-theme="dark"] .share-refresh,
+:root[data-latitude-theme="dark"] .share-send {
+  border-color: #2f3a4a;
+  color: #dbe4ef;
+  background: #1b2432;
+}
+
+:root[data-latitude-theme="dark"] .share-existing {
+  border-color: #2a3545;
+}
+
+:root[data-latitude-theme="dark"] .share-form label {
+  color: #aeb9c7;
+}
+
+:root[data-latitude-theme="dark"] .share-form input,
+:root[data-latitude-theme="dark"] .share-form select {
+  border-color: #465568;
+  color: #dbe4ef;
+  background: #0f1620;
+}
+
+:root[data-latitude-theme="dark"] .share-card {
+  border-color: #2f3a4a;
+  background: #0f1620;
+}
+
+:root[data-latitude-theme="dark"] .share-empty {
+  background: #18212e;
+}
+
+:root[data-latitude-theme="dark"] .share-empty-icon {
+  color: #7adbd1;
+  background: #193c3a;
+}
+
+:root[data-latitude-theme="dark"] .share-revoke {
+  border-color: #ff8b7b;
+  color: #ffb3a7;
+  background: #351b18;
+}
+
+@media (max-width: 520px) {
+  main {
+    padding-inline: 14px;
+  }
+
+  .deployment-item,
+  .share-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .share-trigger {
+    min-height: 40px;
+    margin-top: 0;
+  }
+
+  .share-dialog-shell {
+    padding: 18px;
+  }
+
+  .share-form {
+    grid-template-columns: 1fr;
+  }
+
+  .share-card-actions > button {
+    flex: 1;
+  }
 }

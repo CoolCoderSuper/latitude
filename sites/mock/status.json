@@ -1,6 +1,0 @@
-{
-  "site": "Latitude Mock Site",
-  "mount": "/mock/website",
-  "static_root": "sites/mock",
-  "ok": true
-}

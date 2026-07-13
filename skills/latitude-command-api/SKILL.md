@@ -42,7 +42,7 @@ latitude project ensure demo --project-dir .
 ```bash
 latitude publish page demo report --file report.md --title "Agent Report" --format markdown
 latitude publish page demo snapshot --file screenshot.png --title "Latest Screenshot"
-latitude deploy static demo mock --root ./sites/mock --spa-fallback
+latitude deploy static demo preview --root ./dist --spa-fallback
 latitude deploy proxy demo frontend --upstream http://127.0.0.1:5173
 ```
 
@@ -53,8 +53,8 @@ The CLI prints JSON responses. Publish and deploy commands include `public_url` 
 5. Create a share link when the user needs a deployment-specific URL:
 
 ```bash
-latitude share create demo mock
-latitude share create demo mock --password "review-only" --expires-in 2h
+latitude share create demo preview
+latitude share create demo preview --password "review-only" --expires-in 2h
 latitude share list
 latitude share delete <token>
 ```
@@ -138,13 +138,13 @@ Document payload rules:
 Use this for built assets or simple file serving.
 
 ```bash
-latitude deploy static demo mock --root ./sites/mock --index-file index.html --spa-fallback
+latitude deploy static demo preview --root ./dist --index-file index.html --spa-fallback
 ```
 
 If the project may not exist yet:
 
 ```bash
-latitude deploy static demo mock --root ./sites/mock --project-dir . --spa-fallback
+latitude deploy static demo preview --root ./dist --project-dir . --spa-fallback
 ```
 
 `index_file` must be a single file name. Use `--spa-fallback` for single-page apps so missing paths return the index file.
@@ -294,14 +294,14 @@ curl -X PUT \
 curl -X PUT \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "mock",
+    "name": "preview",
     "enabled": true,
     "kind": "static",
-    "root": "./sites/mock",
+    "root": "./dist",
     "index_file": "index.html",
     "spa_fallback": true
   }' \
-  http://127.0.0.1:7600/api/projects/demo/deployments/mock
+  http://127.0.0.1:7600/api/projects/demo/deployments/preview
 ```
 
 ### Create A Deployment Share Link
@@ -313,7 +313,7 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "project": "demo",
-    "deployment": "mock"
+    "deployment": "preview"
   }' \
   http://127.0.0.1:7600/api/shares
 ```
@@ -325,7 +325,7 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "project": "demo",
-    "deployment": "mock",
+    "deployment": "preview",
     "password": "review-only",
     "expires_at": 4102444800
   }' \

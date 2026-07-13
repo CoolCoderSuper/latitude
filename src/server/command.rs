@@ -30,17 +30,17 @@ pub(super) struct HealthResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CreateDeploymentShareRequest {
-    project: String,
-    deployment: String,
+pub(in crate::server) struct CreateDeploymentShareRequest {
+    pub(in crate::server) project: String,
+    pub(in crate::server) deployment: String,
     #[serde(default)]
-    password: Option<String>,
+    pub(in crate::server) password: Option<String>,
     #[serde(default)]
-    expires_at: Option<u64>,
+    pub(in crate::server) expires_at: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct DeploymentShareResponse {
+pub(in crate::server) struct DeploymentShareResponse {
     token: String,
     project: String,
     deployment: String,
@@ -318,7 +318,10 @@ pub(super) async fn delete_deployment_share(
     }
 }
 
-fn deployment_share_response(share: &DeploymentShareConfig, now: u64) -> DeploymentShareResponse {
+pub(in crate::server) fn deployment_share_response(
+    share: &DeploymentShareConfig,
+    now: u64,
+) -> DeploymentShareResponse {
     DeploymentShareResponse {
         token: share.token.clone(),
         project: share.project.clone(),

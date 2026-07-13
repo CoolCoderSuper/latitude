@@ -48,6 +48,23 @@ export type DeploymentSummary = {
   title: string | null;
 };
 
+export type DeploymentShare = {
+  token: string;
+  project: string;
+  deployment: string;
+  href: string;
+  has_password: boolean;
+  expires_at: number | null;
+  expired: boolean;
+};
+
+export type CreateDeploymentSharePayload = {
+  project: string;
+  deployment: string;
+  password?: string;
+  expires_at?: number;
+};
+
 export type ProjectDiffLink = {
   href: string;
   api_href: string;

@@ -1,5 +1,7 @@
 import type {
   DesktopInfoResponse,
+  CreateDeploymentSharePayload,
+  DeploymentShare,
   GitActionPayload,
   GitActionResponse,
   GitDiffResponse,
@@ -86,6 +88,27 @@ export class LatitudePublicApi {
   async project(name: string): Promise<ProjectDetail> {
     return this.get<ProjectDetail>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(name)}`,
+    );
+  }
+
+  async shares(): Promise<DeploymentShare[]> {
+    return this.get<DeploymentShare[]>(`${PUBLIC_API_PREFIX}/shares`);
+  }
+
+  async createShare(payload: CreateDeploymentSharePayload): Promise<DeploymentShare> {
+    return this.request<DeploymentShare>(`${PUBLIC_API_PREFIX}/shares`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+  }
+
+  async deleteShare(token: string): Promise<void> {
+    await this.request<void>(
+      `${PUBLIC_API_PREFIX}/shares/${encodeURIComponent(token)}`,
+      { method: 'DELETE' },
     );
   }
 

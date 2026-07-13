@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use axum::{
     body::{Body, to_bytes},
     extract::State,
-    http::{HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::IntoResponse,
 };
 
@@ -25,7 +25,9 @@ use super::{
         PROJECT_HOME_STYLE, TERMINAL_VIEWER_STYLE,
     },
     auth::{clean_next_path, public_password_matches, public_request_is_authenticated},
-    command::{get_config, get_project_deployment, get_project_page_content},
+    command::{
+        CreateDeploymentShareRequest, get_config, get_project_deployment, get_project_page_content,
+    },
     constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
@@ -40,7 +42,10 @@ use super::{
         ProjectPath, display_path, filtered_cookie_header, join_upstream_url, resolve_project_path,
         sanitized_relative_path, split_project_path,
     },
-    public::{public_entry, public_project_detail},
+    public::{
+        public_api_create_share, public_api_delete_share, public_api_list_shares, public_entry,
+        public_project_detail,
+    },
     render::{
         diff_line_class, highlight_diff_lines, render_diff_code_output,
         render_diff_workspace_fragment, render_project_diff, render_project_home,
@@ -203,6 +208,79 @@ async fn authenticates_public_requests_with_bearer_token() {
         .unwrap();
 
     assert!(public_request_is_authenticated(&state, &config, &req));
+}
+
+#[tokio::test]
+async fn authenticated_public_api_manages_deployment_shares() {
+    let config = BootConfig::default();
+    let state = test_state_with_seed(
+        config.clone(),
+        demo_seed(vec![seed_static(
+            "website",
+            PathBuf::from("."),
+            "index.html",
+        )]),
+    )
+    .await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+
+    let response = public_api_create_share(
+        State(state.clone()),
+        headers,
+        axum::Json(CreateDeploymentShareRequest {
+            project: "demo".to_string(),
+            deployment: "website".to_string(),
+            password: Some("review-only".to_string()),
+            expires_at: None,
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let share_token = created["token"].as_str().unwrap().to_string();
+    assert_eq!(created["has_password"], true);
+    assert!(created.get("password").is_none());
+
+    let request = Request::builder()
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = public_api_list_shares(State(state.clone()), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let shares: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(shares.as_array().unwrap().len(), 1);
+    assert_eq!(shares[0]["deployment"], "website");
+    assert!(shares[0].get("password").is_none());
+
+    let request = Request::builder()
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = public_api_delete_share(
+        axum::extract::Path(share_token),
+        State(state.clone()),
+        request,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(state.catalog().list_shares().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn public_share_management_requires_authentication() {
+    let state = test_state(BootConfig::default()).await;
+    let request = Request::builder().body(Body::empty()).unwrap();
+
+    let response = public_api_list_shares(State(state), request).await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[test]
@@ -538,7 +616,14 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("Static website"));
     assert!(rendered.contains("href=\"/demo/report\""));
     assert!(rendered.contains("Page: Weekly Report"));
+    assert!(rendered.contains("data-project-shell data-project=\"demo\""));
+    assert!(rendered.contains("data-deployment=\"website\""));
+    assert!(rendered.contains("aria-label=\"Manage shares for report\""));
+    assert!(rendered.contains("data-share-dialog"));
+    assert!(rendered.contains("Create link"));
+    assert!(rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
+    assert!(!rendered.contains("data-deployment=\"draft\""));
 }
 
 #[tokio::test]

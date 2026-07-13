@@ -154,10 +154,13 @@ export function ProjectScreen({
           ]}
         >
           <DeploymentsPanel
+            api={api}
+            baseUrl={session.baseUrl}
             deployments={project.deployments}
             onOpenViewer={onOpenViewer}
             onRefresh={onRefresh}
             refreshing={projectLoading}
+            projectName={project.name}
           />
         </View>
         <View

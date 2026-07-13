@@ -7,7 +7,10 @@ use axum::{
 };
 use tracing::error;
 
-use crate::{config::ProjectConfig, state::AppState};
+use crate::{
+    config::{ProjectConfig, current_unix_timestamp},
+    state::AppState,
+};
 
 use super::{
     super::{
@@ -17,6 +20,7 @@ use super::{
             public_login_response, public_login_success_response, public_password_matches,
             public_request_is_authenticated,
         },
+        command::{CreateDeploymentShareRequest, deployment_share_response},
         constants::{
             AUTH_COOKIE_MAX_AGE_SECONDS, MAX_DIFF_ACTION_PAYLOAD_BYTES, MAX_LOGIN_PAYLOAD_BYTES,
             MAX_TERMINAL_COMMAND_BYTES, PUBLIC_API_PROJECTS_PATH,
@@ -38,6 +42,79 @@ use super::{
         public_root_terminal_link,
     },
 };
+
+pub(in crate::server) async fn public_api_list_shares(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    match state.catalog().list_shares().await {
+        Ok(shares) => {
+            let now = current_unix_timestamp();
+            Json(
+                shares
+                    .iter()
+                    .map(|share| deployment_share_response(share, now))
+                    .collect::<Vec<_>>(),
+            )
+            .into_response()
+        }
+        Err(error) => ApiError::from(error).into_response(),
+    }
+}
+
+pub(in crate::server) async fn public_api_create_share(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateDeploymentShareRequest>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_headers_are_authenticated(&state, &config, &headers, None) {
+        return public_api_auth_challenge();
+    }
+
+    match state
+        .catalog()
+        .create_share(
+            &payload.project,
+            &payload.deployment,
+            payload.password,
+            payload.expires_at,
+        )
+        .await
+    {
+        Ok(share) => (
+            StatusCode::CREATED,
+            Json(deployment_share_response(&share, current_unix_timestamp())),
+        )
+            .into_response(),
+        Err(error) => ApiError::from(error).into_response(),
+    }
+}
+
+pub(in crate::server) async fn public_api_delete_share(
+    AxumPath(token): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+
+    match state.catalog().delete_share(&token).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => json_error(
+            StatusCode::NOT_FOUND,
+            format!("share link '{token}' was not found"),
+        ),
+        Err(error) => ApiError::from(error).into_response(),
+    }
+}
 
 pub(in crate::server) async fn get_public_login(
     State(state): State<AppState>,

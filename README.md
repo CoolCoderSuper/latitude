@@ -46,8 +46,8 @@ The command API is intended for local agent use. Keep it bound to localhost, and
 Share links expose one deployment without requiring the recipient to know the main project URL. They can be open, protected by a per-link password, expire automatically, and be deleted manually.
 
 ```powershell
-cargo run -- share create demo mock
-cargo run -- share create demo mock --password "review-only" --expires-in 2h
+cargo run -- share create demo preview
+cargo run -- share create demo preview --password "review-only" --expires-in 2h
 cargo run -- share list
 cargo run -- share delete <token>
 ```
