@@ -1,50 +1,41 @@
-use maud::{DOCTYPE, Markup, PreEscaped, html};
+use maud::{DOCTYPE, Markup, html};
 
-use super::{
-    assets::{COMMON_THEME_STYLE, THEME_BOOTSTRAP_SCRIPT, THEME_TOGGLE_SCRIPT},
-    constants::LATITUDE_THEME_COOKIE,
-};
+use super::assets::{COMMON_THEME_STYLE_HREF, THEME_BOOTSTRAP_SCRIPT_SRC, THEME_TOGGLE_SCRIPT_SRC};
 
 pub(super) fn document(
     title: &str,
     device_hostname: &str,
-    style: &str,
+    style_href: &str,
     head_extra: Markup,
     body: Markup,
 ) -> String {
-    document_with_theme(title, device_hostname, style, None, head_extra, body)
+    document_with_theme(title, device_hostname, style_href, None, head_extra, body)
 }
 
 pub(super) fn document_with_theme(
     title: &str,
     device_hostname: &str,
-    style: &str,
+    style_href: &str,
     theme: Option<&str>,
     head_extra: Markup,
     body: Markup,
 ) -> String {
-    let document = if let Some(theme) = theme {
-        html! {
-            (DOCTYPE)
-            html lang="en" data-latitude-theme=(theme) {
-                (document_head(title, device_hostname, style, head_extra))
-                body { (document_body(body)) }
-            }
+    html! {
+        (DOCTYPE)
+        html lang="en" data-latitude-theme=[theme] {
+            (document_head(title, device_hostname, style_href, head_extra))
+            body { (document_body(body)) }
         }
-    } else {
-        html! {
-            (DOCTYPE)
-            html lang="en" {
-                (document_head(title, device_hostname, style, head_extra))
-                body { (document_body(body)) }
-            }
-        }
-    };
-
-    document.into_string()
+    }
+    .into_string()
 }
 
-fn document_head(title: &str, device_hostname: &str, style: &str, head_extra: Markup) -> Markup {
+fn document_head(
+    title: &str,
+    device_hostname: &str,
+    style_href: &str,
+    head_extra: Markup,
+) -> Markup {
     let document_title = format!("{title} - {device_hostname}");
 
     html! {
@@ -52,11 +43,9 @@ fn document_head(title: &str, device_hostname: &str, style: &str, head_extra: Ma
             meta charset="utf-8";
             meta name="viewport" content="width=device-width, initial-scale=1";
             title { (document_title) }
-            script { (PreEscaped(theme_asset_script(THEME_BOOTSTRAP_SCRIPT))) }
-            style {
-                (PreEscaped(style))
-                (PreEscaped(COMMON_THEME_STYLE))
-            }
+            script src=(THEME_BOOTSTRAP_SCRIPT_SRC) {}
+            link rel="stylesheet" href=(COMMON_THEME_STYLE_HREF);
+            link rel="stylesheet" href=(style_href);
             (head_extra)
         }
     }
@@ -66,7 +55,7 @@ fn document_body(body: Markup) -> Markup {
     html! {
         (theme_toggle())
         (body)
-        script { (PreEscaped(theme_asset_script(THEME_TOGGLE_SCRIPT))) }
+        script src=(THEME_TOGGLE_SCRIPT_SRC) {}
     }
 }
 
@@ -87,11 +76,4 @@ fn theme_toggle() -> Markup {
             }
         }
     }
-}
-
-fn theme_asset_script(script: &str) -> String {
-    let cookie_name = serde_json::to_string(LATITUDE_THEME_COOKIE)
-        .unwrap_or_else(|_| "\"latitude_theme\"".to_string());
-
-    script.replace("\"__LATITUDE_THEME_COOKIE__\"", &cookie_name)
 }

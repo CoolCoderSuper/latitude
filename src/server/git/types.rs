@@ -8,14 +8,7 @@ pub(in crate::server) struct GitDiffReport {
     pub(in crate::server) file_changes: Vec<GitFileChange>,
 }
 
-#[derive(Debug, Serialize)]
-pub(in crate::server) struct GitActionResponse {
-    pub(in crate::server) ok: bool,
-    pub(in crate::server) error: Option<String>,
-    pub(in crate::server) workspace_html: String,
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::server) enum GitAction {
     StageAll,
     StageFile { path: String },
@@ -25,6 +18,17 @@ pub(in crate::server) enum GitAction {
     DiscardFile { path: String },
     Commit { message: String },
     Push,
+}
+
+impl GitAction {
+    pub(in crate::server) fn affected_path(&self) -> Option<&str> {
+        match self {
+            Self::StageFile { path } | Self::UnstageFile { path } | Self::DiscardFile { path } => {
+                Some(path)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq)]

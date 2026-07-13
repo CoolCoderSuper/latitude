@@ -20,15 +20,13 @@ use crate::{
 };
 
 use super::{
-    assets::{
-        AUTH_PAGE_STYLE, COMMON_THEME_STYLE, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_STYLE, PAGE_STYLE,
-        PROJECT_HOME_STYLE, TERMINAL_VIEWER_STYLE,
-    },
+    assets::{embedded_asset_names, public_asset},
     auth::{clean_next_path, public_password_matches, public_request_is_authenticated},
     command::{
         CreateDeploymentShareRequest, get_config, get_project_deployment, get_project_page_content,
     },
     constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
+    files_api::public_ui_put_project_file,
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
         parse_git_action_form, parse_porcelain_status, parse_public_git_action_payload,
@@ -43,14 +41,15 @@ use super::{
         sanitized_relative_path, split_project_path,
     },
     public::{
-        public_api_create_share, public_api_delete_share, public_api_list_shares, public_entry,
-        public_project_detail,
+        ShareUiForm, public_api_create_share, public_api_delete_share, public_api_list_shares,
+        public_entry, public_project_detail, public_ui_create_share, public_ui_delete_share,
+        public_ui_get_shares,
     },
     render::{
-        diff_line_class, highlight_diff_lines, render_diff_code_output,
-        render_diff_workspace_fragment, render_project_diff, render_project_home,
-        render_project_terminal, render_root_desktop, render_root_terminal, render_server_home,
-        syntax_name_for_path,
+        diff_line_class, highlight_diff_lines, render_diff_code_output, render_diff_file_update,
+        render_diff_workspace_fragment, render_project_diff, render_project_files,
+        render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
+        render_server_home, render_share_dialog_shell, syntax_name_for_path,
     },
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
@@ -274,6 +273,96 @@ async fn authenticated_public_api_manages_deployment_shares() {
 }
 
 #[tokio::test]
+async fn authenticated_share_ui_exchanges_html_fragments() {
+    let config = BootConfig::default();
+    let state = test_state_with_seed(
+        config.clone(),
+        demo_seed(vec![seed_static(
+            "website",
+            PathBuf::from("."),
+            "index.html",
+        )]),
+    )
+    .await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+    );
+
+    let response = public_ui_get_shares(
+        axum::extract::Path(("demo".to_string(), "website".to_string())),
+        State(state.clone()),
+        headers.clone(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(rendered.contains("hx-post=\"/__latitude/ui/shares/demo/website\""));
+    assert!(rendered.contains("No links yet"));
+
+    let response = public_ui_create_share(
+        axum::extract::Path(("demo".to_string(), "website".to_string())),
+        State(state.clone()),
+        headers.clone(),
+        axum::extract::Form(ShareUiForm {
+            password: Some("review-only".to_string()),
+            expiry: Some(3600),
+        }),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(rendered.contains("Share link created."));
+    assert!(rendered.contains("Password protected"));
+    assert!(rendered.contains("hx-delete="));
+
+    let shares = state.catalog().list_shares().await.unwrap();
+    assert_eq!(shares.len(), 1);
+    let share_token = shares[0].token.clone();
+    let response = public_ui_delete_share(
+        axum::extract::Path(("demo".to_string(), "website".to_string(), share_token)),
+        State(state.clone()),
+        headers,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(rendered.contains("Share link revoked."));
+    assert!(state.catalog().list_shares().await.unwrap().is_empty());
+}
+
+#[test]
+fn renders_share_dialog_as_htmx_controls() {
+    let shares = vec![DeploymentShareConfig {
+        token: "open123".to_string(),
+        project: "demo".to_string(),
+        deployment: "website".to_string(),
+        password: None,
+        expires_at: None,
+    }];
+
+    let rendered = render_share_dialog_shell("demo", "website", &shares, None).into_string();
+
+    assert!(rendered.contains("data-share-dialog-shell"));
+    assert!(rendered.contains("hx-post=\"/__latitude/ui/shares/demo/website\""));
+    assert!(rendered.contains("hx-delete=\"/__latitude/ui/shares/demo/website/open123\""));
+    assert!(rendered.contains("data-share-url=\"/__latitude/share/open123/\""));
+    assert!(!rendered.contains("fetch("));
+}
+
+#[tokio::test]
 async fn public_share_management_requires_authentication() {
     let state = test_state(BootConfig::default()).await;
     let request = Request::builder().body(Body::empty()).unwrap();
@@ -331,13 +420,16 @@ fn reads_page_theme_from_cookie() {
 #[test]
 fn generated_theme_assets_do_not_follow_system_color_scheme() {
     let styles = [
-        ("auth", AUTH_PAGE_STYLE),
-        ("project home", PROJECT_HOME_STYLE),
-        ("diff viewer", DIFF_VIEWER_STYLE),
-        ("terminal viewer", TERMINAL_VIEWER_STYLE),
-        ("desktop viewer", DESKTOP_VIEWER_STYLE),
-        ("page", PAGE_STYLE),
-        ("common theme", COMMON_THEME_STYLE),
+        ("auth", include_str!("assets/auth.css")),
+        ("project home", include_str!("assets/project-home.css")),
+        ("diff viewer", include_str!("assets/diff-viewer.css")),
+        (
+            "terminal viewer",
+            include_str!("assets/terminal-viewer.css"),
+        ),
+        ("desktop viewer", include_str!("assets/desktop-viewer.css")),
+        ("page", include_str!("assets/page.css")),
+        ("common theme", include_str!("assets/common-theme.css")),
     ];
 
     for (name, style) in styles {
@@ -354,8 +446,44 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
     let rendered = render_server_home(&BootConfig::default(), &[], &[], TEST_HOSTNAME);
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
-    assert!(!rendered.contains("__LATITUDE_THEME_COOKIE__"));
-    assert!(rendered.contains("var cookieName = \"latitude_theme\";"));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js?v=2\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js?v=2\""));
+    assert!(!rendered.contains("var cookieName"));
+}
+
+#[tokio::test]
+async fn serves_embedded_assets_with_cache_validation() {
+    assert!(embedded_asset_names().contains(&"htmx.min.js"));
+    let response = public_asset(
+        axum::extract::Path("htmx.min.js".to_string()),
+        HeaderMap::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/javascript; charset=utf-8")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok()),
+        Some("public, no-cache")
+    );
+    let etag = response.headers().get(header::ETAG).unwrap().clone();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(body.starts_with(b"var htmx="));
+
+    let mut headers = HeaderMap::new();
+    headers.insert(header::IF_NONE_MATCH, etag);
+    let response = public_asset(axum::extract::Path("htmx.min.js".to_string()), headers).await;
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(body.is_empty());
 }
 
 #[test]
@@ -620,8 +748,10 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("data-deployment=\"website\""));
     assert!(rendered.contains("aria-label=\"Manage shares for report\""));
     assert!(rendered.contains("data-share-dialog"));
-    assert!(rendered.contains("Create link"));
-    assert!(rendered.contains("/__latitude/api/shares"));
+    assert!(rendered.contains("hx-get=\"/__latitude/ui/shares/demo/website\""));
+    assert!(rendered.contains("hx-target=\"[data-share-dialog-shell]\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/project-home.js?v=2\""));
+    assert!(!rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
     assert!(!rendered.contains("data-deployment=\"draft\""));
 }
@@ -1022,6 +1152,9 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("<h2>Staged files</h2>"));
     assert!(rendered.contains("data-diff-workspace"));
     assert!(rendered.contains("data-action-url=\"/demo/_diff\""));
+    assert!(!rendered.contains("hx-sync="));
+    assert!(rendered.contains("hx-swap=\"none\""));
+    assert!(rendered.contains("data-file-panel=\"unstaged\""));
     assert!(rendered.contains(
         "<details class=\"file-card\" data-file-section=\"unstaged\" data-file-path=\"src/server.rs\">"
     ));
@@ -1030,7 +1163,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-git-action=\"stage_file\""));
     assert!(rendered.contains("data-git-action=\"discard_file\""));
     assert!(rendered.contains("data-path=\"src/server.rs\""));
-    assert!(rendered.contains("data-confirm=\"Discard all unstaged changes"));
+    assert!(rendered.contains("hx-confirm=\"Discard all unstaged changes"));
     let file_summary_start = rendered
         .find("<summary class=\"file-summary\">")
         .expect("file summary should render");
@@ -1050,7 +1183,8 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-path=\"src/new.rs\""));
     assert!(rendered.contains("data-commit-message"));
     assert!(rendered.contains("Commit staged"));
-    assert!(rendered.contains("method: 'PATCH'"));
+    assert!(rendered.contains("hx-patch=\"/demo/_diff\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/diff-viewer.js?v=2\""));
     assert!(!rendered.contains("method=\"post\""));
     assert!(!rendered.contains("Done."));
     assert!(rendered.contains("class=\"line remove\">-<span class=\"tok-keyword\">let</span> old"));
@@ -1073,7 +1207,7 @@ fn renders_diff_workspace_fragment_without_full_document() {
         }],
     };
 
-    let rendered = render_diff_workspace_fragment(&report);
+    let rendered = render_diff_workspace_fragment(&report, "/demo/_diff").into_string();
 
     assert!(rendered.contains("data-action-status hidden"));
     assert!(rendered.contains("<h2>Unstaged files</h2>"));
@@ -1081,6 +1215,28 @@ fn renders_diff_workspace_fragment_without_full_document() {
     assert!(rendered.contains("data-git-action=\"discard_file\""));
     assert!(!rendered.contains("<!doctype html>"));
     assert!(!rendered.contains("<script>"));
+}
+
+#[test]
+fn renders_targeted_diff_file_update() {
+    let report = GitDiffReport {
+        repo_dir: PathBuf::from("C:/work/demo"),
+        file_changes: vec![GitFileChange {
+            path: "README.md".to_string(),
+            original_path: None,
+            index_status: 'M',
+            worktree_status: ' ',
+            diffs: Vec::new(),
+        }],
+    };
+
+    let rendered = render_diff_file_update(&report, "README.md", "/demo/_diff").into_string();
+
+    assert!(rendered.contains("data-diff-file-update"));
+    assert!(rendered.contains("data-file-section-update=\"unstaged\""));
+    assert!(rendered.contains("data-file-section-update=\"staged\""));
+    assert!(rendered.contains("data-file-section=\"staged\""));
+    assert!(!rendered.contains("data-file-section=\"unstaged\""));
 }
 
 #[test]
@@ -1184,6 +1340,76 @@ fn parses_terminal_command_payloads() {
 }
 
 #[test]
+fn renders_project_files_with_htmx_save_form() {
+    let project = ProjectConfig {
+        name: "demo".to_string(),
+        enabled: true,
+        project_dir: PathBuf::from("C:/work/demo"),
+        deployments: Vec::new(),
+    };
+
+    let rendered = render_project_files(&project, TEST_HOSTNAME);
+
+    assert!(rendered.contains("data-file-workspace"));
+    assert!(rendered.contains("hx-put=\"/__latitude/ui/files/demo\""));
+    assert!(rendered.contains("hx-target=\"[data-save-state]\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/file-viewer.js?v=2\""));
+}
+
+#[tokio::test]
+async fn authenticated_file_ui_saves_with_html_fragment_response() {
+    let project_dir = std::env::temp_dir().join(format!(
+        "latitude-file-ui-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let file_path = project_dir.join("note.txt");
+    std::fs::write(&file_path, "before").unwrap();
+    let seed = CatalogSeed {
+        share_links: Vec::new(),
+        projects: vec![SeedProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir,
+            deployments: Vec::new(),
+        }],
+    };
+    let config = BootConfig::default();
+    let state = test_state_with_seed(config.clone(), seed).await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let req = Request::builder()
+        .method("PUT")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .body(Body::from("path=note.txt&content=hello+from+htmx"))
+        .unwrap();
+
+    let response =
+        public_ui_put_project_file(axum::extract::Path("demo".to_string()), State(state), req)
+            .await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/html; charset=utf-8")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(rendered.contains("data-file-save-result"));
+    assert!(rendered.contains("data-ok=\"true\""));
+    assert_eq!(
+        std::fs::read_to_string(file_path).unwrap(),
+        "hello from htmx"
+    );
+}
+
+#[test]
 fn renders_project_terminal_page() {
     let project = ProjectConfig {
         name: "demo".to_string(),
@@ -1269,7 +1495,7 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-view-only=\"true\""));
     assert!(rendered.contains("data-screen-layout=\"[]\""));
     assert!(rendered.contains("data-resolution-options=\"[]\""));
-    assert!(rendered.contains("@novnc/novnc@1.7.0/core/rfb.js"));
+    assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=2\""));
 }
 
 #[tokio::test]

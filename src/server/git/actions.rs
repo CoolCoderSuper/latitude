@@ -58,17 +58,16 @@ impl PublicGitActionPayload {
 pub(in crate::server) async fn handle_git_action_request(
     req: Request<Body>,
     project_dir: &Path,
-) -> Result<(), String> {
+) -> Result<GitAction, String> {
     let (_parts, body) = req.into_parts();
     let body = match to_bytes(body, MAX_DIFF_ACTION_PAYLOAD_BYTES).await {
         Ok(body) => body,
         Err(error) => return Err(format!("action payload could not be read: {error}")),
     };
 
-    match parse_git_action_form(&body) {
-        Ok(action) => execute_git_action(project_dir, action).await,
-        Err(error) => Err(error),
-    }
+    let action = parse_git_action_form(&body)?;
+    execute_git_action(project_dir, action.clone()).await?;
+    Ok(action)
 }
 
 pub(in crate::server) async fn execute_git_action(

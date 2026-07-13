@@ -9,7 +9,7 @@ use crate::config::{
 };
 
 use super::{
-    assets::PAGE_STYLE,
+    assets::PAGE_STYLE_HREF,
     constants::{DEFAULT_PAGE_TITLE, LATITUDE_THEME_COOKIE, LATITUDE_THEME_HEADER},
     html as html_page,
     response::ApiError,
@@ -296,7 +296,7 @@ fn wrap_page_document(
     html_page::document_with_theme(
         title,
         device_hostname,
-        PAGE_STYLE,
+        PAGE_STYLE_HREF,
         theme.and_then(clean_page_theme),
         html! {},
         html! {

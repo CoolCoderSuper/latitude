@@ -1,5 +1,5 @@
 (function() {
-  var cookieName = "__LATITUDE_THEME_COOKIE__";
+  var cookieName = "latitude_theme";
 
   function cleanTheme(value) {
     return value === 'light' || value === 'dark' ? value : null;

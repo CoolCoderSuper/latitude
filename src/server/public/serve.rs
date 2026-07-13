@@ -32,16 +32,16 @@ use super::super::{
         PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     desktop_api::execute_desktop_action_request,
-    git::{GitActionResponse, collect_project_diff, handle_git_action_request},
+    git::{collect_project_diff, collect_project_file_diff, handle_git_action_request},
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
         ProjectPath, is_hop_by_hop_header, join_upstream_url, resolve_project_path,
         sanitized_relative_path, split_project_path,
     },
     render::{
-        render_diff_workspace_fragment, render_project_diff, render_project_files,
-        render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
-        render_server_home, render_share_login,
+        render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
+        render_project_files, render_project_home, render_project_terminal, render_root_desktop,
+        render_root_terminal, render_server_home, render_share_login,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
@@ -775,6 +775,7 @@ async fn serve_project_diff(
     device_hostname: &str,
 ) -> Response<Body> {
     let method = req.method().clone();
+    let is_htmx_request = req.headers().contains_key("hx-request");
     if method != Method::GET && method != Method::HEAD && method != Method::PATCH {
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
@@ -790,24 +791,39 @@ async fn serve_project_diff(
     }
 
     if method == Method::PATCH {
-        let action_result = handle_git_action_request(req, &project.project_dir).await;
-        if let Err(error) = &action_result {
-            error!(%error, project = %project.name, "git action failed");
-        }
-
-        let report = collect_project_diff(&project.project_dir).await;
-        return (
-            StatusCode::OK,
-            Json(GitActionResponse {
-                ok: action_result.is_ok(),
-                error: action_result.err(),
-                workspace_html: render_diff_workspace_fragment(&report),
-            }),
-        )
-            .into_response();
+        let action = match handle_git_action_request(req, &project.project_dir).await {
+            Ok(action) => action,
+            Err(error) => {
+                error!(%error, project = %project.name, "git action failed");
+                return plain_response(StatusCode::UNPROCESSABLE_ENTITY, error);
+            }
+        };
+        let Some(path) = action.affected_path() else {
+            return StatusCode::NO_CONTENT.into_response();
+        };
+        let report = collect_project_file_diff(&project.project_dir, path).await;
+        return html_response(
+            &method,
+            render_diff_file_update(
+                &report,
+                path,
+                &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+            )
+            .into_string(),
+        );
     }
 
     let report = collect_project_diff(&project.project_dir).await;
+    if is_htmx_request && method == Method::GET {
+        return html_response(
+            &method,
+            render_diff_workspace_fragment(
+                &report,
+                &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+            )
+            .into_string(),
+        );
+    }
     html_response(
         &method,
         render_project_diff(project, &report, device_hostname),

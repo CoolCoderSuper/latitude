@@ -1,174 +1,142 @@
-const workspace = document.querySelector('[data-diff-workspace]');
+(() => {
+  const workspace = document.querySelector('[data-diff-workspace]');
+  if (!workspace) return;
 
-if (workspace) {
   const actionUrl = workspace.dataset.actionUrl || window.location.pathname;
-  const statusBox = () => workspace.querySelector('[data-action-status]');
+  let openKeys = new Set();
+  let refreshTimer = null;
 
-  const showStatus = (message, isError) => {
-    const box = statusBox();
-    if (!box) {
-      return;
-    }
-
-    box.hidden = false;
-    box.textContent = message;
-    box.classList.toggle('error', Boolean(isError));
-  };
-
-  const hideStatus = () => {
-    const box = statusBox();
-    if (!box) {
-      return;
-    }
-
-    box.hidden = true;
-    box.textContent = '';
-    box.classList.remove('error');
-  };
-
-  const fileCardKey = (card) => {
+  const cardKey = (card) => {
     const section = card.dataset.fileSection;
     const path = card.dataset.filePath;
     return section && path ? `${section}:${path}` : null;
   };
 
-  const fileActionSection = (action) => {
-    if (action === 'stage_file' || action === 'discard_file') {
-      return 'unstaged';
-    }
+  const requestVerb = (event) => event.detail.requestConfig?.verb?.toLowerCase();
 
-    if (action === 'unstage_file') {
-      return 'staged';
-    }
-
-    return null;
-  };
-
-  const openFileKeys = () => new Set(
-    Array.from(workspace.querySelectorAll(
-      'details.file-card[open][data-file-section][data-file-path]',
-    ))
-      .map(fileCardKey)
-      .filter(Boolean),
-  );
-
-  const restoreOpenFiles = (keys) => {
-    workspace
-      .querySelectorAll('details.file-card[data-file-section][data-file-path]')
-      .forEach((card) => {
-        const key = fileCardKey(card);
-        if (key && keys.has(key)) {
-          card.open = true;
-        }
-      });
-  };
-
-  const setDisabled = (disabled) => {
-    workspace
-      .querySelectorAll('button[data-git-action], input[data-commit-message]')
-      .forEach((control) => {
-        control.disabled = disabled;
-      });
-  };
-
-  const actionButton = (target) => (
-    target instanceof Element ? target.closest('button[data-git-action]') : null
-  );
-
-  workspace.addEventListener('keydown', (event) => {
-    if (
-      event.key !== 'Enter'
-      || !(event.target instanceof Element)
-      || !event.target.matches('[data-commit-message]')
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    workspace.querySelector('button[data-git-action="commit"]')?.click();
+  workspace.addEventListener('htmx:beforeRequest', (event) => {
+    if (requestVerb(event) !== 'patch') return;
+    event.detail.elt.classList.add('git-action-pending');
+    event.detail.elt.querySelector('button')?.setAttribute('aria-busy', 'true');
+    showStatus('Applying Git action…', false);
   });
 
-  workspace.addEventListener('click', async (event) => {
-    const editorLink = event.target instanceof Element
-      ? event.target.closest('a[data-open-editor]')
-      : null;
-    if (editorLink) {
-      event.stopPropagation();
-      return;
-    }
-    const button = actionButton(event.target);
-    if (!button || !workspace.contains(button)) {
-      return;
-    }
+  workspace.addEventListener('htmx:afterRequest', (event) => {
+    if (requestVerb(event) !== 'patch') return;
+    event.detail.elt.classList.remove('git-action-pending');
+    event.detail.elt.querySelector('button')?.removeAttribute('aria-busy');
+    if (!event.detail.successful) return;
 
-    event.preventDefault();
-    event.stopPropagation();
-
-    const action = button.dataset.gitAction;
-    const actionPath = button.dataset.path;
-    const confirmMessage = button.dataset.confirm;
-    if (confirmMessage && !window.confirm(confirmMessage)) {
-      return;
-    }
-
-    const body = new URLSearchParams({ action });
-    if (actionPath) {
-      body.set('path', actionPath);
-    }
-
-    if (action === 'commit') {
-      const input = workspace.querySelector('[data-commit-message]');
-      const message = input ? input.value.trim() : '';
-      if (!message) {
-        showStatus('Commit message required.', true);
-        input?.focus();
-        return;
-      }
-
-      body.set('message', message);
-    }
-
-    const openKeys = openFileKeys();
-    const scrollY = window.scrollY;
-
-    workspace.setAttribute('aria-busy', 'true');
-    setDisabled(true);
-    showStatus('Working...', false);
-
-    try {
-      const response = await fetch(actionUrl, {
-        method: 'PATCH',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
-        body,
-      });
-      const payload = await response.json().catch(() => null);
-      if (!payload || typeof payload.workspace_html !== 'string') {
-        throw new Error(`Action failed (${response.status}).`);
-      }
-
-      workspace.innerHTML = payload.workspace_html;
-      if (payload.ok) {
-        const actionSection = fileActionSection(action);
-        if (actionSection && actionPath) {
-          openKeys.delete(`${actionSection}:${actionPath}`);
-        }
-      }
-      restoreOpenFiles(openKeys);
-      window.scrollTo(0, scrollY);
-
-      if (payload.ok) {
-        hideStatus();
-      } else {
-        showStatus(payload.error || 'Action failed.', true);
-      }
-    } catch (error) {
-      showStatus(error instanceof Error ? error.message : 'Action failed.', true);
-    } finally {
-      workspace.removeAttribute('aria-busy');
-      setDisabled(false);
+    if (event.detail.xhr.status === 200 && applyFileUpdate(event.detail.xhr.responseText)) {
+      hideStatus();
+    } else {
+      scheduleFullRefresh();
     }
   });
-}
+
+  workspace.addEventListener('htmx:beforeSwap', (event) => {
+    if (requestVerb(event) !== 'get') return;
+    openKeys = new Set(
+      Array.from(workspace.querySelectorAll('details.file-card[open]'))
+        .map(cardKey)
+        .filter(Boolean),
+    );
+  });
+
+  workspace.addEventListener('htmx:afterSwap', (event) => {
+    if (requestVerb(event) !== 'get') return;
+    workspace.querySelectorAll('details.file-card').forEach((card) => {
+      if (openKeys.has(cardKey(card))) card.open = true;
+    });
+  });
+
+  workspace.addEventListener('htmx:responseError', (event) => {
+    const message = event.detail.xhr?.responseText?.trim()
+      || 'The Git action could not be completed.';
+    showStatus(message, true);
+  });
+
+  function applyFileUpdate(responseText) {
+    const document = new DOMParser().parseFromString(responseText, 'text/html');
+    const update = document.querySelector('[data-diff-file-update]');
+    if (!update) return false;
+    const path = update.dataset.path;
+
+    update.querySelectorAll('template[data-file-section-update]').forEach((template) => {
+      const section = template.dataset.fileSectionUpdate;
+      const panel = workspace.querySelector(`[data-file-panel="${section}"]`);
+      if (!panel) return;
+      const existing = Array.from(panel.querySelectorAll('details.file-card'))
+        .find((card) => card.dataset.filePath === path);
+      const replacement = template.content.querySelector('details.file-card');
+      const wasOpen = Boolean(existing?.open);
+
+      if (existing && replacement) {
+        const next = replacement.cloneNode(true);
+        next.open = wasOpen;
+        existing.replaceWith(next);
+      } else if (existing) {
+        existing.remove();
+      } else if (replacement) {
+        let list = panel.querySelector('.file-list');
+        if (!list) {
+          list = document.createElement('div');
+          list.className = 'file-list';
+          panel.querySelector('.empty')?.replaceWith(list);
+        }
+        list.append(replacement.cloneNode(true));
+      }
+      updatePanel(panel);
+    });
+    htmx.process(workspace);
+    return true;
+  }
+
+  function updatePanel(panel) {
+    const count = panel.querySelectorAll('details.file-card').length;
+    const countLabel = count === 1 ? '1 file' : `${count} files`;
+    const counter = panel.querySelector('.section-heading code');
+    if (counter) counter.textContent = countLabel;
+
+    const list = panel.querySelector('.file-list');
+    if (count === 0) {
+      list?.remove();
+      if (!panel.querySelector('.empty')) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = panel.dataset.emptyMessage || 'No files.';
+        panel.append(empty);
+      }
+    } else {
+      panel.querySelector(':scope > .empty')?.remove();
+    }
+  }
+
+  function scheduleFullRefresh() {
+    clearTimeout(refreshTimer);
+    showStatus('Refreshing changes in the background…', false);
+    refreshTimer = window.setTimeout(() => {
+      htmx.ajax('GET', actionUrl, {
+        source: workspace,
+        target: workspace,
+        swap: 'innerHTML',
+      });
+    }, 150);
+  }
+
+  function showStatus(message, isError) {
+    const status = workspace.querySelector('[data-action-status]');
+    if (!status) return;
+    status.hidden = false;
+    status.classList.toggle('error', isError);
+    status.textContent = message;
+  }
+
+  function hideStatus() {
+    const status = workspace.querySelector('[data-action-status]');
+    if (!status) return;
+    status.hidden = true;
+    status.classList.remove('error');
+    status.textContent = '';
+  }
+})();

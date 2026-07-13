@@ -3,7 +3,10 @@ use std::path::Path;
 use tokio::fs;
 
 use super::{
-    command::{git_command_label, git_worktree_root, parse_nul_separated_paths, run_git_command},
+    command::{
+        git_command_label, git_worktree_root, parse_nul_separated_paths, run_git_command,
+        run_git_command_owned,
+    },
     types::{GitDiffReport, GitFileChange, GitFileDiff, GitSection},
 };
 
@@ -58,6 +61,82 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
         &untracked_diff,
         section_output(&untracked_diff),
     );
+
+    GitDiffReport {
+        repo_dir,
+        file_changes,
+    }
+}
+
+pub(in crate::server) async fn collect_project_file_diff(
+    project_dir: &Path,
+    path: &str,
+) -> GitDiffReport {
+    let fallback_dir = fs::canonicalize(project_dir)
+        .await
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let repo_dir = git_worktree_root(project_dir)
+        .await
+        .unwrap_or_else(|_| fallback_dir.clone());
+    let status_args = vec![
+        "status".to_string(),
+        "--porcelain=v1".to_string(),
+        "-z".to_string(),
+        "--untracked-files=all".to_string(),
+        "--".to_string(),
+        path.to_string(),
+    ];
+    let mut file_changes = run_git_command_owned(&repo_dir, &status_args, &[0])
+        .await
+        .map(|output| parse_porcelain_status(&output.stdout))
+        .unwrap_or_default();
+
+    if file_changes.is_empty() {
+        return GitDiffReport {
+            repo_dir,
+            file_changes,
+        };
+    }
+
+    let unstaged_args = vec![
+        "diff".to_string(),
+        "--no-ext-diff".to_string(),
+        "--color=never".to_string(),
+        "--".to_string(),
+        path.to_string(),
+    ];
+    let staged_args = vec![
+        "diff".to_string(),
+        "--cached".to_string(),
+        "--no-ext-diff".to_string(),
+        "--color=never".to_string(),
+        "--".to_string(),
+        path.to_string(),
+    ];
+    let unstaged_diff = collect_git_text_owned(&repo_dir, &unstaged_args, &[0]).await;
+    let staged_diff = collect_git_text_owned(&repo_dir, &staged_args, &[0]).await;
+    attach_file_diffs(
+        &mut file_changes,
+        "Unstaged",
+        &unstaged_diff,
+        section_output(&unstaged_diff),
+    );
+    attach_file_diffs(
+        &mut file_changes,
+        "Staged",
+        &staged_diff,
+        section_output(&staged_diff),
+    );
+
+    if file_changes.iter().any(|change| change.index_status == '?') {
+        let untracked_diff = collect_untracked_file_diff(&repo_dir, path).await;
+        attach_file_diffs(
+            &mut file_changes,
+            "Untracked",
+            &untracked_diff,
+            section_output(&untracked_diff),
+        );
+    }
 
     GitDiffReport {
         repo_dir,
@@ -162,6 +241,30 @@ async fn collect_git_text(project_dir: &Path, args: &[&str], success_codes: &[i3
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string());
 
     GitSection { command, output }
+}
+
+async fn collect_git_text_owned(
+    project_dir: &Path,
+    args: &[String],
+    success_codes: &[i32],
+) -> GitSection {
+    let command = format!("git {}", args.join(" "));
+    let output = run_git_command_owned(project_dir, args, success_codes)
+        .await
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string());
+    GitSection { command, output }
+}
+
+async fn collect_untracked_file_diff(project_dir: &Path, path: &str) -> GitSection {
+    let args = vec![
+        "diff".to_string(),
+        "--no-index".to_string(),
+        "--color=never".to_string(),
+        "--".to_string(),
+        "/dev/null".to_string(),
+        path.to_string(),
+    ];
+    collect_git_text_owned(project_dir, &args, &[0, 1]).await
 }
 
 async fn collect_untracked_diff(project_dir: &Path) -> GitSection {
@@ -343,7 +446,7 @@ fn diff_git_line_path(line: &str) -> Option<String> {
 mod tests {
     use std::{fs as std_fs, process::Command, time::SystemTime};
 
-    use super::{Path, file_baseline, project_is_dirty};
+    use super::{Path, collect_project_file_diff, file_baseline, project_is_dirty};
 
     fn git(directory: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -378,6 +481,22 @@ mod tests {
         std_fs::write(directory.join("tracked.txt"), "after\n").unwrap();
         std_fs::write(directory.join("new.txt"), "new\n").unwrap();
         assert!(project_is_dirty(&directory).await);
+
+        let tracked = collect_project_file_diff(&directory, "tracked.txt").await;
+        assert_eq!(tracked.file_changes.len(), 1);
+        assert_eq!(tracked.file_changes[0].path, "tracked.txt");
+        assert!(
+            tracked.file_changes[0]
+                .diffs
+                .iter()
+                .any(|diff| diff.label == "Unstaged")
+        );
+        assert!(
+            tracked
+                .file_changes
+                .iter()
+                .all(|change| change.path != "new.txt")
+        );
 
         assert_eq!(
             file_baseline(&directory, &directory.join("tracked.txt")).await,

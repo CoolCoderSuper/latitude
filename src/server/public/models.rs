@@ -8,7 +8,7 @@ use super::super::{
         DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH,
         PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH, TERMINAL_ROUTE_SEGMENT,
     },
-    render::{
+    presentation::{
         deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
         enabled_deployment_count, project_summary,
     },

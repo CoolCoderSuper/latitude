@@ -150,6 +150,15 @@ input {
   justify-content: flex-end;
 }
 
+.git-action-form {
+  display: inline-flex;
+  margin: 0;
+}
+
+.git-action-pending {
+  opacity: 0.65;
+}
+
 .diff-workspace {
   display: grid;
   gap: 10px;

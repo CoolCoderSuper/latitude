@@ -10,6 +10,7 @@ use axum::{
     http::{Request, Response, StatusCode, header},
     response::IntoResponse,
 };
+use maud::html;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -205,6 +206,69 @@ pub(in crate::server) async fn public_api_put_project_file(
         Ok(_) => Json(serde_json::json!({"ok": true})).into_response(),
         Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
     }
+}
+
+pub(in crate::server) async fn public_ui_put_project_file(
+    AxumPath(project): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+    let project = match enabled_project(&state, &project).await {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let body = match to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES * 3 + 4096).await {
+        Ok(body) => body,
+        Err(_) => return file_save_fragment("File is too large to save.", true),
+    };
+    let mut path = None;
+    let mut content = None;
+    for (name, value) in url::form_urlencoded::parse(&body) {
+        match name.as_ref() {
+            "path" => path = Some(value.into_owned()),
+            "content" => content = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+    let Some(path) = path.filter(|path| !path.is_empty()) else {
+        return file_save_fragment("File path is required.", true);
+    };
+    let Some(content) = content else {
+        return file_save_fragment("File content is required.", true);
+    };
+    if content.len() > MAX_FILE_EDITOR_BYTES {
+        return file_save_fragment("File is too large to save.", true);
+    }
+    let (_, target) = match safe_target(&project, &path).await {
+        Ok(target) => target,
+        Err(_) => return file_save_fragment("File could not be opened safely.", true),
+    };
+    if !fs::metadata(&target)
+        .await
+        .is_ok_and(|metadata| metadata.is_file())
+    {
+        return file_save_fragment("Only existing files can be edited.", true);
+    }
+
+    match fs::write(&target, content).await {
+        Ok(_) => file_save_fragment("Saved", false),
+        Err(error) => file_save_fragment(&error.to_string(), true),
+    }
+}
+
+fn file_save_fragment(message: &str, is_error: bool) -> Response<Body> {
+    let markup = html! {
+        span data-file-save-result data-ok=(!is_error) { (message) }
+    };
+    (
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        markup.into_string(),
+    )
+        .into_response()
 }
 
 pub(in crate::server) async fn public_api_highlight_project_file(

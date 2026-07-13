@@ -1,9 +1,21 @@
+mod auth;
 mod desktop;
 mod diff;
+mod files;
+mod home;
+mod share;
 mod syntax;
 mod terminal;
+mod terminal_page;
 
-pub(super) use diff::render_diff_workspace_fragment;
+pub(super) use auth::{render_public_login, render_share_login};
+pub(super) use diff::{
+    render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
+};
+pub(super) use files::render_project_files;
+pub(super) use home::{render_project_home, render_server_home};
+pub(super) use share::render_share_dialog_shell;
+pub(super) use terminal_page::{render_project_terminal, render_root_terminal};
 
 #[cfg(test)]
 pub(super) use syntax::{
@@ -14,265 +26,14 @@ pub(super) use syntax::{
 #[cfg(not(test))]
 pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines, highlight_source_lines};
 
-use maud::{PreEscaped, html};
+use maud::html;
 
-use crate::config::{
-    ApplicationConfig, ApplicationTarget, BootConfig, PageFormat, ProjectConfig,
-    is_binary_document_media_type,
-};
 use crate::desktop::DesktopInfoResponse;
 
 use super::{
-    assets::{
-        AUTH_PAGE_STYLE, DESKTOP_VIEWER_SCRIPT, DESKTOP_VIEWER_STYLE, DIFF_VIEWER_SCRIPT,
-        DIFF_VIEWER_STYLE, FILE_VIEWER_SCRIPT, FILE_VIEWER_STYLE, PROJECT_HOME_SCRIPT,
-        PROJECT_HOME_STYLE, TERMINAL_VIEWER_SCRIPT, TERMINAL_VIEWER_STYLE,
-    },
-    constants::{
-        DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, FILES_ROUTE_SEGMENT, LOGIN_PATH,
-        TERMINAL_ROUTE_SEGMENT, TERMINAL_WS_SUFFIX,
-    },
-    git::GitDiffReport,
+    assets::{DESKTOP_VIEWER_SCRIPT_SRC, DESKTOP_VIEWER_STYLE_HREF},
     html as html_page,
-    paths::display_path,
-    terminal_api::PublicTerminalInfoResponse,
 };
-
-pub(super) fn render_project_home(project: &ProjectConfig, device_hostname: &str) -> String {
-    let page_title = format!("{} - Latitude Project", project.name);
-    let enabled_deployments = project
-        .deployments
-        .iter()
-        .filter(|deployment| deployment.enabled)
-        .collect::<Vec<_>>();
-
-    html_page::document(
-        &page_title,
-        device_hostname,
-        PROJECT_HOME_STYLE,
-        html! {},
-        html! {
-            main data-project-shell data-project=(&project.name) {
-                header {
-                    a class="back-link" href="/" { "Back to projects" }
-                    h1 { (&project.name) }
-                    p { "Project tools and deployments on " (device_hostname) }
-                }
-                ul {
-                    li {
-                        a href=(format!("/{}/{}", project.name, FILES_ROUTE_SEGMENT)) {
-                            strong { "Files" }
-                            span { "Browse, preview, and edit project files" }
-                        }
-                    }
-                    li {
-                        a href=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
-                            strong { "Code changes" }
-                            span { "Review staged and unstaged files" }
-                        }
-                    }
-                    li {
-                        a href=(format!("/{}/{}", project.name, TERMINAL_ROUTE_SEGMENT)) {
-                            strong { "Terminal" }
-                            span { "Run commands in the project directory" }
-                        }
-                    }
-                    @for deployment in enabled_deployments {
-                        li class="deployment-item" {
-                            a class="deployment-link" href=(format!("/{}/{}", project.name, deployment.name)) {
-                                strong { (&deployment.name) }
-                                span {
-                                    (deployment_home_label(deployment))
-                                    @if let Some(title) = deployment_page_title(deployment) {
-                                        ": " (title)
-                                    }
-                                }
-                            }
-                            button
-                                class="share-trigger"
-                                type="button"
-                                data-share-trigger
-                                data-deployment=(&deployment.name)
-                                aria-label=(format!("Manage shares for {}", deployment.name))
-                                title="Manage share links"
-                            { "Share" }
-                        }
-                    }
-                    @if project.deployments.iter().all(|deployment| !deployment.enabled) {
-                        li class="empty" { "No enabled deployments yet." }
-                    }
-                }
-                dialog class="share-dialog" data-share-dialog {
-                    div class="share-dialog-shell" {
-                        div class="share-dialog-header" {
-                            div {
-                                h2 data-share-title { "Share deployment" }
-                            }
-                            button class="share-close" type="button" data-share-close aria-label="Close share manager" { "×" }
-                        }
-                        div class="share-status" data-share-status aria-live="polite" hidden {}
-                        form class="share-form" data-share-form {
-                            label {
-                                "Password (optional)"
-                                input type="password" name="password" autocomplete="new-password" placeholder="Open link when blank";
-                            }
-                            label {
-                                "Expires"
-                                select name="expiry" {
-                                    option value="" { "Never" }
-                                    option value="3600" { "1 hour" }
-                                    option value="86400" { "1 day" }
-                                    option value="604800" { "7 days" }
-                                }
-                            }
-                            button class="share-create" type="submit" { "Create link" }
-                        }
-                        section class="share-existing" {
-                            div class="share-section-heading" {
-                                h3 { "Links" }
-                                button class="share-refresh" type="button" data-share-refresh { "Refresh" }
-                            }
-                            div class="share-list" data-share-list { "Loading…" }
-                        }
-                    }
-                }
-                script { (PreEscaped(PROJECT_HOME_SCRIPT)) }
-            }
-        },
-    )
-}
-
-pub(super) fn render_project_files(project: &ProjectConfig, device_hostname: &str) -> String {
-    html_page::document(
-        &format!("{} files - Latitude", project.name),
-        device_hostname,
-        FILE_VIEWER_STYLE,
-        html! {},
-        html! {
-            main class="files-page" data-file-workspace data-api-url=(format!("/__latitude/api/projects/{}/files", project.name)) {
-                header class="files-header" {
-                    a href=(format!("/{}", project.name)) { "Back to project" }
-                    h1 { "Files" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&project.project_dir)) }
-                }
-                div class="file-workspace" {
-                    aside class="file-sidebar" { div class="file-tree" data-file-tree { "Loading…" } }
-                    div class="file-resizer" data-file-resizer role="separator" aria-orientation="vertical" aria-label="Resize file explorer" tabindex="0" {}
-                    section class="file-main" {
-                        span class="visually-hidden" data-file-title { "Select a file to preview" }
-                        div class="file-actions" data-file-actions hidden {
-                            span data-save-state {}
-                            button class="mode-toggle" type="button" data-vim-toggle aria-pressed="false" title="Enable Vim keybindings" { "Vim" }
-                            button type="button" data-save disabled { "Save" }
-                        }
-                        div class="file-preview" data-file-preview {
-                            div class="file-empty" { "Choose a file from the explorer." }
-                        }
-                    }
-                }
-                script type="module" { (PreEscaped(FILE_VIEWER_SCRIPT)) }
-            }
-        },
-    )
-}
-
-pub(super) fn render_project_diff(
-    project: &ProjectConfig,
-    report: &GitDiffReport,
-    device_hostname: &str,
-) -> String {
-    let page_title = format!("{} code changes - Latitude", project.name);
-    let workspace_html = diff::render_diff_workspace_fragment(report);
-
-    html_page::document(
-        &page_title,
-        device_hostname,
-        DIFF_VIEWER_STYLE,
-        html! {},
-        html! {
-            main {
-                header {
-                    a href=(format!("/{}", project.name)) { "Back to project" }
-                    h1 { "Code changes" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&report.repo_dir)) }
-                }
-                div class="diff-workspace" data-diff-workspace data-action-url=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) {
-                    (PreEscaped(workspace_html))
-                }
-                script { (PreEscaped(DIFF_VIEWER_SCRIPT)) }
-            }
-        },
-    )
-}
-
-pub(super) fn render_project_terminal(
-    project: &ProjectConfig,
-    info: &PublicTerminalInfoResponse,
-    websocket_token: Option<&str>,
-    device_hostname: &str,
-) -> String {
-    let page_title = format!("{} terminal - Latitude", project.name);
-    let websocket_path = format!(
-        "/{}/{}/{}",
-        project.name, TERMINAL_ROUTE_SEGMENT, TERMINAL_WS_SUFFIX
-    );
-
-    html_page::document(
-        &page_title,
-        device_hostname,
-        TERMINAL_VIEWER_STYLE,
-        html! {
-            link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css";
-        },
-        html! {
-            main {
-                header {
-                    a href=(format!("/{}", project.name)) { "Back to project" }
-                    h1 { "Terminal" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (&info.cwd) }
-                }
-                (terminal::terminal_workspace(info, &websocket_path, websocket_token))
-                script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" {}
-                script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" {}
-                script { (PreEscaped(TERMINAL_VIEWER_SCRIPT)) }
-            }
-        },
-    )
-}
-
-pub(super) fn render_root_terminal(
-    info: &PublicTerminalInfoResponse,
-    websocket_token: Option<&str>,
-    device_hostname: &str,
-) -> String {
-    let websocket_path = format!("/{TERMINAL_ROUTE_SEGMENT}/{TERMINAL_WS_SUFFIX}");
-
-    html_page::document(
-        "Root terminal - Latitude",
-        device_hostname,
-        TERMINAL_VIEWER_STYLE,
-        html! {
-            link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css";
-        },
-        html! {
-            main {
-                header {
-                    a href="/" { "Back to projects" }
-                    h1 { "Root Terminal" }
-                    p { "User directory on " (device_hostname) }
-                    p class="project-path" { (&info.cwd) }
-                }
-                (terminal::terminal_workspace(info, &websocket_path, websocket_token))
-                script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" {}
-                script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" {}
-                script { (PreEscaped(TERMINAL_VIEWER_SCRIPT)) }
-            }
-        },
-    )
-}
 
 pub(super) fn render_root_desktop(
     info: &DesktopInfoResponse,
@@ -282,7 +43,7 @@ pub(super) fn render_root_desktop(
     html_page::document(
         &format!("{} - Latitude", info.label),
         device_hostname,
-        DESKTOP_VIEWER_STYLE,
+        DESKTOP_VIEWER_STYLE_HREF,
         html! {},
         html! {
             main {
@@ -292,230 +53,8 @@ pub(super) fn render_root_desktop(
                     p { "Desktop on " (device_hostname) }
                 }
                 (desktop::desktop_workspace(info, websocket_token))
-                script type="module" { (PreEscaped(DESKTOP_VIEWER_SCRIPT)) }
+                script type="module" src=(DESKTOP_VIEWER_SCRIPT_SRC) {}
             }
         },
     )
-}
-
-pub(super) fn render_public_login(next: &str, login_failed: bool, device_hostname: &str) -> String {
-    html_page::document(
-        "Sign in - Latitude",
-        device_hostname,
-        AUTH_PAGE_STYLE,
-        html! {},
-        html! {
-            main {
-                header {
-                    h1 { "Latitude" }
-                    p { "Sign in to " (device_hostname) }
-                }
-                @if login_failed {
-                    div class="error" { "Incorrect password." }
-                }
-                form method="post" action=(LOGIN_PATH) {
-                    input type="hidden" name="next" value=(next);
-                    label {
-                        "Password"
-                        input name="password" type="password" required autofocus autocomplete="current-password";
-                    }
-                    button type="submit" { "Sign in" }
-                }
-            }
-        },
-    )
-}
-
-pub(super) fn render_share_login(
-    action: &str,
-    next: &str,
-    login_failed: bool,
-    device_hostname: &str,
-) -> String {
-    html_page::document(
-        "Open share link - Latitude",
-        device_hostname,
-        AUTH_PAGE_STYLE,
-        html! {},
-        html! {
-            main {
-                header {
-                    h1 { "Latitude" }
-                    p { "Open shared deployment on " (device_hostname) }
-                }
-                @if login_failed {
-                    div class="error" { "Incorrect password." }
-                }
-                form method="post" action=(action) {
-                    input type="hidden" name="next" value=(next);
-                    label {
-                        "Password"
-                        input name="password" type="password" required autofocus autocomplete="current-password";
-                    }
-                    button type="submit" { "Open share" }
-                }
-            }
-        },
-    )
-}
-
-pub(super) fn render_server_home(
-    config: &BootConfig,
-    projects: &[ProjectConfig],
-    dirty_projects: &[String],
-    device_hostname: &str,
-) -> String {
-    let enabled_projects = projects
-        .iter()
-        .filter(|project| project.enabled)
-        .collect::<Vec<_>>();
-    let no_enabled_projects = enabled_projects.is_empty();
-
-    html_page::document(
-        "Latitude Projects",
-        device_hostname,
-        PROJECT_HOME_STYLE,
-        html! {},
-        html! {
-            main {
-                header {
-                    h1 { "Latitude" }
-                    p { "Available projects on " (device_hostname) }
-                }
-                ul {
-                    @if config.desktop.enabled {
-                        li {
-                            a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
-                                strong { (&config.desktop.label) }
-                                span { "View the desktop over VNC" }
-                            }
-                        }
-                    }
-                    li {
-                        a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {
-                            strong { "Root Terminal" }
-                            span { "Run commands in your user directory" }
-                        }
-                    }
-                    @for project in enabled_projects {
-                        li {
-                            a href=(format!("/{}", project.name)) {
-                                strong {
-                                    span class="project-name" { (&project.name) }
-                                    @if dirty_projects.contains(&project.name) {
-                                        span class="git-dirty" title="Uncommitted Git changes" { "Dirty" }
-                                    }
-                                }
-                                span { (project_summary(project)) }
-                            }
-                        }
-                    }
-                    @if no_enabled_projects {
-                        li class="empty" { "No enabled projects yet." }
-                    }
-                }
-            }
-        },
-    )
-}
-
-pub(super) fn project_summary(project: &ProjectConfig) -> String {
-    let enabled_deployment_count = enabled_deployment_count(project);
-
-    match enabled_deployment_count {
-        1 => "1 deployment".to_string(),
-        count => format!("{count} deployments"),
-    }
-}
-
-pub(super) fn enabled_deployment_count(project: &ProjectConfig) -> usize {
-    project
-        .deployments
-        .iter()
-        .filter(|deployment| deployment.enabled)
-        .count()
-}
-
-pub(super) fn deployment_kind(deployment: &ApplicationConfig) -> &'static str {
-    match &deployment.target {
-        ApplicationTarget::ReverseProxy { .. } => "reverse_proxy",
-        ApplicationTarget::Static { .. } => "static",
-        ApplicationTarget::Page { .. } => "page",
-    }
-}
-
-pub(super) fn deployment_home_label(deployment: &ApplicationConfig) -> &'static str {
-    match &deployment.target {
-        ApplicationTarget::ReverseProxy { .. } => "Website",
-        ApplicationTarget::Static { index_file, .. } if is_static_image_deployment(index_file) => {
-            "Image document"
-        }
-        ApplicationTarget::Static { index_file, .. } if is_static_video_deployment(index_file) => {
-            "Video document"
-        }
-        ApplicationTarget::Static { .. } => "Static website",
-        ApplicationTarget::Page {
-            format: PageFormat::Binary,
-            media_type,
-            ..
-        } if media_type.as_deref().is_some_and(is_image_media_type) => "Image document",
-        ApplicationTarget::Page {
-            format: PageFormat::Binary,
-            media_type,
-            ..
-        } if media_type.as_deref().is_some_and(is_video_media_type) => "Video document",
-        ApplicationTarget::Page {
-            format: PageFormat::Binary,
-            media_type,
-            ..
-        } if media_type
-            .as_deref()
-            .is_some_and(is_binary_document_media_type) =>
-        {
-            "Media document"
-        }
-        ApplicationTarget::Page { .. } => "Page",
-    }
-}
-
-pub(super) fn deployment_page_title(deployment: &ApplicationConfig) -> Option<&str> {
-    match &deployment.target {
-        ApplicationTarget::Page { title, .. } => title.as_deref(),
-        _ => None,
-    }
-}
-
-pub(super) fn deployment_media_type(deployment: &ApplicationConfig) -> Option<String> {
-    match &deployment.target {
-        ApplicationTarget::Page {
-            format: PageFormat::Binary,
-            media_type,
-            ..
-        } => media_type.clone(),
-        ApplicationTarget::Static { index_file, .. } => static_media_type(index_file),
-        _ => None,
-    }
-}
-
-fn static_media_type(index_file: &str) -> Option<String> {
-    mime_guess::from_path(index_file)
-        .first()
-        .map(|mime| mime.essence_str().to_string())
-        .filter(|media_type| is_binary_document_media_type(media_type))
-}
-
-fn is_static_image_deployment(index_file: &str) -> bool {
-    static_media_type(index_file).is_some_and(|media_type| is_image_media_type(&media_type))
-}
-
-fn is_static_video_deployment(index_file: &str) -> bool {
-    static_media_type(index_file).is_some_and(|media_type| is_video_media_type(&media_type))
-}
-
-fn is_image_media_type(media_type: &str) -> bool {
-    media_type.starts_with("image/")
-}
-
-fn is_video_media_type(media_type: &str) -> bool {
-    media_type.starts_with("video/")
 }

@@ -1,5 +1,5 @@
 (function() {
-  var cookieName = "__LATITUDE_THEME_COOKIE__";
+  var cookieName = "latitude_theme";
   var toggle = document.querySelector('[data-latitude-theme-toggle]');
 
   function cleanTheme(value) {

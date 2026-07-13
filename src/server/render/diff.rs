@@ -1,64 +1,132 @@
 use maud::{Markup, PreEscaped, html};
 
+use crate::config::ProjectConfig;
+
 use super::{
-    super::git::{FileSectionKind, GitDiffReport, GitFileChange, GitFileDiff},
+    super::{
+        assets::{DIFF_VIEWER_SCRIPT_SRC, DIFF_VIEWER_STYLE_HREF, HTMX_SCRIPT_SRC},
+        constants::DIFF_ROUTE_SEGMENT,
+        git::{FileSectionKind, GitDiffReport, GitFileChange, GitFileDiff},
+        html as html_page,
+        paths::display_path,
+    },
     syntax::render_diff_code_output,
 };
 
-pub(in crate::server) fn render_diff_workspace_fragment(report: &GitDiffReport) -> String {
-    diff_workspace_inner(report).into_string()
+pub(in crate::server) fn render_diff_workspace_fragment(
+    report: &GitDiffReport,
+    action_url: &str,
+) -> Markup {
+    diff_workspace_inner(report, action_url)
 }
 
-fn diff_workspace_inner(report: &GitDiffReport) -> Markup {
+pub(in crate::server) fn render_diff_file_update(
+    report: &GitDiffReport,
+    path: &str,
+    action_url: &str,
+) -> Markup {
+    let change = report
+        .file_changes
+        .iter()
+        .find(|change| change.path == path || change.original_path.as_deref() == Some(path));
     html! {
-        div class="action-status" data-action-status hidden {}
-        (git_action_panel())
-        (git_file_panel(&report.file_changes))
-    }
-}
-
-fn git_action_panel() -> Markup {
-    html! {
-        section class="action-panel" {
-            div class="action-group" {
-                (git_action_button("stage_all", "Stage all"))
-                (git_action_button("unstage_all", "Unstage all"))
-                (git_destructive_action_button(
-                    "discard_all",
-                    "Discard all",
-                    "Discard all unstaged changes and untracked files? This cannot be undone.",
-                ))
-            }
-            div class="commit-form" {
-                input data-commit-message type="text" required placeholder="Commit message";
-                button type="button" data-git-action="commit" { "Commit staged" }
-            }
-            div class="action-group action-group-push" {
-                (git_action_button("push", "Push"))
+        div data-diff-file-update data-path=(path) {
+            @for kind in [FileSectionKind::Unstaged, FileSectionKind::Staged] {
+                template data-file-section-update=(kind.data_key()) {
+                    @if let Some(change) = change.filter(|change| kind.includes(change)) {
+                        (git_file_card(change, kind, action_url))
+                    }
+                }
             }
         }
     }
 }
 
-fn git_action_button(action: &str, label: &str) -> Markup {
+pub(in crate::server) fn render_project_diff(
+    project: &ProjectConfig,
+    report: &GitDiffReport,
+    device_hostname: &str,
+) -> String {
+    let page_title = format!("{} code changes - Latitude", project.name);
+    let action_url = format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT);
+
+    html_page::document(
+        &page_title,
+        device_hostname,
+        DIFF_VIEWER_STYLE_HREF,
+        html! { script src=(HTMX_SCRIPT_SRC) {} },
+        html! {
+            main {
+                header {
+                    a href=(format!("/{}", project.name)) { "Back to project" }
+                    h1 { "Code changes" }
+                    p { (&project.name) " on " (device_hostname) }
+                    p class="project-path" { (display_path(&report.repo_dir)) }
+                }
+                div class="diff-workspace" data-diff-workspace data-action-url=(&action_url) {
+                    (render_diff_workspace_fragment(report, &action_url))
+                }
+                script src=(DIFF_VIEWER_SCRIPT_SRC) {}
+            }
+        },
+    )
+}
+
+fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
     html! {
-        button type="button" data-git-action=(action) { (label) }
+        div class="action-status" data-action-status hidden {}
+        (git_action_panel(action_url))
+        (git_file_panel(&report.file_changes, action_url))
     }
 }
 
-fn git_file_panel(changes: &[GitFileChange]) -> Markup {
+fn git_action_panel(action_url: &str) -> Markup {
+    html! {
+        section class="action-panel" {
+            div class="action-group" {
+                (git_action_button(action_url, "stage_all", "Stage all"))
+                (git_action_button(action_url, "unstage_all", "Unstage all"))
+                (git_destructive_action_button(
+                    action_url,
+                    "discard_all",
+                    "Discard all",
+                    "Discard all unstaged changes and untracked files? This cannot be undone.",
+                ))
+            }
+            form class="commit-form" hx-patch=(action_url) hx-swap="none" {
+                input data-commit-message name="message" type="text" required placeholder="Commit message";
+                button type="submit" name="action" value="commit" data-git-action="commit" { "Commit staged" }
+            }
+            div class="action-group action-group-push" {
+                (git_action_button(action_url, "push", "Push"))
+            }
+        }
+    }
+}
+
+fn git_action_button(action_url: &str, action: &str, label: &str) -> Markup {
+    html! {
+        form class="git-action-form" hx-patch=(action_url) hx-swap="none" {
+            button type="submit" name="action" value=(action) data-git-action=(action) { (label) }
+        }
+    }
+}
+
+fn git_file_panel(changes: &[GitFileChange], action_url: &str) -> Markup {
     html! {
         (git_file_section(
             "Unstaged files",
             "No unstaged files.",
             changes,
             FileSectionKind::Unstaged,
+            action_url,
         ))
         (git_file_section(
             "Staged files",
             "No staged files.",
             changes,
             FileSectionKind::Staged,
+            action_url,
         ))
     }
 }
@@ -68,6 +136,7 @@ fn git_file_section(
     empty_message: &str,
     changes: &[GitFileChange],
     kind: FileSectionKind,
+    action_url: &str,
 ) -> Markup {
     let section_changes = changes
         .iter()
@@ -76,7 +145,7 @@ fn git_file_section(
     let count_label = file_count_label(section_changes.len());
 
     html! {
-        section class="file-panel" {
+        section class="file-panel" data-file-panel=(kind.data_key()) data-empty-message=(empty_message) {
             div class="section-heading" {
                 h2 { (title) }
                 code { (count_label) }
@@ -86,7 +155,7 @@ fn git_file_section(
             } @else {
                 div class="file-list" {
                     @for change in &section_changes {
-                        (git_file_card(change, kind))
+                        (git_file_card(change, kind, action_url))
                     }
                 }
             }
@@ -94,7 +163,7 @@ fn git_file_section(
     }
 }
 
-fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
+fn git_file_card(change: &GitFileChange, kind: FileSectionKind, action_url: &str) -> Markup {
     let visible_diffs = change
         .diffs
         .iter()
@@ -117,8 +186,9 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
                     }
                     @match kind {
                         FileSectionKind::Unstaged => {
-                            (git_file_action_button("stage_file", "Stage", &change.path))
+                            (git_file_action_button(action_url, "stage_file", "Stage", &change.path))
                             (git_file_destructive_action_button(
+                                action_url,
                                 "discard_file",
                                 "Discard",
                                 &change.path,
@@ -126,7 +196,7 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind) -> Markup {
                             ))
                         }
                         FileSectionKind::Staged => {
-                            (git_file_action_button("unstage_file", "Unstage", &change.path))
+                            (git_file_action_button(action_url, "unstage_file", "Unstage", &change.path))
                         }
                     }
                 }
@@ -151,26 +221,40 @@ fn editor_href(path: &str) -> String {
     format!("./_files?{query}")
 }
 
-fn git_destructive_action_button(action: &str, label: &str, confirm: &str) -> Markup {
+fn git_destructive_action_button(
+    action_url: &str,
+    action: &str,
+    label: &str,
+    confirm: &str,
+) -> Markup {
     html! {
-        button class="danger-button" type="button" data-git-action=(action) data-confirm=(confirm) { (label) }
+        form class="git-action-form" hx-patch=(action_url) hx-swap="none" hx-confirm=(confirm) {
+            button class="danger-button" type="submit" name="action" value=(action) data-git-action=(action) { (label) }
+        }
     }
 }
 
-fn git_file_action_button(action: &str, label: &str, path: &str) -> Markup {
+fn git_file_action_button(action_url: &str, action: &str, label: &str, path: &str) -> Markup {
     html! {
-        button type="button" data-git-action=(action) data-path=(path) { (label) }
+        form class="git-action-form" hx-patch=(action_url) hx-swap="none" {
+            input type="hidden" name="path" value=(path);
+            button type="submit" name="action" value=(action) data-git-action=(action) data-path=(path) { (label) }
+        }
     }
 }
 
 fn git_file_destructive_action_button(
+    action_url: &str,
     action: &str,
     label: &str,
     path: &str,
     confirm: &str,
 ) -> Markup {
     html! {
-        button class="danger-button" type="button" data-git-action=(action) data-path=(path) data-confirm=(confirm) { (label) }
+        form class="git-action-form" hx-patch=(action_url) hx-swap="none" hx-confirm=(confirm) {
+            input type="hidden" name="path" value=(path);
+            button class="danger-button" type="submit" name="action" value=(action) data-git-action=(action) data-path=(path) { (label) }
+        }
     }
 }
 

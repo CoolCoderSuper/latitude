@@ -1,10 +1,11 @@
 use axum::{
     Json,
     body::{Body, to_bytes},
-    extract::{Path as AxumPath, Query, State, ws::WebSocketUpgrade},
+    extract::{Form, Path as AxumPath, Query, State, ws::WebSocketUpgrade},
     http::{HeaderMap, Method, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
+use serde::Deserialize;
 use tracing::error;
 
 use crate::{
@@ -29,6 +30,7 @@ use super::{
             PublicGitActionResponse, collect_project_diff, execute_git_action,
             parse_public_git_action_payload, public_diff_response,
         },
+        render::render_share_dialog_shell,
         response::{ApiError, json_error, plain_response},
         terminal_api::{
             PublicTerminalSessionListResponse, TerminalWsQuery, execute_root_terminal_command,
@@ -42,6 +44,151 @@ use super::{
         public_root_terminal_link,
     },
 };
+
+#[derive(Debug, Deserialize)]
+pub(in crate::server) struct ShareUiForm {
+    #[serde(default)]
+    pub(in crate::server) password: Option<String>,
+    #[serde(default)]
+    pub(in crate::server) expiry: Option<u64>,
+}
+
+pub(in crate::server) async fn public_ui_get_shares(
+    AxumPath((project, deployment)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_headers_are_authenticated(&state, &config, &headers, None) {
+        return public_api_auth_challenge();
+    }
+
+    render_share_ui_response(&state, &project, &deployment, None).await
+}
+
+pub(in crate::server) async fn public_ui_create_share(
+    AxumPath((project, deployment)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Form(payload): Form<ShareUiForm>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_headers_are_authenticated(&state, &config, &headers, None) {
+        return public_api_auth_challenge();
+    }
+
+    if let Err(error) = enabled_deployment(&state, &project, &deployment).await {
+        return render_share_ui_response(&state, &project, &deployment, Some((&error, true))).await;
+    }
+
+    let password = payload
+        .password
+        .map(|password| password.trim().to_string())
+        .filter(|password| !password.is_empty());
+    let expires_at = payload
+        .expiry
+        .filter(|seconds| *seconds > 0)
+        .map(|seconds| current_unix_timestamp().saturating_add(seconds));
+    let result = state
+        .catalog()
+        .create_share(&project, &deployment, password, expires_at)
+        .await;
+
+    match result {
+        Ok(_) => {
+            render_share_ui_response(
+                &state,
+                &project,
+                &deployment,
+                Some(("Share link created.", false)),
+            )
+            .await
+        }
+        Err(error) => {
+            let message = error.to_string();
+            render_share_ui_response(&state, &project, &deployment, Some((&message, true))).await
+        }
+    }
+}
+
+pub(in crate::server) async fn public_ui_delete_share(
+    AxumPath((project, deployment, token)): AxumPath<(String, String, String)>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_headers_are_authenticated(&state, &config, &headers, None) {
+        return public_api_auth_challenge();
+    }
+
+    let result = match state.catalog().get_share(&token).await {
+        Ok(Some(share)) if share.project == project && share.deployment == deployment => {
+            state.catalog().delete_share(&token).await
+        }
+        Ok(_) => Ok(false),
+        Err(error) => Err(error),
+    };
+
+    match result {
+        Ok(true) => {
+            render_share_ui_response(
+                &state,
+                &project,
+                &deployment,
+                Some(("Share link revoked.", false)),
+            )
+            .await
+        }
+        Ok(false) => {
+            render_share_ui_response(
+                &state,
+                &project,
+                &deployment,
+                Some(("Share link was not found.", true)),
+            )
+            .await
+        }
+        Err(error) => {
+            let message = error.to_string();
+            render_share_ui_response(&state, &project, &deployment, Some((&message, true))).await
+        }
+    }
+}
+
+async fn enabled_deployment(
+    state: &AppState,
+    project: &str,
+    deployment: &str,
+) -> Result<(), String> {
+    let project_config = state
+        .catalog()
+        .get_project(project)
+        .await
+        .map_err(|error| error.to_string())?
+        .filter(|project| project.enabled)
+        .ok_or_else(|| format!("project '{project}' was not found"))?;
+
+    project_config
+        .deployments
+        .iter()
+        .any(|candidate| candidate.enabled && candidate.name == deployment)
+        .then_some(())
+        .ok_or_else(|| format!("deployment '{deployment}' was not found"))
+}
+
+async fn render_share_ui_response(
+    state: &AppState,
+    project: &str,
+    deployment: &str,
+    status: Option<(&str, bool)>,
+) -> Response<Body> {
+    let shares = match state.catalog().list_shares().await {
+        Ok(shares) => shares,
+        Err(error) => return ApiError::from(error).into_response(),
+    };
+    let html = render_share_dialog_shell(project, deployment, &shares, status).into_string();
+    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+}
 
 pub(in crate::server) async fn public_api_list_shares(
     State(state): State<AppState>,

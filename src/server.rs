@@ -8,6 +8,7 @@ mod git;
 mod html;
 mod page;
 mod paths;
+mod presentation;
 mod public;
 mod render;
 mod response;
@@ -25,6 +26,7 @@ use tracing::info;
 
 use crate::state::AppState;
 
+use assets::{ASSET_BASE_PATH, public_asset};
 use command::{
     command_health, create_deployment_share, create_project, create_project_deployment,
     delete_deployment_share, delete_project, delete_project_deployment, get_config,
@@ -46,6 +48,7 @@ use desktop_api::{
 };
 use files_api::{
     public_api_get_project_files, public_api_highlight_project_file, public_api_put_project_file,
+    public_ui_put_project_file,
 };
 use public::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
@@ -56,7 +59,8 @@ use public::{
     public_api_list_root_terminal_sessions, public_api_list_shares,
     public_api_list_terminal_sessions, public_api_login, public_api_patch_project_diff,
     public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
-    public_entry, public_root_terminal_ws, public_terminal_ws,
+    public_entry, public_root_terminal_ws, public_terminal_ws, public_ui_create_share,
+    public_ui_delete_share, public_ui_get_shares,
 };
 
 pub async fn run(state: AppState) -> anyhow::Result<()> {
@@ -87,6 +91,7 @@ pub async fn run(state: AppState) -> anyhow::Result<()> {
 
 fn public_router(state: AppState) -> Router {
     Router::new()
+        .route(&format!("{ASSET_BASE_PATH}/{{name}}"), get(public_asset))
         .route(LOGIN_PATH, get(get_public_login).post(post_public_login))
         .route(
             PUBLIC_API_SESSION_PATH,
@@ -98,6 +103,14 @@ fn public_router(state: AppState) -> Router {
             get(public_api_list_shares).post(public_api_create_share),
         )
         .route(PUBLIC_API_SHARE_PATH, delete(public_api_delete_share))
+        .route(
+            "/__latitude/ui/shares/{project}/{deployment}",
+            get(public_ui_get_shares).post(public_ui_create_share),
+        )
+        .route(
+            "/__latitude/ui/shares/{project}/{deployment}/{token}",
+            delete(public_ui_delete_share),
+        )
         .route(
             PUBLIC_API_ROOT_TERMINAL_PATH,
             get(public_api_get_root_terminal).post(public_api_post_root_terminal),
@@ -125,6 +138,10 @@ fn public_router(state: AppState) -> Router {
             get(public_api_get_project_files)
                 .post(public_api_highlight_project_file)
                 .put(public_api_put_project_file),
+        )
+        .route(
+            "/__latitude/ui/files/{project}",
+            axum::routing::put(public_ui_put_project_file),
         )
         .route(
             PUBLIC_API_PROJECT_TERMINAL_PATH,
