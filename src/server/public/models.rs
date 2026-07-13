@@ -8,6 +8,7 @@ use super::super::{
         DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, PUBLIC_API_PROJECTS_PATH,
         PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH, TERMINAL_ROUTE_SEGMENT,
     },
+    git::GitStatusSummary,
     presentation::{
         deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
         enabled_deployment_count, project_summary,
@@ -54,6 +55,10 @@ pub(in crate::server) struct PublicProjectSummary {
     pub(in crate::server) summary: String,
     pub(in crate::server) deployment_count: usize,
     pub(in crate::server) git_dirty: bool,
+    pub(in crate::server) git_additions: usize,
+    pub(in crate::server) git_deletions: usize,
+    pub(in crate::server) git_ahead: usize,
+    pub(in crate::server) git_behind: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -74,7 +79,7 @@ pub(in crate::server) struct PublicProjectDiffLink {
     pub(in crate::server) href: String,
     pub(in crate::server) api_href: String,
     pub(in crate::server) label: &'static str,
-    pub(in crate::server) description: &'static str,
+    pub(in crate::server) description: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -115,7 +120,7 @@ pub(in crate::server) struct PublicDeploymentSummary {
 
 pub(in crate::server::public) fn public_project_summary(
     project: &ProjectConfig,
-    git_dirty: bool,
+    git_status: &GitStatusSummary,
 ) -> PublicProjectSummary {
     let deployment_count = enabled_deployment_count(project);
     PublicProjectSummary {
@@ -124,7 +129,11 @@ pub(in crate::server::public) fn public_project_summary(
         api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
         summary: project_summary(project),
         deployment_count,
-        git_dirty,
+        git_dirty: git_status.is_dirty(),
+        git_additions: git_status.additions,
+        git_deletions: git_status.deletions,
+        git_ahead: git_status.ahead,
+        git_behind: git_status.behind,
     }
 }
 
@@ -152,6 +161,7 @@ pub(in crate::server) fn public_root_desktop_link(
 
 pub(in crate::server) fn public_project_detail(
     project: &ProjectConfig,
+    git_status: &GitStatusSummary,
     device_hostname: &str,
 ) -> PublicProjectDetail {
     let deployments = project
@@ -172,7 +182,11 @@ pub(in crate::server) fn public_project_detail(
             href: format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
             api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}/diff", project.name),
             label: "Code changes",
-            description: "Review staged and unstaged files",
+            description: if git_status.has_status() {
+                git_status.label()
+            } else {
+                "No local changes or commits to sync".to_string()
+            },
         },
         terminal: PublicProjectTerminalLink {
             href: format!("/{}/{}", project.name, TERMINAL_ROUTE_SEGMENT),

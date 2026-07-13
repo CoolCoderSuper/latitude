@@ -6,7 +6,10 @@ use super::{
     super::{
         assets::{DIFF_VIEWER_SCRIPT_SRC, DIFF_VIEWER_STYLE_HREF, HTMX_SCRIPT_SRC},
         constants::DIFF_ROUTE_SEGMENT,
-        git::{FileSectionKind, GitDiffReport, GitFileChange, GitFileDiff},
+        git::{
+            FileSectionKind, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff,
+            GitHistoryReport,
+        },
         html as html_page,
         paths::display_path,
     },
@@ -18,6 +21,123 @@ pub(in crate::server) fn render_diff_workspace_fragment(
     action_url: &str,
 ) -> Markup {
     diff_workspace_inner(report, action_url)
+}
+
+pub(in crate::server) fn render_project_git_history(
+    project: &ProjectConfig,
+    report: &GitHistoryReport,
+    device_hostname: &str,
+) -> String {
+    let page_title = format!("{} Git history - Latitude", project.name);
+    html_page::document(
+        &page_title,
+        device_hostname,
+        DIFF_VIEWER_STYLE_HREF,
+        html! {},
+        html! {
+            main {
+                header {
+                    a href=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) { "Back to code changes" }
+                    h1 { "Git history" }
+                    p { (&project.name) " on " (device_hostname) }
+                    p class="project-path" { (display_path(&report.repo_dir)) }
+                }
+                section class="history-panel" {
+                    @if report.commits.is_empty() {
+                        div class="empty" { "No commits found." }
+                    } @else {
+                        @for commit in &report.commits {
+                            a class="history-commit" href=(format!("/{}/{}/history/{}", project.name, DIFF_ROUTE_SEGMENT, commit.hash)) {
+                                div class="history-summary" {
+                                    code { (&commit.short_hash) }
+                                    strong { (&commit.subject) }
+                                    span { (&commit.author) " · " (&commit.authored_at) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+pub(in crate::server) fn render_project_git_commit(
+    project: &ProjectConfig,
+    report: &GitCommitReport,
+    device_hostname: &str,
+) -> String {
+    let commit = &report.commit;
+    let (additions, deletions) = commit.files.iter().fold((0, 0), |totals, file| {
+        let counts = diff_line_counts(&file.content);
+        (totals.0 + counts.0, totals.1 + counts.1)
+    });
+    let page_title = format!("{} {} - Latitude", project.name, commit.short_hash);
+    html_page::document(
+        &page_title,
+        device_hostname,
+        DIFF_VIEWER_STYLE_HREF,
+        html! {},
+        html! {
+            main {
+                header {
+                    a href=(format!("/{}/{}/history", project.name, DIFF_ROUTE_SEGMENT)) { "Back to Git history" }
+                    h1 { (&commit.subject) }
+                    p { (&project.name) " on " (device_hostname) }
+                    p class="project-path" { (display_path(&report.repo_dir)) }
+                }
+                section class="commit-header" {
+                    div class="commit-meta" {
+                        code title=(&commit.hash) { (&commit.short_hash) }
+                        " · " (&commit.author)
+                        " · " (&commit.authored_at)
+                    }
+                    div class="commit-summary" aria-label=(format!("{} files changed, {additions} additions, {deletions} deletions", commit.files.len())) {
+                        span { (file_count_label(commit.files.len())) " changed" }
+                        span class="commit-additions" { "+" (additions) }
+                        span class="commit-deletions" { "-" (deletions) }
+                    }
+                }
+                section class="commit-file-list" {
+                    @if commit.files.is_empty() {
+                        div class="empty" { "This commit has no textual file diff." }
+                    } @else {
+                        @for file in &commit.files {
+                            (commit_file_card(file))
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+fn commit_file_card(file: &GitFileDiff) -> Markup {
+    let (additions, deletions) = diff_line_counts(&file.content);
+    html! {
+        details class="file-card commit-file-card" {
+            summary class="file-summary commit-file-summary" {
+                div class="file-path" { (&file.path) }
+                div class="commit-file-stats" aria-label=(format!("{additions} additions, {deletions} deletions")) {
+                    span class="commit-additions" { "+" (additions) }
+                    span class="commit-deletions" { "-" (deletions) }
+                }
+            }
+            div class="file-content" { (git_file_diff(file)) }
+        }
+    }
+}
+
+fn diff_line_counts(content: &str) -> (usize, usize) {
+    let additions = content
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .count();
+    let deletions = content
+        .lines()
+        .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+        .count();
+    (additions, deletions)
 }
 
 pub(in crate::server) fn render_diff_file_update(
@@ -74,6 +194,18 @@ pub(in crate::server) fn render_project_diff(
 
 fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
     html! {
+        section class="git-overview" aria-label="Git change and sync totals" {
+            strong { "Changes" }
+            span class="overview-additions" { "+" (report.status.additions) }
+            span class="overview-deletions" { "-" (report.status.deletions) }
+            span class="overview-spacer" {}
+            @if report.status.behind > 0 {
+                span class="overview-behind" { "↓" (report.status.behind) " pull" }
+            }
+            @if report.status.ahead > 0 {
+                span class="overview-ahead" { "↑" (report.status.ahead) " push" }
+            }
+        }
         div class="action-status" data-action-status hidden {}
         (git_action_panel(action_url))
         (git_file_panel(&report.file_changes, action_url))
@@ -98,6 +230,8 @@ fn git_action_panel(action_url: &str) -> Markup {
                 button type="submit" name="action" value="commit" data-git-action="commit" { "Commit staged" }
             }
             div class="action-group action-group-push" {
+                a class="editor-link" href=(format!("{action_url}/history")) { "History" }
+                (git_action_button(action_url, "pull", "Pull"))
                 (git_action_button(action_url, "push", "Push"))
             }
         }

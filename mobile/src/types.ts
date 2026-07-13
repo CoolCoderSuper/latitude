@@ -28,6 +28,10 @@ export type ProjectSummary = {
   summary: string;
   deployment_count: number;
   git_dirty: boolean;
+  git_additions: number;
+  git_deletions: number;
+  git_ahead: number;
+  git_behind: number;
 };
 
 export type ProjectListResponse = {
@@ -162,7 +166,31 @@ export type GitDiffResponse = {
   repo_dir: string;
   unstaged_count: number;
   staged_count: number;
+  additions: number;
+  deletions: number;
+  ahead: number;
+  behind: number;
   file_changes: GitFileChange[];
+};
+
+export type GitCommitSummary = {
+  hash: string;
+  short_hash: string;
+  author: string;
+  authored_at: string;
+  subject: string;
+};
+
+export type GitHistoryResponse = {
+  repo_dir: string;
+  commits: GitCommitSummary[];
+};
+
+export type GitCommitResponse = GitCommitSummary & {
+  repo_dir: string;
+  additions: number;
+  deletions: number;
+  files: GitFileDiff[];
 };
 
 export type GitActionName =
@@ -173,6 +201,7 @@ export type GitActionName =
   | 'discard_all'
   | 'discard_file'
   | 'commit'
+  | 'pull'
   | 'push';
 
 export type GitActionPayload = {

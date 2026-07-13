@@ -23,6 +23,7 @@ export function ProjectRoute({
   initialTab,
   onBack,
   onOpenViewer,
+  onOpenGitHistory,
   projectName,
   session,
 }: {
@@ -31,6 +32,7 @@ export function ProjectRoute({
   initialTab: ProjectTab;
   onBack: () => void;
   onOpenViewer: (deployment: DeploymentSummary) => void;
+  onOpenGitHistory: () => void;
   projectName: string;
   session: SessionRecord;
 }) {
@@ -101,6 +103,7 @@ export function ProjectRoute({
       deviceHostname={deviceHostname ?? project.device_hostname}
       onBack={onBack}
       onOpenViewer={onOpenViewer}
+      onOpenGitHistory={onOpenGitHistory}
       onRefresh={loadProject}
       onSelectTab={setTab}
     />

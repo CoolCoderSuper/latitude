@@ -25,6 +25,7 @@ export function ProjectScreen({
   deviceHostname,
   onBack,
   onOpenViewer,
+  onOpenGitHistory,
   onRefresh,
   onSelectTab,
   project,
@@ -36,6 +37,7 @@ export function ProjectScreen({
   deviceHostname?: string;
   onBack: () => void;
   onOpenViewer: (deployment: DeploymentSummary) => void;
+  onOpenGitHistory: () => void;
   onRefresh: () => void | Promise<void>;
   onSelectTab: (tab: ProjectTab) => void;
   project: ProjectDetail;
@@ -173,6 +175,7 @@ export function ProjectScreen({
           <DiffPanel
             api={api}
             onCodeInteractionChange={handleCodeInteractionChange}
+            onOpenHistory={onOpenGitHistory}
             projectName={project.name}
           />
         </View>

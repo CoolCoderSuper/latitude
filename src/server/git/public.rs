@@ -5,7 +5,10 @@ use super::{
         paths::display_path,
         render::{HighlightedDiffLine, highlight_diff_lines},
     },
-    types::{FileSectionKind, GitDiffReport, GitFileChange, GitFileDiff},
+    types::{
+        FileSectionKind, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff,
+        GitHistoryReport,
+    },
 };
 
 #[derive(Debug, Serialize)]
@@ -13,6 +16,10 @@ pub(in crate::server) struct PublicGitDiffResponse {
     pub(in crate::server) repo_dir: String,
     pub(in crate::server) unstaged_count: usize,
     pub(in crate::server) staged_count: usize,
+    pub(in crate::server) additions: usize,
+    pub(in crate::server) deletions: usize,
+    pub(in crate::server) ahead: usize,
+    pub(in crate::server) behind: usize,
     pub(in crate::server) file_changes: Vec<PublicGitFileChange>,
 }
 
@@ -41,6 +48,87 @@ pub(in crate::server) struct PublicGitActionResponse {
     pub(in crate::server) diff: PublicGitDiffResponse,
 }
 
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicGitHistoryResponse {
+    pub(in crate::server) repo_dir: String,
+    pub(in crate::server) commits: Vec<PublicGitCommitSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicGitCommitSummary {
+    pub(in crate::server) hash: String,
+    pub(in crate::server) short_hash: String,
+    pub(in crate::server) author: String,
+    pub(in crate::server) authored_at: String,
+    pub(in crate::server) subject: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicGitCommitResponse {
+    pub(in crate::server) repo_dir: String,
+    pub(in crate::server) hash: String,
+    pub(in crate::server) short_hash: String,
+    pub(in crate::server) author: String,
+    pub(in crate::server) authored_at: String,
+    pub(in crate::server) subject: String,
+    pub(in crate::server) additions: usize,
+    pub(in crate::server) deletions: usize,
+    pub(in crate::server) files: Vec<PublicGitFileDiff>,
+}
+
+pub(in crate::server) fn public_history_response(
+    report: GitHistoryReport,
+) -> PublicGitHistoryResponse {
+    PublicGitHistoryResponse {
+        repo_dir: display_path(&report.repo_dir),
+        commits: report
+            .commits
+            .into_iter()
+            .map(|commit| PublicGitCommitSummary {
+                hash: commit.hash,
+                short_hash: commit.short_hash,
+                author: commit.author,
+                authored_at: commit.authored_at,
+                subject: commit.subject,
+            })
+            .collect(),
+    }
+}
+
+pub(in crate::server) fn public_commit_response(
+    report: GitCommitReport,
+) -> PublicGitCommitResponse {
+    let (additions, deletions) = report.commit.files.iter().fold((0, 0), |totals, file| {
+        let additions = file
+            .content
+            .lines()
+            .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+            .count();
+        let deletions = file
+            .content
+            .lines()
+            .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+            .count();
+        (totals.0 + additions, totals.1 + deletions)
+    });
+    PublicGitCommitResponse {
+        repo_dir: display_path(&report.repo_dir),
+        hash: report.commit.hash,
+        short_hash: report.commit.short_hash,
+        author: report.commit.author,
+        authored_at: report.commit.authored_at,
+        subject: report.commit.subject,
+        additions,
+        deletions,
+        files: report
+            .commit
+            .files
+            .into_iter()
+            .map(public_git_file_diff)
+            .collect(),
+    }
+}
+
 pub(in crate::server) fn public_diff_response(report: GitDiffReport) -> PublicGitDiffResponse {
     let unstaged_count = report
         .file_changes
@@ -62,6 +150,10 @@ pub(in crate::server) fn public_diff_response(report: GitDiffReport) -> PublicGi
         repo_dir: display_path(&report.repo_dir),
         unstaged_count,
         staged_count,
+        additions: report.status.additions,
+        deletions: report.status.deletions,
+        ahead: report.status.ahead,
+        behind: report.status.behind,
         file_changes,
     }
 }

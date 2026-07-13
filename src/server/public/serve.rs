@@ -32,7 +32,10 @@ use super::super::{
         PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     desktop_api::execute_desktop_action_request,
-    git::{collect_project_diff, collect_project_file_diff, handle_git_action_request},
+    git::{
+        collect_project_diff, collect_project_file_diff, collect_project_git_commit,
+        collect_project_git_history, handle_git_action_request,
+    },
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
         ProjectPath, is_hop_by_hop_header, join_upstream_url, resolve_project_path,
@@ -40,8 +43,9 @@ use super::super::{
     },
     render::{
         render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
-        render_project_files, render_project_home, render_project_terminal, render_root_desktop,
-        render_root_terminal, render_server_home, render_share_login,
+        render_project_files, render_project_git_commit, render_project_git_history,
+        render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
+        render_server_home, render_share_login,
     },
     response::{internal_response, json_error, plain_response},
     terminal_api::{
@@ -765,7 +769,11 @@ async fn serve_project_home(
         );
     }
 
-    html_response(req.method(), render_project_home(project, device_hostname))
+    let git_status = super::super::git::collect_project_git_status(&project.project_dir).await;
+    html_response(
+        req.method(),
+        render_project_home(project, &git_status, device_hostname),
+    )
 }
 
 async fn serve_project_diff(
@@ -780,6 +788,26 @@ async fn serve_project_diff(
         return plain_response(
             StatusCode::METHOD_NOT_ALLOWED,
             "diff viewers support GET, HEAD, and PATCH\n",
+        );
+    }
+
+    if remainder == "/history" && (method == Method::GET || method == Method::HEAD) {
+        let report = collect_project_git_history(&project.project_dir).await;
+        return html_response(
+            &method,
+            render_project_git_history(project, &report, device_hostname),
+        );
+    }
+
+    if let Some(hash) = remainder.strip_prefix("/history/")
+        && (method == Method::GET || method == Method::HEAD)
+    {
+        let Some(report) = collect_project_git_commit(&project.project_dir, hash).await else {
+            return plain_response(StatusCode::NOT_FOUND, "commit was not found\n");
+        };
+        return html_response(
+            &method,
+            render_project_git_commit(project, &report, device_hostname),
         );
     }
 
@@ -1010,11 +1038,11 @@ async fn serve_server_home(
             );
         }
     };
-    let dirty_projects = super::dirty_project_names(&projects).await;
+    let git_statuses = super::project_git_statuses(&projects).await;
 
     html_response(
         req.method(),
-        render_server_home(config, &projects, &dirty_projects, device_hostname),
+        render_server_home(config, &projects, &git_statuses, device_hostname),
     )
 }
 

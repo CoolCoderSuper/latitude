@@ -7,12 +7,14 @@ use super::super::{
     constants::{
         DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT, FILES_ROUTE_SEGMENT, TERMINAL_ROUTE_SEGMENT,
     },
+    git::GitStatusSummary,
     html as html_page,
     presentation::{deployment_home_label, deployment_page_title, project_summary},
 };
 
 pub(in crate::server) fn render_project_home(
     project: &ProjectConfig,
+    git_status: &GitStatusSummary,
     device_hostname: &str,
 ) -> String {
     let page_title = format!("{} - Latitude Project", project.name);
@@ -36,7 +38,7 @@ pub(in crate::server) fn render_project_home(
                 }
                 ul {
                     (tool_link(&project.name, FILES_ROUTE_SEGMENT, "Files", "Browse, preview, and edit project files"))
-                    (tool_link(&project.name, DIFF_ROUTE_SEGMENT, "Code changes", "Review staged and unstaged files"))
+                    (code_changes_tool_link(&project.name, git_status))
                     (tool_link(&project.name, TERMINAL_ROUTE_SEGMENT, "Terminal", "Run commands in the project directory"))
                     @for deployment in enabled_deployments {
                         li class="deployment-item" {
@@ -81,7 +83,7 @@ pub(in crate::server) fn render_project_home(
 pub(in crate::server) fn render_server_home(
     config: &BootConfig,
     projects: &[ProjectConfig],
-    dirty_projects: &[String],
+    git_statuses: &std::collections::HashMap<String, GitStatusSummary>,
     device_hostname: &str,
 ) -> String {
     let enabled_projects = projects
@@ -113,8 +115,8 @@ pub(in crate::server) fn render_server_home(
                         li { a href=(format!("/{}", project.name)) {
                             strong {
                                 span class="project-name" { (&project.name) }
-                                @if dirty_projects.contains(&project.name) {
-                                    span class="git-dirty" title="Uncommitted Git changes" { "Dirty" }
+                                @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
+                                    (git_status_badge(status))
                                 }
                             }
                             span { (project_summary(project)) }
@@ -125,6 +127,33 @@ pub(in crate::server) fn render_server_home(
             }
         },
     )
+}
+
+fn code_changes_tool_link(project: &str, status: &GitStatusSummary) -> Markup {
+    html! { li { a href=(format!("/{project}/{DIFF_ROUTE_SEGMENT}")) {
+        strong {
+            "Code changes"
+            @if status.has_status() { (git_status_badge(status)) }
+        }
+        span { "Review changes, commits, and history" }
+    } } }
+}
+
+fn git_status_badge(status: &GitStatusSummary) -> Markup {
+    html! {
+        span class="git-status" aria-label=(status.accessible_label()) title=(status.accessible_label()) {
+            @if status.is_dirty() {
+                span class="git-stat git-additions" { "+" (status.additions) }
+                span class="git-stat git-deletions" { "-" (status.deletions) }
+            }
+            @if status.behind > 0 {
+                span class="git-stat git-behind" title="Commits to pull" { "↓" (status.behind) }
+            }
+            @if status.ahead > 0 {
+                span class="git-stat git-ahead" title="Commits to push" { "↑" (status.ahead) }
+            }
+        }
+    }
 }
 
 fn tool_link(project: &str, segment: &str, label: &str, description: &str) -> Markup {

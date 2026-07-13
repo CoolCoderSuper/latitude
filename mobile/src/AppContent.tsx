@@ -17,6 +17,8 @@ import { DeploymentViewer } from './features/deployments/DeploymentViewer';
 import type { RootStackParamList } from './navigationTypes';
 import { ConnectScreen } from './screens/ConnectScreen';
 import { HomeScreen } from './screens/HomeScreen';
+import { GitCommitScreen } from './screens/GitCommitScreen';
+import { GitHistoryScreen } from './screens/GitHistoryScreen';
 import { ProjectRoute } from './screens/ProjectRoute';
 import { RootDesktopScreen } from './screens/RootDesktopScreen';
 import { RootTerminalScreen } from './screens/RootTerminalScreen';
@@ -278,6 +280,9 @@ export function AppContent() {
                 projectName={route.params.name}
                 session={session}
                 onBack={() => navigation.goBack()}
+                onOpenGitHistory={() =>
+                  navigation.navigate('GitHistory', { projectName: route.params.name })
+                }
                 onOpenViewer={(deployment) =>
                   navigation.navigate('Viewer', {
                     href: deployment.href,
@@ -286,6 +291,33 @@ export function AppContent() {
                     title: deployment.title ?? deployment.name,
                   })
                 }
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="GitHistory">
+            {({ navigation, route }) => (
+              <GitHistoryScreen
+                api={api}
+                deviceHostname={session.deviceHostname}
+                projectName={route.params.projectName}
+                onBack={() => navigation.goBack()}
+                onOpenCommit={(hash) =>
+                  navigation.navigate('GitCommit', {
+                    projectName: route.params.projectName,
+                    hash,
+                  })
+                }
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen name="GitCommit">
+            {({ navigation, route }) => (
+              <GitCommitScreen
+                api={api}
+                deviceHostname={session.deviceHostname}
+                hash={route.params.hash}
+                projectName={route.params.projectName}
+                onBack={() => navigation.goBack()}
               />
             )}
           </Stack.Screen>

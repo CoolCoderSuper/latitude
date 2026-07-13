@@ -27,8 +27,10 @@ use super::{
             MAX_TERMINAL_COMMAND_BYTES, PUBLIC_API_PROJECTS_PATH,
         },
         git::{
-            PublicGitActionResponse, collect_project_diff, execute_git_action,
-            parse_public_git_action_payload, public_diff_response,
+            PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
+            collect_project_git_history, collect_project_git_status, execute_git_action,
+            parse_public_git_action_payload, public_commit_response, public_diff_response,
+            public_history_response,
         },
         render::render_share_dialog_shell,
         response::{ApiError, json_error, plain_response},
@@ -376,11 +378,14 @@ pub(in crate::server) async fn public_api_list_projects(
         Ok(projects) => projects,
         Err(response) => return response,
     };
-    let dirty_projects = super::dirty_project_names(&catalog_projects).await;
+    let git_statuses = super::project_git_statuses(&catalog_projects).await;
     let projects = catalog_projects
         .iter()
         .filter(|project| project.enabled)
-        .map(|project| public_project_summary(project, dirty_projects.contains(&project.name)))
+        .map(|project| {
+            let status = git_statuses.get(&project.name).cloned().unwrap_or_default();
+            public_project_summary(project, &status)
+        })
         .collect();
 
     Json(PublicProjectListResponse {
@@ -413,8 +418,10 @@ pub(in crate::server) async fn public_api_get_project(
         Err(response) => return response,
     };
 
+    let git_status = collect_project_git_status(&project_config.project_dir).await;
     Json(public_project_detail(
         &project_config,
+        &git_status,
         state.device_hostname(),
     ))
     .into_response()
@@ -445,6 +452,46 @@ pub(in crate::server) async fn public_api_get_project_diff(
         collect_project_diff(&project_config.project_dir).await,
     ))
     .into_response()
+}
+
+pub(in crate::server) async fn public_api_get_project_git_history(
+    AxumPath(project): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "project was not found"),
+        Err(response) => return response,
+    };
+    Json(public_history_response(
+        collect_project_git_history(&project_config.project_dir).await,
+    ))
+    .into_response()
+}
+
+pub(in crate::server) async fn public_api_get_project_git_commit(
+    AxumPath((project, hash)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+    let project_config = match enabled_project_or_response(&state, &project).await {
+        Ok(Some(project)) => project,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "project was not found"),
+        Err(response) => return response,
+    };
+    let Some(report) = collect_project_git_commit(&project_config.project_dir, &hash).await else {
+        return json_error(StatusCode::NOT_FOUND, "commit was not found");
+    };
+    Json(public_commit_response(report)).into_response()
 }
 
 pub(in crate::server) async fn public_api_patch_project_diff(

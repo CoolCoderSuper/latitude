@@ -4,13 +4,13 @@ import {
   Alert,
   Modal,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Share,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { absoluteUrl, type LatitudePublicApi } from '../../api';
 import { AppButton, EmptyState, IconButton, InlineNotice, LoadingBlock } from '../../components/ui';

@@ -4,7 +4,9 @@ import type {
   DeploymentShare,
   GitActionPayload,
   GitActionResponse,
+  GitCommitResponse,
   GitDiffResponse,
+  GitHistoryResponse,
   LoginResponse,
   ProjectDetail,
   ProjectDirectoryResponse,
@@ -115,6 +117,18 @@ export class LatitudePublicApi {
   async diff(projectName: string): Promise<GitDiffResponse> {
     return this.get<GitDiffResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff`,
+    );
+  }
+
+  async gitHistory(projectName: string): Promise<GitHistoryResponse> {
+    return this.get<GitHistoryResponse>(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff/history`,
+    );
+  }
+
+  async gitCommit(projectName: string, hash: string): Promise<GitCommitResponse> {
+    return this.get<GitCommitResponse>(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff/history/${encodeURIComponent(hash)}`,
     );
   }
 

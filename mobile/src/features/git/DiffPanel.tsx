@@ -1,12 +1,13 @@
 import {
   Download,
   GitCommitHorizontal,
+  History,
   Rocket,
   Trash2,
   Upload,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, ScrollView, TextInput, View } from 'react-native';
+import { Alert, ScrollView, Text, TextInput, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../../api';
 import { AppButton, EmptyState, InlineNotice, LoadingBlock } from '../../components/ui';
@@ -19,10 +20,12 @@ import { canStage, canUnstage, toggleExpanded } from './gitDiffUtils';
 export function DiffPanel({
   api,
   onCodeInteractionChange,
+  onOpenHistory,
   projectName,
 }: {
   api: LatitudePublicApi;
   onCodeInteractionChange: (active: boolean) => void;
+  onOpenHistory: () => void;
   projectName: string;
 }) {
   const { colors, styles } = useTheme();
@@ -177,14 +180,46 @@ export function DiffPanel({
         />
       </View>
 
-      <AppButton
-        compact
-        disabled={actioning}
-        icon={<Rocket color={colors.text} size={16} />}
-        label="Push"
-        onPress={() => runAction({ action: 'push' }, 'Push completed.')}
-        variant="secondary"
-      />
+      <View style={styles.diffToolbar}>
+        <AppButton
+          compact
+          icon={<History color={colors.text} size={16} />}
+          label="History"
+          onPress={onOpenHistory}
+          variant="secondary"
+        />
+        <AppButton
+          compact
+          disabled={actioning}
+          icon={<Download color={colors.text} size={16} />}
+          label="Pull"
+          onPress={() => runAction({ action: 'pull' }, 'Pull completed.')}
+          variant="secondary"
+        />
+        <AppButton
+          compact
+          disabled={actioning}
+          icon={<Rocket color={colors.text} size={16} />}
+          label="Push"
+          onPress={() => runAction({ action: 'push' }, 'Push completed.')}
+          variant="secondary"
+        />
+      </View>
+
+      {diff && (
+        <View style={styles.gitOverview}>
+          <Text style={styles.gitOverviewLabel}>Changes</Text>
+          <Text style={styles.gitAdditionsText}>+{diff.additions}</Text>
+          <Text style={styles.gitDeletionsText}>-{diff.deletions}</Text>
+          <View style={styles.gitOverviewSpacer} />
+          {diff.behind > 0 && (
+            <Text style={styles.gitBehindText}>↓{diff.behind} pull</Text>
+          )}
+          {diff.ahead > 0 && (
+            <Text style={styles.gitAheadText}>↑{diff.ahead} push</Text>
+          )}
+        </View>
+      )}
 
       {notice && <InlineNotice tone={noticeTone} text={notice} />}
 

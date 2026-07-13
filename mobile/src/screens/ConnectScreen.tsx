@@ -1,5 +1,5 @@
 import { CheckCircle2, Server, X } from 'lucide-react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   KeyboardAvoidingView,
   Platform,
@@ -31,6 +31,7 @@ export function ConnectScreen({
   const [baseUrl, setBaseUrl] = useState(initialBaseUrl);
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     setBaseUrl(initialBaseUrl);
@@ -66,11 +67,14 @@ export function ConnectScreen({
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.flex}
     >
       <ScrollView
+        ref={scrollRef}
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={styles.connectContent}
+        keyboardDismissMode="interactive"
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.connectTopRow}>
@@ -118,6 +122,9 @@ export function ConnectScreen({
             autoCapitalize="none"
             autoCorrect={false}
             onChangeText={setPassword}
+            onFocus={() => {
+              requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+            }}
             placeholder="Public password"
             placeholderTextColor={colors.muted}
             secureTextEntry

@@ -14,6 +14,8 @@ export type RootStackParamList = {
     initialTab?: ProjectTab;
     name: string;
   };
+  GitHistory: { projectName: string };
+  GitCommit: { projectName: string; hash: string };
   RootDesktop: undefined;
   RootTerminal: undefined;
   Servers: undefined;

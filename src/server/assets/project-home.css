@@ -121,17 +121,39 @@ strong {
   font-size: inherit;
 }
 
-.git-dirty {
+.git-status {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin: 0;
-  border: 1px solid #c58a0b;
-  border-radius: 999px;
-  padding: 2px 7px;
-  color: #795300;
-  background: #fff7d6;
-  font-size: 0.72rem;
-  font-weight: 800;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  font-weight: 850;
   line-height: 1.2;
+}
+
+.git-stat {
+  display: inline;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.git-additions {
+  color: #16803d;
+}
+
+.git-deletions {
+  color: #c52d2d;
+}
+
+.git-ahead {
+  color: #2563b8;
+}
+
+.git-behind {
+  color: #9a6700;
 }
 
 span {
@@ -406,10 +428,20 @@ span {
   background: transparent;
 }
 
-:root[data-latitude-theme="dark"] .git-dirty {
-  border-color: #a8791b;
-  color: #f2cf72;
-  background: #342b16;
+:root[data-latitude-theme="dark"] .git-additions {
+  color: #56d364;
+}
+
+:root[data-latitude-theme="dark"] .git-deletions {
+  color: #ff7b72;
+}
+
+:root[data-latitude-theme="dark"] .git-ahead {
+  color: #79c0ff;
+}
+
+:root[data-latitude-theme="dark"] .git-behind {
+  color: #e3b341;
 }
 
 :root[data-latitude-theme="dark"] .share-trigger {

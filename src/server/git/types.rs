@@ -5,7 +5,86 @@ use serde::Serialize;
 #[derive(Debug)]
 pub(in crate::server) struct GitDiffReport {
     pub(in crate::server) repo_dir: PathBuf,
+    pub(in crate::server) status: GitStatusSummary,
     pub(in crate::server) file_changes: Vec<GitFileChange>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+pub(in crate::server) struct GitStatusSummary {
+    pub(in crate::server) dirty: bool,
+    pub(in crate::server) additions: usize,
+    pub(in crate::server) deletions: usize,
+    pub(in crate::server) ahead: usize,
+    pub(in crate::server) behind: usize,
+}
+
+impl GitStatusSummary {
+    pub(in crate::server) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(in crate::server) fn has_status(&self) -> bool {
+        self.is_dirty() || self.ahead > 0 || self.behind > 0
+    }
+
+    pub(in crate::server) fn label(&self) -> String {
+        let mut parts = Vec::new();
+        if self.is_dirty() {
+            parts.push(format!("+{} -{}", self.additions, self.deletions));
+        }
+        if self.behind > 0 {
+            parts.push(format!("↓{}", self.behind));
+        }
+        if self.ahead > 0 {
+            parts.push(format!("↑{}", self.ahead));
+        }
+        parts.join(" ")
+    }
+
+    pub(in crate::server) fn accessible_label(&self) -> String {
+        let mut parts = Vec::new();
+        if self.is_dirty() {
+            parts.push(format!(
+                "{} additions, {} deletions",
+                self.additions, self.deletions
+            ));
+        }
+        if self.behind > 0 {
+            parts.push(commit_sync_label(self.behind, "pull"));
+        }
+        if self.ahead > 0 {
+            parts.push(commit_sync_label(self.ahead, "push"));
+        }
+        parts.join(", ")
+    }
+}
+
+fn commit_sync_label(count: usize, action: &str) -> String {
+    let noun = if count == 1 { "commit" } else { "commits" };
+    format!("{count} {noun} to {action}")
+}
+
+#[derive(Debug)]
+pub(in crate::server) struct GitHistoryReport {
+    pub(in crate::server) repo_dir: PathBuf,
+    pub(in crate::server) commits: Vec<GitCommit>,
+}
+
+#[derive(Debug)]
+pub(in crate::server) struct GitCommitReport {
+    pub(in crate::server) repo_dir: PathBuf,
+    pub(in crate::server) commit: GitCommit,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::server) struct GitCommit {
+    pub(in crate::server) hash: String,
+    pub(in crate::server) short_hash: String,
+    pub(in crate::server) author: String,
+    pub(in crate::server) authored_at: String,
+    pub(in crate::server) subject: String,
+    pub(in crate::server) diff: String,
+    pub(in crate::server) files: Vec<GitFileDiff>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,6 +96,7 @@ pub(in crate::server) enum GitAction {
     DiscardAll,
     DiscardFile { path: String },
     Commit { message: String },
+    Pull,
     Push,
 }
 

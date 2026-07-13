@@ -166,7 +166,7 @@ type DiffRow = {
   key: string;
 };
 
-function DiffBlock({
+export function DiffBlock({
   diff,
   onInteractionChange,
 }: {

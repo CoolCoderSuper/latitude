@@ -11,6 +11,7 @@ mod terminal_page;
 pub(super) use auth::{render_public_login, render_share_login};
 pub(super) use diff::{
     render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
+    render_project_git_commit, render_project_git_history,
 };
 pub(super) use files::render_project_files;
 pub(super) use home::{render_project_home, render_server_home};

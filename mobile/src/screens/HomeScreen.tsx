@@ -221,13 +221,24 @@ export function HomeScreen({
                   <Text style={styles.cardTitle}>{project.name}</Text>
                   <Text style={styles.cardMeta}>{project.summary}</Text>
                 </View>
-                {project.git_dirty && (
+                {(project.git_dirty || project.git_ahead > 0 || project.git_behind > 0) && (
                   <View
-                    accessibilityLabel="Uncommitted Git changes"
+                    accessibilityLabel="Git working tree and remote status"
                     accessible
                     style={styles.gitDirtyBadge}
                   >
-                    <Text style={styles.gitDirtyBadgeText}>Dirty</Text>
+                    {project.git_dirty && (
+                      <>
+                        <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
+                        <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
+                      </>
+                    )}
+                    {project.git_behind > 0 && (
+                      <Text style={styles.gitBehindText}>↓{project.git_behind}</Text>
+                    )}
+                    {project.git_ahead > 0 && (
+                      <Text style={styles.gitAheadText}>↑{project.git_ahead}</Text>
+                    )}
                   </View>
                 )}
                 <ChevronRight color={colors.muted} size={20} />

@@ -150,6 +150,117 @@ input {
   justify-content: flex-end;
 }
 
+.history-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.history-commit {
+  display: block;
+  border: 1px solid #d7dde8;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+}
+
+.history-commit:hover {
+  border-color: #a8d0c9;
+  background: #f5faf9;
+  text-decoration: none;
+}
+
+.history-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  cursor: pointer;
+}
+
+.history-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-summary code {
+  color: #0f766e;
+}
+
+.history-summary span {
+  color: #64748b;
+  font-size: .78rem;
+  text-align: right;
+}
+
+.history-diff {
+  border-top: 1px solid #d7dde8;
+  overflow-x: auto;
+}
+
+.commit-file-list {
+  display: grid;
+  gap: 6px;
+}
+
+.commit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+  border: 1px solid #d7dfdc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.commit-meta {
+  min-width: 0;
+  color: #526173;
+  font-size: .82rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.commit-summary {
+  display: flex;
+  flex: none;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #526173;
+  font-size: .82rem;
+  font-weight: 700;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.commit-summary span,
+.commit-meta code {
+  color: inherit;
+}
+
+.commit-file-summary {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.commit-file-stats {
+  display: flex;
+  gap: 10px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: .78rem;
+  font-weight: 800;
+}
+
+.commit-additions {
+  color: #16803d;
+}
+
+.commit-deletions {
+  color: #c52d2d;
+}
+
 .git-action-form {
   display: inline-flex;
   margin: 0;
@@ -162,6 +273,40 @@ input {
 .diff-workspace {
   display: grid;
   gap: 10px;
+}
+
+.git-overview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid #d7dde8;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: .8rem;
+  font-weight: 800;
+}
+
+.overview-spacer {
+  flex: 1;
+}
+
+.overview-additions {
+  color: #16803d;
+}
+
+.overview-deletions {
+  color: #c52d2d;
+}
+
+.overview-ahead {
+  color: #2563b8;
+}
+
+.overview-behind {
+  color: #9a6700;
 }
 
 .diff-workspace .action-panel {
@@ -251,13 +396,19 @@ input {
 .file-summary-action {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
   justify-self: end;
   justify-content: flex-end;
 }
 
-.file-summary-action button {
+.file-summary-action button,
+.file-summary-action .editor-link {
   width: auto;
+  min-height: 28px;
+  border-radius: 5px;
+  padding: 0 8px;
+  font-size: .74rem;
+  line-height: 1;
 }
 
 .file-content {
@@ -409,6 +560,27 @@ pre {
   background: #151c28;
 }
 
+:root[data-latitude-theme="dark"] .git-overview {
+  border-color: #2f3a4a;
+  background: #151c28;
+}
+
+:root[data-latitude-theme="dark"] .overview-additions {
+  color: #56d364;
+}
+
+:root[data-latitude-theme="dark"] .overview-deletions {
+  color: #ff7b72;
+}
+
+:root[data-latitude-theme="dark"] .overview-ahead {
+  color: #79c0ff;
+}
+
+:root[data-latitude-theme="dark"] .overview-behind {
+  color: #e3b341;
+}
+
 :root[data-latitude-theme="dark"] .action-status {
   border-color: #367064;
   color: #bbf7d0;
@@ -428,6 +600,49 @@ pre {
 
 :root[data-latitude-theme="dark"] .file-card[open] {
   border-color: #367064;
+}
+
+:root[data-latitude-theme="dark"] .history-commit {
+  border-color: #2f3a4a;
+  background: #151c28;
+}
+
+:root[data-latitude-theme="dark"] .commit-header {
+  border-color: #2e3936;
+  background: #171d1b;
+}
+
+:root[data-latitude-theme="dark"] .commit-meta,
+:root[data-latitude-theme="dark"] .commit-summary {
+  color: #aeb9c7;
+}
+
+:root[data-latitude-theme="dark"] .history-commit[open] {
+  border-color: #367064;
+}
+
+:root[data-latitude-theme="dark"] .commit-additions {
+  color: #56d364;
+}
+
+:root[data-latitude-theme="dark"] .commit-deletions {
+  color: #ff7b72;
+}
+
+:root[data-latitude-theme="dark"] .history-summary:hover {
+  background: #1b2634;
+}
+
+:root[data-latitude-theme="dark"] .history-summary code {
+  color: #2aa79c;
+}
+
+:root[data-latitude-theme="dark"] .history-summary span {
+  color: #aeb9c7;
+}
+
+:root[data-latitude-theme="dark"] .history-diff {
+  border-color: #2f3a4a;
 }
 
 :root[data-latitude-theme="dark"] .file-content,
@@ -539,6 +754,14 @@ pre {
     text-align: left;
   }
 
+  .commit-summary {
+    justify-content: flex-start;
+  }
+
+  .commit-header {
+    display: grid;
+  }
+
   .action-panel,
   .commit-form {
     display: grid;
@@ -554,6 +777,10 @@ pre {
 
   .action-group-push {
     justify-content: stretch;
+  }
+
+  .file-summary-action button {
+    width: auto;
   }
 
   .section-heading {

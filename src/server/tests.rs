@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use axum::{
     body::{Body, to_bytes},
@@ -28,9 +31,9 @@ use super::{
     constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
     files_api::public_ui_put_project_file,
     git::{
-        GitAction, GitDiffReport, GitFileChange, GitFileDiff, parse_diff_file_sections,
-        parse_git_action_form, parse_porcelain_status, parse_public_git_action_payload,
-        public_diff_response,
+        GitAction, GitDiffReport, GitFileChange, GitFileDiff, GitStatusSummary,
+        parse_diff_file_sections, parse_git_action_form, parse_porcelain_status,
+        parse_public_git_action_payload, public_diff_response,
     },
     page::{
         page_theme_from_headers, parse_page_payload, render_page_content,
@@ -443,7 +446,7 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         );
     }
 
-    let rendered = render_server_home(&BootConfig::default(), &[], &[], TEST_HOSTNAME);
+    let rendered = render_server_home(&BootConfig::default(), &[], &HashMap::new(), TEST_HOSTNAME);
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
     assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js?v=2\""));
@@ -730,6 +733,7 @@ fn renders_project_home_with_enabled_deployments() {
                 },
             ],
         },
+        &GitStatusSummary::default(),
         TEST_HOSTNAME,
     );
 
@@ -1119,6 +1123,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     };
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
+        status: GitStatusSummary::default(),
         file_changes: vec![
             GitFileChange {
                 path: "src/server.rs".to_string(),
@@ -1183,6 +1188,8 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-path=\"src/new.rs\""));
     assert!(rendered.contains("data-commit-message"));
     assert!(rendered.contains("Commit staged"));
+    assert!(rendered.contains("data-git-action=\"pull\""));
+    assert!(rendered.contains("href=\"/demo/_diff/history\""));
     assert!(rendered.contains("hx-patch=\"/demo/_diff\""));
     assert!(rendered.contains("src=\"/__latitude/assets/diff-viewer.js?v=2\""));
     assert!(!rendered.contains("method=\"post\""));
@@ -1198,6 +1205,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
 fn renders_diff_workspace_fragment_without_full_document() {
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
+        status: GitStatusSummary::default(),
         file_changes: vec![GitFileChange {
             path: "README.md".to_string(),
             original_path: None,
@@ -1221,6 +1229,7 @@ fn renders_diff_workspace_fragment_without_full_document() {
 fn renders_targeted_diff_file_update() {
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
+        status: GitStatusSummary::default(),
         file_changes: vec![GitFileChange {
             path: "README.md".to_string(),
             original_path: None,
@@ -1270,6 +1279,10 @@ fn parses_git_action_forms() {
         GitAction::DiscardFile {
             path: "src/server.rs".to_string()
         }
+    );
+    assert_eq!(
+        parse_git_action_form(b"action=pull").unwrap(),
+        GitAction::Pull
     );
     assert_eq!(
         parse_git_action_form(b"action=push").unwrap(),
@@ -1697,6 +1710,7 @@ fn public_diff_response_includes_highlighted_lines() {
     let content = "diff --git a/src/lib.rs b/src/lib.rs\n@@ -0,0 +1 @@\n+let answer: i32 = 42;";
     let response = public_diff_response(GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
+        status: GitStatusSummary::default(),
         file_changes: vec![GitFileChange {
             path: "src/lib.rs".to_string(),
             original_path: None,
@@ -1790,7 +1804,16 @@ fn renders_server_home_with_enabled_projects() {
     let rendered = render_server_home(
         &BootConfig::default(),
         &projects,
-        &["mock".to_string()],
+        &HashMap::from([(
+            "mock".to_string(),
+            GitStatusSummary {
+                dirty: true,
+                additions: 12,
+                deletions: 3,
+                ahead: 1,
+                behind: 2,
+            },
+        )]),
         TEST_HOSTNAME,
     );
 
@@ -1803,8 +1826,11 @@ fn renders_server_home_with_enabled_projects() {
     assert!(rendered.contains("Run commands in your user directory"));
     assert!(rendered.contains("href=\"/mock\""));
     assert!(rendered.contains("1 deployment"));
-    assert!(rendered.contains("Uncommitted Git changes"));
-    assert!(rendered.contains(">Dirty</span>"));
+    assert!(rendered.contains("12 additions, 3 deletions, 2 commits to pull, 1 commit to push"));
+    assert!(rendered.contains("class=\"git-stat git-additions\">+12"));
+    assert!(rendered.contains("class=\"git-stat git-deletions\">-3"));
+    assert!(rendered.contains("class=\"git-stat git-behind\" title=\"Commits to pull\">↓2"));
+    assert!(rendered.contains("class=\"git-stat git-ahead\" title=\"Commits to push\">↑1"));
     assert!(!rendered.contains("href=\"/hidden\""));
 }
 
@@ -1819,7 +1845,7 @@ fn renders_server_home_with_enabled_desktop() {
             ..BootConfig::default()
         },
         &[],
-        &[],
+        &HashMap::new(),
         TEST_HOSTNAME,
     );
 
@@ -1882,6 +1908,7 @@ fn builds_public_project_detail_with_enabled_deployments() {
                 },
             ],
         },
+        &GitStatusSummary::default(),
         TEST_HOSTNAME,
     );
 

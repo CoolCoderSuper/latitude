@@ -7,10 +7,14 @@ use super::{
         git_command_label, git_worktree_root, parse_nul_separated_paths, run_git_command,
         run_git_command_owned,
     },
-    types::{GitDiffReport, GitFileChange, GitFileDiff, GitSection},
+    types::{
+        GitCommit, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff, GitHistoryReport,
+        GitSection, GitStatusSummary,
+    },
 };
 
 pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDiffReport {
+    let status_summary = collect_project_git_status(project_dir).await;
     let fallback_dir = fs::canonicalize(project_dir)
         .await
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -27,6 +31,7 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
     if status.output.is_err() {
         return GitDiffReport {
             repo_dir,
+            status: status_summary,
             file_changes: Vec::new(),
         };
     }
@@ -64,6 +69,7 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
 
     GitDiffReport {
         repo_dir,
+        status: status_summary,
         file_changes,
     }
 }
@@ -72,6 +78,7 @@ pub(in crate::server) async fn collect_project_file_diff(
     project_dir: &Path,
     path: &str,
 ) -> GitDiffReport {
+    let status_summary = collect_project_git_status(project_dir).await;
     let fallback_dir = fs::canonicalize(project_dir)
         .await
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -94,6 +101,7 @@ pub(in crate::server) async fn collect_project_file_diff(
     if file_changes.is_empty() {
         return GitDiffReport {
             repo_dir,
+            status: status_summary,
             file_changes,
         };
     }
@@ -140,6 +148,7 @@ pub(in crate::server) async fn collect_project_file_diff(
 
     GitDiffReport {
         repo_dir,
+        status: status_summary,
         file_changes,
     }
 }
@@ -188,14 +197,163 @@ pub(in crate::server) async fn file_baseline(project_dir: &Path, file: &Path) ->
     untracked.then(String::new)
 }
 
-pub(in crate::server) async fn project_is_dirty(project_dir: &Path) -> bool {
-    run_git_command(
-        project_dir,
+pub(in crate::server) async fn collect_project_git_status(project_dir: &Path) -> GitStatusSummary {
+    let Ok(repo_dir) = git_worktree_root(project_dir).await else {
+        return GitStatusSummary::default();
+    };
+    let mut summary = GitStatusSummary::default();
+
+    summary.dirty = run_git_command(
+        &repo_dir,
         &["status", "--porcelain=v1", "--untracked-files=normal"],
         &[0],
     )
     .await
-    .is_ok_and(|output| !output.stdout.is_empty())
+    .is_ok_and(|output| !output.stdout.is_empty());
+
+    match run_git_command(
+        &repo_dir,
+        &["diff", "HEAD", "--numstat", "--no-renames"],
+        &[0],
+    )
+    .await
+    {
+        Ok(output) => add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout)),
+        Err(_) => {
+            for args in [
+                ["diff", "--cached", "--numstat", "--no-renames"],
+                ["diff", "--numstat", "--no-renames", "--"],
+            ] {
+                if let Ok(output) = run_git_command(&repo_dir, &args, &[0]).await {
+                    add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));
+                }
+            }
+        }
+    }
+
+    if let Ok(output) = run_git_command(
+        &repo_dir,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+        &[0],
+    )
+    .await
+    {
+        for path in parse_nul_separated_paths(&output.stdout) {
+            let args = vec![
+                "diff".to_string(),
+                "--no-index".to_string(),
+                "--numstat".to_string(),
+                "--".to_string(),
+                "/dev/null".to_string(),
+                path,
+            ];
+            if let Ok(output) = run_git_command_owned(&repo_dir, &args, &[0, 1]).await {
+                add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));
+            }
+        }
+    }
+
+    if let Ok(output) = run_git_command(
+        &repo_dir,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+        &[0],
+    )
+    .await
+    {
+        let counts = String::from_utf8_lossy(&output.stdout);
+        let mut values = counts
+            .split_whitespace()
+            .filter_map(|value| value.parse().ok());
+        summary.ahead = values.next().unwrap_or(0);
+        summary.behind = values.next().unwrap_or(0);
+    }
+    summary
+}
+
+fn add_numstat(summary: &mut GitStatusSummary, output: &str) {
+    for line in output.lines() {
+        let mut fields = line.split('\t');
+        summary.additions += fields
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        summary.deletions += fields
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+    }
+}
+
+pub(in crate::server) async fn collect_project_git_history(project_dir: &Path) -> GitHistoryReport {
+    let fallback_dir = fs::canonicalize(project_dir)
+        .await
+        .unwrap_or_else(|_| project_dir.to_path_buf());
+    let repo_dir = git_worktree_root(project_dir)
+        .await
+        .unwrap_or_else(|_| fallback_dir.clone());
+    let output = run_git_command(
+        &repo_dir,
+        &[
+            "log",
+            "-n",
+            "30",
+            "--date=iso-strict",
+            "--format=%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s",
+        ],
+        &[0],
+    )
+    .await;
+    let commits = output
+        .ok()
+        .map(|output| parse_git_history(&String::from_utf8_lossy(&output.stdout)))
+        .unwrap_or_default();
+    GitHistoryReport { repo_dir, commits }
+}
+
+pub(in crate::server) async fn collect_project_git_commit(
+    project_dir: &Path,
+    hash: &str,
+) -> Option<GitCommitReport> {
+    if hash.len() != 40 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let repo_dir = git_worktree_root(project_dir).await.ok()?;
+    let args = vec![
+        "show".to_string(),
+        "--date=iso-strict".to_string(),
+        "--format=%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s".to_string(),
+        "--patch".to_string(),
+        "--no-ext-diff".to_string(),
+        "--color=never".to_string(),
+        hash.to_string(),
+    ];
+    let output = run_git_command_owned(&repo_dir, &args, &[0]).await.ok()?;
+    let commit = parse_git_history(&String::from_utf8_lossy(&output.stdout))
+        .into_iter()
+        .next()?;
+    (commit.hash.eq_ignore_ascii_case(hash)).then_some(GitCommitReport { repo_dir, commit })
+}
+
+fn parse_git_history(output: &str) -> Vec<GitCommit> {
+    output
+        .split('\u{1e}')
+        .filter_map(|record| {
+            let record = record.trim_start_matches(['\r', '\n']);
+            let (metadata, diff) = record.split_once('\n').unwrap_or((record, ""));
+            let mut fields = metadata.trim_end().split('\u{1f}');
+            let diff = diff.trim().to_string();
+            let files = parse_diff_file_sections("Commit", "git show", &diff);
+            Some(GitCommit {
+                hash: fields.next()?.to_string(),
+                short_hash: fields.next()?.to_string(),
+                author: fields.next()?.to_string(),
+                authored_at: fields.next()?.to_string(),
+                subject: fields.next()?.to_string(),
+                diff,
+                files,
+            })
+        })
+        .collect()
 }
 
 async fn collect_git_file_changes(repo_dir: &Path) -> Result<Vec<GitFileChange>, String> {
@@ -446,7 +604,10 @@ fn diff_git_line_path(line: &str) -> Option<String> {
 mod tests {
     use std::{fs as std_fs, process::Command, time::SystemTime};
 
-    use super::{Path, collect_project_file_diff, file_baseline, project_is_dirty};
+    use super::{
+        Path, collect_project_file_diff, collect_project_git_commit, collect_project_git_history,
+        collect_project_git_status, file_baseline,
+    };
 
     fn git(directory: &Path, args: &[&str]) {
         let status = Command::new("git")
@@ -476,11 +637,22 @@ mod tests {
         std_fs::write(directory.join("tracked.txt"), "before\n").unwrap();
         git(&directory, &["add", "tracked.txt"]);
         git(&directory, &["commit", "--quiet", "-m", "initial"]);
-        assert!(!project_is_dirty(&directory).await);
+        assert!(!collect_project_git_status(&directory).await.is_dirty());
+        let history = collect_project_git_history(&directory).await;
+        assert_eq!(history.commits.len(), 1);
+        assert_eq!(history.commits[0].subject, "initial");
+        assert!(history.commits[0].diff.is_empty());
+        let commit = collect_project_git_commit(&directory, &history.commits[0].hash)
+            .await
+            .expect("history commit should be readable");
+        assert!(commit.commit.diff.contains("tracked.txt"));
 
         std_fs::write(directory.join("tracked.txt"), "after\n").unwrap();
         std_fs::write(directory.join("new.txt"), "new\n").unwrap();
-        assert!(project_is_dirty(&directory).await);
+        let status = collect_project_git_status(&directory).await;
+        assert!(status.is_dirty());
+        assert_eq!(status.additions, 2);
+        assert_eq!(status.deletions, 1);
 
         let tracked = collect_project_file_diff(&directory, "tracked.txt").await;
         assert_eq!(tracked.file_changes.len(), 1);

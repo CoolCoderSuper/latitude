@@ -36,6 +36,7 @@ use command::{
 };
 use constants::{
     LOGIN_PATH, PUBLIC_API_PROJECT_DIFF_PATH, PUBLIC_API_PROJECT_FILES_PATH,
+    PUBLIC_API_PROJECT_GIT_COMMIT_PATH, PUBLIC_API_PROJECT_GIT_HISTORY_PATH,
     PUBLIC_API_PROJECT_PATH, PUBLIC_API_PROJECT_TERMINAL_PATH,
     PUBLIC_API_PROJECT_TERMINAL_SESSION_PATH, PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH,
     PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
@@ -55,6 +56,7 @@ use public::{
     public_api_create_share, public_api_create_terminal_session,
     public_api_delete_root_terminal_session, public_api_delete_share,
     public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
+    public_api_get_project_git_commit, public_api_get_project_git_history,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
     public_api_list_root_terminal_sessions, public_api_list_shares,
     public_api_list_terminal_sessions, public_api_login, public_api_patch_project_diff,
@@ -132,6 +134,14 @@ fn public_router(state: AppState) -> Router {
         .route(
             PUBLIC_API_PROJECT_DIFF_PATH,
             get(public_api_get_project_diff).patch(public_api_patch_project_diff),
+        )
+        .route(
+            PUBLIC_API_PROJECT_GIT_HISTORY_PATH,
+            get(public_api_get_project_git_history),
+        )
+        .route(
+            PUBLIC_API_PROJECT_GIT_COMMIT_PATH,
+            get(public_api_get_project_git_commit),
         )
         .route(
             PUBLIC_API_PROJECT_FILES_PATH,
