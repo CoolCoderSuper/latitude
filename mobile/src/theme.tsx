@@ -460,6 +460,20 @@ function createStyles(colors: ThemeColors) {
     fontSize: 13,
     fontWeight: '600',
   },
+  gitDirtyBadge: {
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    backgroundColor: colors.panel,
+  },
+  gitDirtyBadgeText: {
+    color: colors.gold,
+    fontSize: 11,
+    fontWeight: '900',
+  },
   segmented: {
     flexDirection: 'row',
     gap: 8,

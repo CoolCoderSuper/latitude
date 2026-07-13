@@ -16,6 +16,7 @@ use tokio::fs;
 use super::{
     auth::{public_api_auth_challenge, public_request_is_authenticated},
     constants::MAX_FILE_EDITOR_BYTES,
+    git::file_baseline,
     render::highlight_source_lines,
     response::json_error,
 };
@@ -52,6 +53,7 @@ struct FileResponse {
     editable: bool,
     size: u64,
     modified: Option<u64>,
+    git_base_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -142,6 +144,11 @@ pub(in crate::server) async fn public_api_get_project_files(
             .unwrap();
     }
     let content = match String::from_utf8(bytes) { Ok(s) => s, Err(_) => return Json(serde_json::json!({"path": query.path, "name": target.file_name().unwrap_or_default().to_string_lossy(), "media_type": media_type, "editable": false, "size": metadata.len(), "binary": true})).into_response() };
+    let git_base_content = if metadata.len() <= MAX_FILE_EDITOR_BYTES as u64 {
+        file_baseline(&project.project_dir, &target).await
+    } else {
+        None
+    };
     Json(FileResponse {
         path: query.path,
         name: target
@@ -158,6 +165,7 @@ pub(in crate::server) async fn public_api_get_project_files(
             .ok()
             .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs()),
+        git_base_content,
     })
     .into_response()
 }

@@ -27,6 +27,7 @@ export type ProjectSummary = {
   api_href: string;
   summary: string;
   deployment_count: number;
+  git_dirty: boolean;
 };
 
 export type ProjectListResponse = {

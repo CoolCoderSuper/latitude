@@ -53,6 +53,7 @@ pub(in crate::server) struct PublicProjectSummary {
     pub(in crate::server) api_href: String,
     pub(in crate::server) summary: String,
     pub(in crate::server) deployment_count: usize,
+    pub(in crate::server) git_dirty: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,6 +115,7 @@ pub(in crate::server) struct PublicDeploymentSummary {
 
 pub(in crate::server::public) fn public_project_summary(
     project: &ProjectConfig,
+    git_dirty: bool,
 ) -> PublicProjectSummary {
     let deployment_count = enabled_deployment_count(project);
     PublicProjectSummary {
@@ -122,6 +124,7 @@ pub(in crate::server::public) fn public_project_summary(
         api_href: format!("{PUBLIC_API_PROJECTS_PATH}/{}", project.name),
         summary: project_summary(project),
         deployment_count,
+        git_dirty,
     }
 }
 

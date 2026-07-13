@@ -273,7 +273,7 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         );
     }
 
-    let rendered = render_server_home(&BootConfig::default(), &[], TEST_HOSTNAME);
+    let rendered = render_server_home(&BootConfig::default(), &[], &[], TEST_HOSTNAME);
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
     assert!(!rendered.contains("__LATITUDE_THEME_COOKIE__"));
@@ -1476,7 +1476,12 @@ fn renders_server_home_with_enabled_projects() {
             deployments: Vec::new(),
         },
     ];
-    let rendered = render_server_home(&BootConfig::default(), &projects, TEST_HOSTNAME);
+    let rendered = render_server_home(
+        &BootConfig::default(),
+        &projects,
+        &["mock".to_string()],
+        TEST_HOSTNAME,
+    );
 
     assert!(rendered.contains("<title>Latitude Projects - test-host</title>"));
     assert!(rendered.contains("data-latitude-theme-toggle"));
@@ -1487,6 +1492,8 @@ fn renders_server_home_with_enabled_projects() {
     assert!(rendered.contains("Run commands in your user directory"));
     assert!(rendered.contains("href=\"/mock\""));
     assert!(rendered.contains("1 deployment"));
+    assert!(rendered.contains("Uncommitted Git changes"));
+    assert!(rendered.contains(">Dirty</span>"));
     assert!(!rendered.contains("href=\"/hidden\""));
 }
 
@@ -1500,6 +1507,7 @@ fn renders_server_home_with_enabled_desktop() {
             },
             ..BootConfig::default()
         },
+        &[],
         &[],
         TEST_HOSTNAME,
     );

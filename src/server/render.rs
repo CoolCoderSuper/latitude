@@ -315,6 +315,7 @@ pub(super) fn render_share_login(
 pub(super) fn render_server_home(
     config: &BootConfig,
     projects: &[ProjectConfig],
+    dirty_projects: &[String],
     device_hostname: &str,
 ) -> String {
     let enabled_projects = projects
@@ -352,7 +353,12 @@ pub(super) fn render_server_home(
                     @for project in enabled_projects {
                         li {
                             a href=(format!("/{}", project.name)) {
-                                strong { (&project.name) }
+                                strong {
+                                    span class="project-name" { (&project.name) }
+                                    @if dirty_projects.contains(&project.name) {
+                                        span class="git-dirty" title="Uncommitted Git changes" { "Dirty" }
+                                    }
+                                }
                                 span { (project_summary(project)) }
                             }
                         }

@@ -221,6 +221,15 @@ export function HomeScreen({
                   <Text style={styles.cardTitle}>{project.name}</Text>
                   <Text style={styles.cardMeta}>{project.summary}</Text>
                 </View>
+                {project.git_dirty && (
+                  <View
+                    accessibilityLabel="Uncommitted Git changes"
+                    accessible
+                    style={styles.gitDirtyBadge}
+                  >
+                    <Text style={styles.gitDirtyBadgeText}>Dirty</Text>
+                  </View>
+                )}
                 <ChevronRight color={colors.muted} size={20} />
               </Pressable>
             ))}

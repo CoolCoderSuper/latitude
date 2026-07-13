@@ -152,10 +152,11 @@ pub(in crate::server) async fn public_api_list_projects(
         Ok(projects) => projects,
         Err(response) => return response,
     };
+    let dirty_projects = super::dirty_project_names(&catalog_projects).await;
     let projects = catalog_projects
         .iter()
         .filter(|project| project.enabled)
-        .map(public_project_summary)
+        .map(|project| public_project_summary(project, dirty_projects.contains(&project.name)))
         .collect();
 
     Json(PublicProjectListResponse {

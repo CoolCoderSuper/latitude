@@ -78,6 +78,33 @@ span {
   display: block;
 }
 
+strong {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-name {
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.git-dirty {
+  flex: none;
+  margin: 0;
+  border: 1px solid #c58a0b;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: #795300;
+  background: #fff7d6;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 span {
   margin-top: 4px;
   color: #64748b;
@@ -113,4 +140,10 @@ span {
 
 :root[data-latitude-theme="dark"] .back-link:hover {
   background: transparent;
+}
+
+:root[data-latitude-theme="dark"] .git-dirty {
+  border-color: #a8791b;
+  color: #f2cf72;
+  background: #342b16;
 }

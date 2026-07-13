@@ -65,6 +65,60 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
     }
 }
 
+/// Returns the version of a text file at HEAD. New, untracked files use an
+/// empty baseline, while files outside a Git worktree do not get a baseline.
+pub(in crate::server) async fn file_baseline(project_dir: &Path, file: &Path) -> Option<String> {
+    let repo_dir = git_worktree_root(project_dir).await.ok()?;
+    let repo_dir = fs::canonicalize(repo_dir).await.ok()?;
+    let canonical_file = fs::canonicalize(file).await.ok()?;
+    let relative = canonical_file.strip_prefix(&repo_dir).ok()?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+
+    let tracked = run_git_command(
+        &repo_dir,
+        &["ls-files", "--error-unmatch", "--", relative.as_str()],
+        &[0],
+    )
+    .await
+    .is_ok();
+
+    if tracked {
+        let object = format!("HEAD:{relative}");
+        return match run_git_command(&repo_dir, &["show", object.as_str()], &[0]).await {
+            Ok(output) => String::from_utf8(output.stdout).ok(),
+            // A file added to the index has no HEAD object yet.
+            Err(_) => Some(String::new()),
+        };
+    }
+
+    let untracked = run_git_command(
+        &repo_dir,
+        &[
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            relative.as_str(),
+        ],
+        &[0],
+    )
+    .await
+    .ok()
+    .is_some_and(|output| !output.stdout.is_empty());
+
+    untracked.then(String::new)
+}
+
+pub(in crate::server) async fn project_is_dirty(project_dir: &Path) -> bool {
+    run_git_command(
+        project_dir,
+        &["status", "--porcelain=v1", "--untracked-files=normal"],
+        &[0],
+    )
+    .await
+    .is_ok_and(|output| !output.stdout.is_empty())
+}
+
 async fn collect_git_file_changes(repo_dir: &Path) -> Result<Vec<GitFileChange>, String> {
     let output = run_git_command(
         repo_dir,
@@ -283,4 +337,57 @@ fn diff_git_line_path(line: &str) -> Option<String> {
     let rest = line.strip_prefix("diff --git ")?;
     let (_, after_b) = rest.split_once(" b/")?;
     Some(after_b.trim_matches('"').to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs as std_fs, process::Command, time::SystemTime};
+
+    use super::{Path, file_baseline, project_is_dirty};
+
+    fn git(directory: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(directory)
+            .status()
+            .expect("git should run");
+        assert!(status.success(), "git {args:?} should succeed");
+    }
+
+    #[tokio::test]
+    async fn reads_head_content_and_uses_empty_baseline_for_untracked_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "latitude-file-baseline-{}",
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std_fs::create_dir_all(&directory).unwrap();
+        git(&directory, &["init", "--quiet"]);
+        git(&directory, &["config", "user.name", "Latitude Tests"]);
+        git(
+            &directory,
+            &["config", "user.email", "latitude@example.invalid"],
+        );
+        std_fs::write(directory.join("tracked.txt"), "before\n").unwrap();
+        git(&directory, &["add", "tracked.txt"]);
+        git(&directory, &["commit", "--quiet", "-m", "initial"]);
+        assert!(!project_is_dirty(&directory).await);
+
+        std_fs::write(directory.join("tracked.txt"), "after\n").unwrap();
+        std_fs::write(directory.join("new.txt"), "new\n").unwrap();
+        assert!(project_is_dirty(&directory).await);
+
+        assert_eq!(
+            file_baseline(&directory, &directory.join("tracked.txt")).await,
+            Some("before\n".to_string())
+        );
+        assert_eq!(
+            file_baseline(&directory, &directory.join("new.txt")).await,
+            Some(String::new())
+        );
+
+        std_fs::remove_dir_all(directory).unwrap();
+    }
 }

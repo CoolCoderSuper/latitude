@@ -994,10 +994,11 @@ async fn serve_server_home(
             );
         }
     };
+    let dirty_projects = super::dirty_project_names(&projects).await;
 
     html_response(
         req.method(),
-        render_server_home(config, &projects, device_hostname),
+        render_server_home(config, &projects, &dirty_projects, device_hostname),
     )
 }
 
