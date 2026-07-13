@@ -118,7 +118,11 @@ pub(super) fn render_project_files(project: &ProjectConfig, device_hostname: &st
                     div class="file-resizer" data-file-resizer role="separator" aria-orientation="vertical" aria-label="Resize file explorer" tabindex="0" {}
                     section class="file-main" {
                         span class="visually-hidden" data-file-title { "Select a file to preview" }
-                        div class="file-actions" data-file-actions hidden { span data-save-state {} button type="button" data-save disabled { "Save" } }
+                        div class="file-actions" data-file-actions hidden {
+                            span data-save-state {}
+                            button class="mode-toggle" type="button" data-vim-toggle aria-pressed="false" title="Enable Vim keybindings" { "Vim" }
+                            button type="button" data-save disabled { "Save" }
+                        }
                         div class="file-preview" data-file-preview {
                             div class="file-empty" { "Choose a file from the explorer." }
                         }

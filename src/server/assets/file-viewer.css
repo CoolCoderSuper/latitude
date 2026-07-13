@@ -55,6 +55,8 @@ html, body { margin: 0; height: 100%; }
 .file-actions span { color: var(--files-muted); font-size: .82rem; font-weight: 700; }
 .file-actions button { min-height: 36px; border: 1px solid var(--files-accent); border-radius: 8px; padding: 0 14px; color: #fff; background: var(--files-accent); font: inherit; font-size: .84rem; font-weight: 900; cursor: pointer; }
 .file-actions button:disabled { border-color: var(--files-border); color: var(--files-muted); background: var(--files-subtle); cursor: default; }
+.file-actions .mode-toggle { color: var(--files-accent); background: var(--files-panel); }
+.file-actions .mode-toggle[aria-pressed="true"] { color: #fff; background: var(--files-accent); }
 
 .file-workspace { --file-sidebar-width: 280px; display: grid; grid-template-columns: var(--file-sidebar-width) 5px minmax(0, 1fr); min-height: 0; overflow: hidden; border: 1px solid var(--files-strong-border); border-radius: 8px; background: var(--files-panel); }
 .file-sidebar { overflow: auto; background: var(--files-panel); }
@@ -118,6 +120,8 @@ html, body { margin: 0; height: 100%; }
 }
 :root[data-latitude-theme="dark"] .file-actions button { color: #061210; }
 :root[data-latitude-theme="dark"] .file-actions button:disabled { color: var(--files-muted); }
+:root[data-latitude-theme="dark"] .file-actions .mode-toggle { color: var(--files-accent); background: var(--files-panel); }
+:root[data-latitude-theme="dark"] .file-actions .mode-toggle[aria-pressed="true"] { color: #061210; background: var(--files-accent); }
 :root[data-latitude-theme="dark"] .file-error { color: #fecdd3; }
 :root[data-latitude-theme="dark"] .tree-row.active { color: #061210; }
 :root[data-latitude-theme="dark"] .tok-keyword { color: #c4b5fd; }
