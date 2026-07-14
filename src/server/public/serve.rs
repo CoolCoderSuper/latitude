@@ -112,7 +112,7 @@ pub(in crate::server) async fn public_entry(
         ..
     } = public_path
     else {
-        return serve_project_home(req, &project, &device_hostname).await;
+        return serve_project_home(req, &project, config.t3code.enabled, &device_hostname).await;
     };
 
     if app_mount == DIFF_ROUTE_SEGMENT {
@@ -760,6 +760,7 @@ fn static_document_media_type(index_file: &str) -> Option<String> {
 async fn serve_project_home(
     req: Request<Body>,
     project: &ProjectConfig,
+    t3code_enabled: bool,
     device_hostname: &str,
 ) -> Response<Body> {
     if req.method() != Method::GET && req.method() != Method::HEAD {
@@ -772,7 +773,7 @@ async fn serve_project_home(
     let git_status = super::super::git::collect_project_git_status(&project.project_dir).await;
     html_response(
         req.method(),
-        render_project_home(project, &git_status, device_hostname),
+        render_project_home(project, &git_status, t3code_enabled, device_hostname),
     )
 }
 

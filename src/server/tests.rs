@@ -14,7 +14,7 @@ use crate::{
     config::{
         ApplicationConfig, ApplicationTarget, BootConfig, CatalogSeed, DeploymentShareConfig,
         DesktopConfig, DesktopMode, PageFormat, ProjectConfig, SeedApplicationConfig,
-        SeedApplicationTarget, SeedProjectConfig, decode_page_binary_content,
+        SeedApplicationTarget, SeedProjectConfig, T3CodeConfig, decode_page_binary_content,
         encode_page_binary_content,
     },
     desktop::DesktopInfoResponse,
@@ -734,6 +734,7 @@ fn renders_project_home_with_enabled_deployments() {
             ],
         },
         &GitStatusSummary::default(),
+        true,
         TEST_HOSTNAME,
     );
 
@@ -744,6 +745,10 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("Code changes"));
     assert!(rendered.contains("href=\"/demo/_terminal\""));
     assert!(rendered.contains("Run commands in the project directory"));
+    assert!(
+        rendered.contains("href=\"/__latitude/t3code/demo\" target=\"_blank\" rel=\"noopener\"")
+    );
+    assert!(rendered.contains("Open in T3 Code"));
     assert!(rendered.contains("href=\"/demo/website\""));
     assert!(rendered.contains("Static website"));
     assert!(rendered.contains("href=\"/demo/report\""));
@@ -1856,6 +1861,26 @@ fn renders_server_home_with_enabled_desktop() {
     assert!(rendered.contains("href=\"/_desktop\""));
     assert!(rendered.contains("Desktop"));
     assert!(rendered.contains("View the desktop over VNC"));
+}
+
+#[test]
+fn renders_server_home_with_t3code_link() {
+    let rendered = render_server_home(
+        &BootConfig {
+            t3code: T3CodeConfig {
+                enabled: true,
+                ..T3CodeConfig::default()
+            },
+            ..BootConfig::default()
+        },
+        &[],
+        &HashMap::new(),
+        TEST_HOSTNAME,
+    );
+
+    assert!(rendered.contains("href=\"/__latitude/t3code\" target=\"_blank\" rel=\"noopener\""));
+    assert!(rendered.contains("Open T3 Code"));
+    assert!(rendered.contains("Open the coding agent workspace"));
 }
 
 #[test]

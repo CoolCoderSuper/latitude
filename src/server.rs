@@ -12,6 +12,7 @@ mod presentation;
 mod public;
 mod render;
 mod response;
+mod t3code;
 mod terminal_api;
 
 #[cfg(test)]
@@ -64,6 +65,7 @@ use public::{
     public_entry, public_root_terminal_ws, public_terminal_ws, public_ui_create_share,
     public_ui_delete_share, public_ui_get_shares,
 };
+use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
 
 pub async fn run(state: AppState) -> anyhow::Result<()> {
     let config = state.config_snapshot().await;
@@ -72,19 +74,33 @@ pub async fn run(state: AppState) -> anyhow::Result<()> {
 
     let public_listener = TcpListener::bind(&public_bind).await?;
     let command_listener = TcpListener::bind(&command_bind).await?;
+    let gateway_listener = if config.t3code.enabled {
+        match config.t3code.gateway_bind.as_deref() {
+            Some(bind) => Some((bind.to_string(), TcpListener::bind(bind).await?)),
+            None => None,
+        }
+    } else {
+        None
+    };
 
     info!(bind = %public_bind, "public proxy listening");
     info!(bind = %command_bind, "command API listening");
 
     let public_router = public_router(state.clone());
-    let command_router = command_router(state);
+    let command_router = command_router(state.clone());
 
-    tokio::select! {
-        result = axum::serve(public_listener, public_router) => {
-            result?;
+    if let Some((gateway_bind, gateway_listener)) = gateway_listener {
+        info!(bind = %gateway_bind, "authenticated T3 Code gateway listening");
+        let gateway_router = t3code_gateway_router(state);
+        tokio::select! {
+            result = axum::serve(public_listener, public_router) => { result?; }
+            result = axum::serve(command_listener, command_router) => { result?; }
+            result = axum::serve(gateway_listener, gateway_router) => { result?; }
         }
-        result = axum::serve(command_listener, command_router) => {
-            result?;
+    } else {
+        tokio::select! {
+            result = axum::serve(public_listener, public_router) => { result?; }
+            result = axum::serve(command_listener, command_router) => { result?; }
         }
     }
 
@@ -95,6 +111,8 @@ fn public_router(state: AppState) -> Router {
     Router::new()
         .route(&format!("{ASSET_BASE_PATH}/{{name}}"), get(public_asset))
         .route(LOGIN_PATH, get(get_public_login).post(post_public_login))
+        .route("/__latitude/t3code", get(open_t3code))
+        .route("/__latitude/t3code/{project}", get(open_project_in_t3code))
         .route(
             PUBLIC_API_SESSION_PATH,
             get(public_api_session).post(public_api_login),

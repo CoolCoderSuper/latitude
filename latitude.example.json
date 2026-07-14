@@ -13,5 +13,15 @@
     "vnc_port": 5900,
     "view_only": true,
     "allow_non_loopback": false
+  },
+  "t3code": {
+    "enabled": false,
+    "base_url": "auto",
+    "server_url": "http://127.0.0.1:3773",
+    "gateway_bind": "0.0.0.0:5598",
+    "command": "t3",
+    "command_args": [],
+    "base_dir": null,
+    "start_if_needed": false
   }
 }

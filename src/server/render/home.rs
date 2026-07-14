@@ -15,6 +15,7 @@ use super::super::{
 pub(in crate::server) fn render_project_home(
     project: &ProjectConfig,
     git_status: &GitStatusSummary,
+    t3code_enabled: bool,
     device_hostname: &str,
 ) -> String {
     let page_title = format!("{} - Latitude Project", project.name);
@@ -40,6 +41,12 @@ pub(in crate::server) fn render_project_home(
                     (tool_link(&project.name, FILES_ROUTE_SEGMENT, "Files", "Browse, preview, and edit project files"))
                     (code_changes_tool_link(&project.name, git_status))
                     (tool_link(&project.name, TERMINAL_ROUTE_SEGMENT, "Terminal", "Run commands in the project directory"))
+                    @if t3code_enabled {
+                        li { a href=(format!("/__latitude/t3code/{}", project.name)) target="_blank" rel="noopener" {
+                            strong { "Open in T3 Code" }
+                            span { "Start a coding agent in this repository" }
+                        } }
+                    }
                     @for deployment in enabled_deployments {
                         li class="deployment-item" {
                             a class="deployment-link" href=(format!("/{}/{}", project.name, deployment.name)) {
@@ -111,6 +118,12 @@ pub(in crate::server) fn render_server_home(
                         strong { "Root Terminal" }
                         span { "Run commands in your user directory" }
                     } }
+                    @if config.t3code.enabled {
+                        li { a href="/__latitude/t3code" target="_blank" rel="noopener" {
+                            strong { "Open T3 Code" }
+                            span { "Open the coding agent workspace" }
+                        } }
+                    }
                     @for project in enabled_projects {
                         li { a href=(format!("/{}", project.name)) {
                             strong {

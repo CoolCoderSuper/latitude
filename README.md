@@ -33,6 +33,12 @@ On Windows, run `.\init-ultravnc.ps1` to prepare UltraVNC in portable mode under
 
 UltraVNC is GPL software. Keep its license and source-offer materials with any redistributed helper bundle; Latitude's MIT source stays separate from the helper process.
 
+## T3 Code
+
+Enable `t3code` in the boot config to add an **Open in T3 Code** action to every project. An authenticated click connects to the configured T3 Code server, registers the repository, creates a five-minute one-time pairing credential, and opens a new T3 Code draft for that project. Latitude only starts T3 Code when `start_if_needed` is explicitly enabled.
+
+For access from another computer or a VM, configure `gateway_bind` (for example `0.0.0.0:5598`) and set `base_url` to `auto`. Latitude then exposes the existing loopback T3 server through a separate password-protected HTTP/WebSocket listener. `auto` keeps the hostname used to reach Latitude and substitutes the gateway port, so the same config works through `localhost`, a LAN hostname, or a VM address. Expose or tunnel the gateway port alongside the main Latitude port. If TLS or port mapping changes the public gateway URL, set `base_url` to that explicit URL instead.
+
 ## Agent Setup
 
 Agents can configure Latitude for you.

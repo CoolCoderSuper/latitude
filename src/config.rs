@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -29,6 +29,8 @@ pub struct BootConfig {
     pub data_dir: Option<PathBuf>,
     #[serde(default)]
     pub desktop: DesktopConfig,
+    #[serde(default)]
+    pub t3code: T3CodeConfig,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -57,6 +59,8 @@ struct ConfigFile {
     #[serde(default)]
     desktop: DesktopConfig,
     #[serde(default)]
+    t3code: T3CodeConfig,
+    #[serde(default)]
     share_links: Vec<DeploymentShareConfig>,
     #[serde(default)]
     projects: Vec<SeedProjectConfig>,
@@ -83,6 +87,27 @@ pub struct DesktopConfig {
     pub view_only: bool,
     #[serde(default)]
     pub allow_non_loopback: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct T3CodeConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_t3code_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_t3code_base_url")]
+    pub server_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_bind: Option<String>,
+    #[serde(default = "default_t3code_command")]
+    pub command: PathBuf,
+    #[serde(default)]
+    pub command_args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub start_if_needed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -231,6 +256,7 @@ impl Default for BootConfig {
             public_password: default_public_password(),
             data_dir: None,
             desktop: DesktopConfig::default(),
+            t3code: T3CodeConfig::default(),
         }
     }
 }
@@ -249,6 +275,7 @@ impl From<BootConfig> for ConfigFile {
             public_password: config.public_password,
             data_dir: config.data_dir,
             desktop: config.desktop,
+            t3code: config.t3code,
             share_links: Vec::new(),
             projects: Vec::new(),
         }
@@ -264,6 +291,7 @@ impl ConfigFile {
                 public_password: self.public_password,
                 data_dir: self.data_dir,
                 desktop: self.desktop,
+                t3code: self.t3code,
             },
             catalog_seed: CatalogSeed {
                 share_links: self.share_links,
@@ -339,6 +367,21 @@ impl Default for DesktopConfig {
             vnc_port: default_desktop_vnc_port(),
             view_only: true,
             allow_non_loopback: false,
+        }
+    }
+}
+
+impl Default for T3CodeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_t3code_base_url(),
+            server_url: default_t3code_base_url(),
+            gateway_bind: None,
+            command: default_t3code_command(),
+            command_args: Vec::new(),
+            base_dir: None,
+            start_if_needed: false,
         }
     }
 }
@@ -422,6 +465,7 @@ impl BootConfig {
         }
 
         self.desktop.validate()?;
+        self.t3code.validate()?;
 
         if self
             .data_dir
@@ -506,6 +550,81 @@ impl DesktopConfig {
             ));
         }
 
+        Ok(())
+    }
+}
+
+impl T3CodeConfig {
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.base_url == "auto" {
+            if self.gateway_bind.is_none() {
+                return Err(ConfigError::Invalid(
+                    "t3code base_url may be 'auto' only when gateway_bind is configured"
+                        .to_string(),
+                ));
+            }
+        } else {
+            let base_url = Url::parse(&self.base_url).map_err(|error| {
+                ConfigError::Invalid(format!("t3code base_url is not a valid URL: {error}"))
+            })?;
+            if !matches!(base_url.scheme(), "http" | "https") || base_url.host_str().is_none() {
+                return Err(ConfigError::Invalid(
+                    "t3code base_url must be 'auto' or an absolute http or https URL".to_string(),
+                ));
+            }
+        }
+        if let Some(gateway_bind) = &self.gateway_bind
+            && gateway_bind.parse::<std::net::SocketAddr>().is_err()
+        {
+            return Err(ConfigError::Invalid(
+                "t3code gateway_bind must be a socket address such as 0.0.0.0:5598".to_string(),
+            ));
+        }
+        let server_url = Url::parse(&self.server_url).map_err(|error| {
+            ConfigError::Invalid(format!("t3code server_url is not a valid URL: {error}"))
+        })?;
+        if server_url.scheme() != "http" || server_url.host_str().is_none() {
+            return Err(ConfigError::Invalid(
+                "t3code server_url must be an absolute http URL".to_string(),
+            ));
+        }
+        if self.start_if_needed && server_url.port_or_known_default().is_none() {
+            return Err(ConfigError::Invalid(
+                "t3code server_url must include a usable port when start_if_needed is enabled"
+                    .to_string(),
+            ));
+        }
+        if self.start_if_needed
+            && !server_url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<IpAddr>()
+                        .is_ok_and(|address| address.is_loopback())
+            })
+        {
+            return Err(ConfigError::Invalid(
+                "t3code server_url must use a loopback host when start_if_needed is enabled"
+                    .to_string(),
+            ));
+        }
+        if self.command.as_os_str().is_empty() {
+            return Err(ConfigError::Invalid(
+                "t3code command must not be empty when the integration is enabled".to_string(),
+            ));
+        }
+        if self
+            .base_dir
+            .as_deref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            return Err(ConfigError::Invalid(
+                "t3code base_dir must not be empty when configured".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -847,6 +966,14 @@ fn default_desktop_vnc_port() -> u16 {
     5900
 }
 
+fn default_t3code_base_url() -> String {
+    "http://127.0.0.1:3773".to_string()
+}
+
+fn default_t3code_command() -> PathBuf {
+    PathBuf::from("t3")
+}
+
 fn default_index_file() -> String {
     "index.html".to_string()
 }
@@ -965,6 +1092,35 @@ mod tests {
         };
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_automatic_t3code_gateway_url() {
+        let config = BootConfig {
+            t3code: T3CodeConfig {
+                enabled: true,
+                base_url: "auto".to_string(),
+                gateway_bind: Some("0.0.0.0:5598".to_string()),
+                ..T3CodeConfig::default()
+            },
+            ..BootConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_automatic_t3code_url_without_gateway() {
+        let config = BootConfig {
+            t3code: T3CodeConfig {
+                enabled: true,
+                base_url: "auto".to_string(),
+                ..T3CodeConfig::default()
+            },
+            ..BootConfig::default()
+        };
+
+        assert!(config.validate().is_err());
     }
 
     #[test]
