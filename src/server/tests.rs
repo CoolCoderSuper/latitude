@@ -1509,6 +1509,7 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-desktop-workspace"));
     assert!(rendered.contains("data-desktop-screens"));
     assert!(rendered.contains("data-desktop-resolution"));
+    assert!(!rendered.contains("data-desktop-clipboard"));
     assert!(rendered.contains("data-desktop-scale"));
     assert!(rendered.contains("data-desktop-fullscreen"));
     assert!(rendered.contains("data-action-path=\"/_desktop\""));

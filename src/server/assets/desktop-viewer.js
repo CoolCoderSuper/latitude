@@ -29,6 +29,10 @@ if (workspace) {
   let configuredScreens = [];
   let resolutionOptions = [];
   let resolutionChanging = false;
+  let lastSentClipboardText = null;
+  let interceptedPasteKey = false;
+  let suppressPasteKeyUp = false;
+  let pasteFocusTarget = null;
 
   const setStatus = (message, isError = false) => {
     if (!status) {
@@ -37,6 +41,67 @@ if (workspace) {
 
     status.textContent = message;
     status.classList.toggle('error', Boolean(isError));
+  };
+
+  const writeLocalClipboard = async (text) => {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+
+    const activeElement = document.activeElement;
+    const bridge = document.createElement('textarea');
+    bridge.className = 'desktop-clipboard-bridge';
+    bridge.tabIndex = -1;
+    bridge.setAttribute('aria-hidden', 'true');
+    bridge.value = text;
+    document.body.appendChild(bridge);
+    bridge.focus({ preventScroll: true });
+    bridge.select();
+    bridge.setSelectionRange(0, bridge.value.length);
+    const copied = Boolean(document.execCommand?.('copy'));
+    bridge.remove();
+    activeElement?.focus?.({ preventScroll: true });
+    if (!copied) {
+      throw new Error('Clipboard access is unavailable; select and copy the text manually.');
+    }
+  };
+
+  const sendRemoteClipboard = (text) => {
+    if (viewOnly || !rfb || typeof rfb.clipboardPasteFrom !== 'function') {
+      return false;
+    }
+
+    rfb.clipboardPasteFrom(text);
+    lastSentClipboardText = text;
+    return true;
+  };
+
+  const sendRemotePasteShortcut = () => {
+    if (viewOnly || !rfb || typeof rfb.sendKey !== 'function') {
+      return;
+    }
+
+    rfb.sendKey(0xffe3, 'ControlLeft', true);
+    rfb.sendKey(0x0076, 'KeyV', true);
+    rfb.sendKey(0x0076, 'KeyV', false);
+    rfb.sendKey(0xffe3, 'ControlLeft', false);
+  };
+
+  const syncLocalClipboardToRemote = async () => {
+    if (viewOnly || !rfb || !navigator.clipboard?.readText) {
+      return;
+    }
+
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text !== lastSentClipboardText) {
+        sendRemoteClipboard(text);
+      }
+    } catch (_) {
+      // Browsers can reject background clipboard reads. A paste event or the
+      // explicit clipboard panel remains available in that case.
+    }
   };
 
   const buildSocketUrl = () => {
@@ -728,6 +793,68 @@ if (workspace) {
     applyResolution(parseResolutionValue(resolutionSelect.value));
   });
 
+  document.addEventListener('paste', (event) => {
+    if (viewOnly) {
+      return;
+    }
+
+    const text = event.clipboardData?.getData('text/plain');
+    if (typeof text !== 'string') {
+      return;
+    }
+
+    try {
+      if (sendRemoteClipboard(text)) {
+        if (interceptedPasteKey) {
+          event.preventDefault();
+          pasteFocusTarget?.focus?.({ preventScroll: true });
+          window.setTimeout(sendRemotePasteShortcut, 25);
+        }
+      }
+    } catch (_) {}
+    interceptedPasteKey = false;
+    pasteFocusTarget = null;
+  }, true);
+
+  window.addEventListener('keydown', (event) => {
+    const activeElement = document.activeElement;
+    const viewerHasFocus = Boolean(target && (activeElement === target || target.contains(activeElement)));
+    if (
+      viewOnly ||
+      !viewerHasFocus ||
+      event.altKey ||
+      (!event.ctrlKey && !event.metaKey) ||
+      event.key.toLowerCase() !== 'v'
+    ) {
+      return;
+    }
+
+    interceptedPasteKey = true;
+    suppressPasteKeyUp = true;
+    pasteFocusTarget = activeElement;
+    const bridge = document.createElement('textarea');
+    bridge.className = 'desktop-clipboard-bridge';
+    bridge.tabIndex = -1;
+    bridge.setAttribute('aria-hidden', 'true');
+    bridge.addEventListener('paste', () => window.setTimeout(() => bridge.remove(), 0), { once: true });
+    document.body.appendChild(bridge);
+    bridge.focus({ preventScroll: true });
+    event.stopImmediatePropagation();
+    window.setTimeout(() => {
+      bridge.remove();
+      interceptedPasteKey = false;
+      pasteFocusTarget = null;
+    }, 1000);
+  }, true);
+
+  window.addEventListener('keyup', (event) => {
+    if (suppressPasteKeyUp && event.key.toLowerCase() === 'v') {
+      suppressPasteKeyUp = false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+
   scaleButton?.addEventListener('click', () => {
     autoScale = !autoScale;
     lastAppliedViewport = '';
@@ -770,6 +897,7 @@ if (workspace) {
       setStatus('Connected');
       startScreenRefresh();
       scheduleFullFramebufferRefresh();
+      syncLocalClipboardToRemote();
       window.setTimeout(() => {
         if (rfb === nextRfb) {
           setStatus('');
@@ -783,6 +911,7 @@ if (workspace) {
       }
 
       rfb = null;
+      lastSentClipboardText = null;
       stopScreenRefresh();
       if (event.detail.clean) {
         setStatus('Disconnected', true);
@@ -798,6 +927,12 @@ if (workspace) {
 
     nextRfb.addEventListener('securityfailure', (event) => {
       setStatus(event.detail.reason || 'Security failure', true);
+    });
+
+    nextRfb.addEventListener('clipboard', (event) => {
+      const text = event.detail?.text || '';
+      lastSentClipboardText = text;
+      writeLocalClipboard(text).catch(() => {});
     });
   };
 
@@ -849,11 +984,15 @@ if (workspace) {
     setStatus('Authenticating');
   });
 
-  window.addEventListener('focus', () => reconnect(false));
+  window.addEventListener('focus', () => {
+    reconnect(false);
+    syncLocalClipboardToRemote();
+  });
   window.addEventListener('online', () => reconnect(true));
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       reconnect(false);
+      syncLocalClipboardToRemote();
     }
   });
   window.addEventListener('beforeunload', () => {
