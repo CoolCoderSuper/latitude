@@ -32,6 +32,16 @@ export type ProjectSummary = {
   git_deletions: number;
   git_ahead: number;
   git_behind: number;
+  worktree: WorktreeSummary | null;
+};
+
+export type WorktreeSummary = {
+  repository: string;
+  path: string;
+  branch: string | null;
+  head: string;
+  discovered: boolean;
+  archived: boolean;
 };
 
 export type ProjectListResponse = {

@@ -1,16 +1,20 @@
 import {
+  Archive,
+  ArchiveRestore,
   ChevronRight,
   FolderOpen,
+  GitBranch,
   Monitor,
   Server,
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
 import { useIsFocused } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo } from 'react';
-import { AppState, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Alert, AppState, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
   EmptyState,
+  AppButton,
   IconButton,
   InlineNotice,
   LoadingBlock,
@@ -34,6 +38,7 @@ export function HomeScreen({
   onOpenRootDesktop,
   onOpenProject,
   onOpenRootTerminal,
+  onSetWorktreeArchived,
   onRefresh,
   onSwitchServer,
   projects,
@@ -49,6 +54,7 @@ export function HomeScreen({
   onOpenRootDesktop: () => void;
   onOpenProject: (name: string) => void;
   onOpenRootTerminal: () => void;
+  onSetWorktreeArchived: (name: string, archived: boolean) => void | Promise<void>;
   onRefresh: (fetchRemote?: boolean, quiet?: boolean) => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
   projects: ProjectSummary[];
@@ -59,6 +65,17 @@ export function HomeScreen({
   const { colors, styles } = useTheme();
   const isFocused = useIsFocused();
   const refreshControl = useRefreshControl(loading, onRefresh);
+  const [showArchived, setShowArchived] = useState(false);
+  const activeProjects = projects.filter(
+    (project) => !project.worktree?.archived,
+  );
+  const archivedProjects = projects.filter(
+    (project) => project.worktree?.archived,
+  );
+  const activeProjectGroups = useMemo(
+    () => groupProjects(activeProjects, projects),
+    [activeProjects, projects],
+  );
 
   useEffect(() => {
     if (!isFocused) return;
@@ -224,61 +241,205 @@ export function HomeScreen({
         {error && <InlineNotice tone="error" text={error} />}
         {loading && projects.length === 0 ? (
           <LoadingBlock label="Loading projects" />
-        ) : projects.length === 0 ? (
+        ) : activeProjects.length === 0 && archivedProjects.length === 0 ? (
           <EmptyState title="No enabled projects" />
         ) : (
           <View style={styles.list}>
-            {projects.map((project) => (
-              <Pressable
-                key={project.name}
-                onPress={() => onOpenProject(project.name)}
-                style={({ pressed }) => [
-                  styles.projectCard,
-                  pressed && styles.pressed,
-                ]}
-              >
-                <View style={styles.cardIcon}>
-                  <FolderOpen color={colors.accent} size={21} />
-                </View>
-                <View style={styles.cardBody}>
-                  <Text style={styles.cardTitle}>{project.name}</Text>
-                  <Text style={styles.cardMeta}>{project.summary}</Text>
-                </View>
-                {(project.git_dirty || project.git_ahead > 0 || project.git_behind > 0) && (
-                  <View
-                    accessibilityLabel="Git working tree and remote status"
-                    accessible
-                    style={styles.gitDirtyBadge}
-                  >
-                    {project.git_dirty && (
-                      <>
-                        {project.git_additions > 0 && (
-                          <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
-                        )}
-                        {project.git_deletions > 0 && (
-                          <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
-                        )}
-                        {project.git_additions === 0 && project.git_deletions === 0 && (
-                          <Text style={styles.gitAdditionsText}>changed</Text>
-                        )}
-                      </>
-                    )}
-                    {project.git_behind > 0 && (
-                      <Text style={styles.gitBehindText}>↓{project.git_behind}</Text>
-                    )}
-                    {project.git_ahead > 0 && (
-                      <Text style={styles.gitAheadText}>↑{project.git_ahead}</Text>
-                    )}
+            {activeProjectGroups.map((group) =>
+              group.grouped ? (
+                <View key={group.key} style={styles.worktreeGroup}>
+                  <View style={styles.worktreeGroupHeader}>
+                    <GitBranch color={colors.accent} size={18} />
+                    <Text style={styles.worktreeGroupTitle}>{group.label}</Text>
+                    <Text style={styles.worktreeGroupCount}>
+                      {group.projects.length} worktrees
+                    </Text>
                   </View>
-                )}
-                <ChevronRight color={colors.muted} size={20} />
-              </Pressable>
-            ))}
+                  <View style={styles.worktreeGroupList}>
+                    {group.projects.map((project) => (
+                      <ProjectCard
+                        key={project.name}
+                        project={project}
+                        onArchive={onSetWorktreeArchived}
+                        onOpen={onOpenProject}
+                      />
+                    ))}
+                  </View>
+                </View>
+              ) : (
+                <ProjectCard
+                  key={group.key}
+                  project={group.projects[0]}
+                  onArchive={onSetWorktreeArchived}
+                  onOpen={onOpenProject}
+                />
+              ),
+            )}
+            {archivedProjects.length > 0 && (
+              <AppButton
+                compact
+                icon={<Archive color={colors.text} size={16} />}
+                label={`${showArchived ? 'Hide' : 'Show'} archived (${archivedProjects.length})`}
+                onPress={() => setShowArchived((current) => !current)}
+                variant="secondary"
+              />
+            )}
+            {showArchived &&
+              archivedProjects.map((project) => (
+                <View key={project.name} style={styles.projectCard}>
+                  <View style={styles.cardIcon}>
+                    <Archive color={colors.muted} size={21} />
+                  </View>
+                  <View style={styles.cardBody}>
+                    <Text style={styles.cardTitle}>
+                      {project.worktree?.discovered
+                        ? (project.worktree.branch ?? project.name)
+                        : project.name}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.cardMeta}>
+                      {project.worktree?.path ?? project.summary}
+                    </Text>
+                  </View>
+                  <IconButton
+                    accessibilityLabel={`Restore ${project.worktree?.branch ?? project.name}`}
+                    icon={<ArchiveRestore color={colors.accent} size={18} />}
+                    onPress={() => void onSetWorktreeArchived(project.name, false)}
+                  />
+                </View>
+              ))}
           </View>
         )}
       </ScrollView>
     </View>
   );
+}
+
+function ProjectCard({
+  onArchive,
+  onOpen,
+  project,
+}: {
+  onArchive: (name: string, archived: boolean) => void | Promise<void>;
+  onOpen: (name: string) => void;
+  project: ProjectSummary;
+}) {
+  const { colors, styles } = useTheme();
+  const label = project.worktree?.discovered
+    ? (project.worktree.branch ?? project.name)
+    : project.name;
+
+  return (
+    <View style={styles.projectCard}>
+      <Pressable
+        onPress={() => onOpen(project.name)}
+        style={({ pressed }) => [
+          styles.projectOpen,
+          pressed && styles.pressed,
+        ]}
+      >
+        <View style={styles.cardIcon}>
+          <FolderOpen color={colors.accent} size={21} />
+        </View>
+        <View style={styles.cardBody}>
+          <Text style={styles.cardTitle}>{label}</Text>
+          <Text numberOfLines={1} style={styles.cardMeta}>
+            {project.worktree?.discovered
+              ? project.worktree.path
+              : project.summary}
+          </Text>
+        </View>
+        {(project.git_dirty || project.git_ahead > 0 || project.git_behind > 0) && (
+          <View
+            accessibilityLabel="Git working tree and remote status"
+            accessible
+            style={styles.gitDirtyBadge}
+          >
+            {project.git_dirty && (
+              <>
+                {project.git_additions > 0 && (
+                  <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
+                )}
+                {project.git_deletions > 0 && (
+                  <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
+                )}
+                {project.git_additions === 0 && project.git_deletions === 0 && (
+                  <Text style={styles.gitAdditionsText}>changed</Text>
+                )}
+              </>
+            )}
+            {project.git_behind > 0 && (
+              <Text style={styles.gitBehindText}>↓{project.git_behind}</Text>
+            )}
+            {project.git_ahead > 0 && (
+              <Text style={styles.gitAheadText}>↑{project.git_ahead}</Text>
+            )}
+          </View>
+        )}
+        <ChevronRight color={colors.muted} size={20} />
+      </Pressable>
+      {project.worktree && (
+        <IconButton
+          accessibilityLabel={`Archive ${label}`}
+          icon={<Archive color={colors.muted} size={18} />}
+          onPress={() => {
+            Alert.alert(
+              'Archive worktree?',
+              `${label} will be hidden from the project list. Its files and Git branch will not be changed.`,
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Archive',
+                  onPress: () => void onArchive(project.name, true),
+                },
+              ],
+            );
+          }}
+        />
+      )}
+    </View>
+  );
+}
+
+type ProjectGroup = {
+  key: string;
+  label: string;
+  grouped: boolean;
+  projects: ProjectSummary[];
+};
+
+function groupProjects(
+  visibleProjects: ProjectSummary[],
+  allProjects: ProjectSummary[],
+): ProjectGroup[] {
+  const repositoryLabels = new Map<string, string>();
+  for (const project of allProjects) {
+    const repository = project.worktree?.repository;
+    if (!repository) continue;
+    if (!project.worktree?.discovered) {
+      repositoryLabels.set(repository, project.name);
+    }
+  }
+
+  const groups = new Map<string, ProjectGroup>();
+  for (const project of visibleProjects) {
+    const repository = project.worktree?.repository;
+    const key = repository ?? `project:${project.name}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        key,
+        label: repositoryLabels.get(key) ?? project.name,
+        grouped: false,
+        projects: [],
+      };
+      groups.set(key, group);
+    }
+    group.projects.push(project);
+  }
+  return [...groups.values()].map((group) => ({
+    ...group,
+    grouped: group.projects.length > 1,
+  }));
 }
 
 function serverLabel(session: SessionRecord): string {

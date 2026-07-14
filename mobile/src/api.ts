@@ -95,6 +95,17 @@ export class LatitudePublicApi {
     );
   }
 
+  async setWorktreeArchived(name: string, archived: boolean): Promise<void> {
+    await this.request(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(name)}/archive`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ archived }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  }
+
   async shares(): Promise<DeploymentShare[]> {
     return this.get<DeploymentShare[]>(`${PUBLIC_API_PREFIX}/shares`);
   }

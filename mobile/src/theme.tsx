@@ -415,6 +415,35 @@ function createStyles(colors: ThemeColors) {
   list: {
     gap: 10,
   },
+  worktreeGroup: {
+    gap: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: colors.panel,
+  },
+  worktreeGroupHeader: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 2,
+  },
+  worktreeGroupTitle: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  worktreeGroupCount: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  worktreeGroupList: {
+    gap: 8,
+  },
   projectCard: {
     minHeight: 76,
     flexDirection: 'row',
@@ -425,6 +454,14 @@ function createStyles(colors: ThemeColors) {
     borderRadius: 8,
     padding: 12,
     backgroundColor: colors.surface,
+  },
+  projectOpen: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   deploymentCard: {
     minHeight: 74,

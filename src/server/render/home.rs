@@ -1,6 +1,9 @@
 use maud::{Markup, html};
 
-use crate::config::{BootConfig, ProjectConfig};
+use crate::{
+    config::{BootConfig, ProjectConfig},
+    storage::WorktreeRecord,
+};
 
 use super::super::{
     assets::{HTMX_SCRIPT_SRC, PROJECT_HOME_SCRIPT_SRC, PROJECT_HOME_STYLE_HREF},
@@ -9,6 +12,7 @@ use super::super::{
     },
     git::GitStatusSummary,
     html as html_page,
+    paths::display_path,
     presentation::{deployment_home_label, deployment_page_title, project_summary},
 };
 
@@ -91,6 +95,7 @@ pub(in crate::server) fn render_server_home(
     config: &BootConfig,
     projects: &[ProjectConfig],
     git_statuses: &std::collections::HashMap<String, GitStatusSummary>,
+    worktrees: &[WorktreeRecord],
     device_hostname: &str,
 ) -> String {
     let enabled_projects = projects
@@ -98,6 +103,7 @@ pub(in crate::server) fn render_server_home(
         .filter(|project| project.enabled)
         .collect::<Vec<_>>();
     let no_enabled_projects = enabled_projects.is_empty();
+    let project_groups = group_projects(enabled_projects, worktrees);
 
     html_page::document(
         "Latitude Projects",
@@ -124,18 +130,22 @@ pub(in crate::server) fn render_server_home(
                             span { "Open the coding agent workspace" }
                         } }
                     }
-                    @for project in enabled_projects {
-                        li { a href=(format!("/{}", project.name)) {
-                            strong {
-                                span class="project-name" { (&project.name) }
-                                span data-project-git-status=(&project.name) {
-                                    @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
-                                        (git_status_badge(status))
+                    @for group in project_groups {
+                        @if group.projects.len() > 1 {
+                            li class="worktree-group" {
+                                div class="worktree-group-header" {
+                                    strong { (&group.label) }
+                                    span { (group.projects.len()) " worktrees" }
+                                }
+                                ul class="worktree-list" {
+                                    @for (project, worktree) in group.projects {
+                                        (server_project_item(project, git_statuses, worktree))
                                     }
                                 }
                             }
-                            span { (project_summary(project)) }
-                        } }
+                        } @else if let Some((project, worktree)) = group.projects.first() {
+                            (server_project_item(project, git_statuses, *worktree))
+                        }
                     }
                     @if no_enabled_projects { li class="empty" { "No enabled projects yet." } }
                 }
@@ -143,6 +153,89 @@ pub(in crate::server) fn render_server_home(
             }
         },
     )
+}
+
+struct ServerProjectGroup<'a> {
+    label: String,
+    projects: Vec<(&'a ProjectConfig, Option<&'a WorktreeRecord>)>,
+}
+
+fn group_projects<'a>(
+    projects: Vec<&'a ProjectConfig>,
+    worktrees: &'a [WorktreeRecord],
+) -> Vec<ServerProjectGroup<'a>> {
+    let worktrees_by_project = worktrees
+        .iter()
+        .map(|worktree| (worktree.project_name.clone(), worktree))
+        .collect::<std::collections::HashMap<_, _>>();
+    let repository_labels = worktrees
+        .iter()
+        .filter(|worktree| !worktree.discovered)
+        .map(|worktree| {
+            (
+                worktree
+                    .common_git_dir
+                    .to_string_lossy()
+                    .to_ascii_lowercase(),
+                worktree.project_name.clone(),
+            )
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    let mut groups = Vec::<ServerProjectGroup<'a>>::new();
+    let mut indexes = std::collections::HashMap::<String, usize>::new();
+
+    for project in projects {
+        let worktree = worktrees_by_project.get(&project.name).copied();
+        let repository = worktree.map(|worktree| {
+            worktree
+                .common_git_dir
+                .to_string_lossy()
+                .to_ascii_lowercase()
+        });
+        let key = repository
+            .clone()
+            .unwrap_or_else(|| format!("project:{}", project.name));
+        if let Some(index) = indexes.get(&key).copied() {
+            groups[index].projects.push((project, worktree));
+            continue;
+        }
+        indexes.insert(key.clone(), groups.len());
+        groups.push(ServerProjectGroup {
+            label: repository_labels
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| project.name.clone()),
+            projects: vec![(project, worktree)],
+        });
+    }
+    groups
+}
+
+fn server_project_item(
+    project: &ProjectConfig,
+    git_statuses: &std::collections::HashMap<String, GitStatusSummary>,
+    worktree: Option<&WorktreeRecord>,
+) -> Markup {
+    let label = worktree
+        .filter(|worktree| worktree.discovered)
+        .and_then(|worktree| worktree.branch.as_deref())
+        .unwrap_or(&project.name);
+    let description = worktree
+        .filter(|worktree| worktree.discovered)
+        .map(|worktree| display_path(&worktree.worktree_dir))
+        .unwrap_or_else(|| project_summary(project));
+
+    html! { li class="project-item" { a href=(format!("/{}", project.name)) {
+        strong {
+            span class="project-name" { (label) }
+            span data-project-git-status=(&project.name) {
+                @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
+                    (git_status_badge(status))
+                }
+            }
+        }
+        span { (description) }
+    } } }
 }
 
 fn code_changes_tool_link(project: &str, status: &GitStatusSummary) -> Markup {

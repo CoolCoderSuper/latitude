@@ -19,7 +19,7 @@ use crate::{
     },
     desktop::DesktopInfoResponse,
     state::AppState,
-    storage::CatalogStore,
+    storage::{CatalogStore, WorktreeRecord},
 };
 
 use super::{
@@ -446,7 +446,13 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         );
     }
 
-    let rendered = render_server_home(&BootConfig::default(), &[], &HashMap::new(), TEST_HOSTNAME);
+    let rendered = render_server_home(
+        &BootConfig::default(),
+        &[],
+        &HashMap::new(),
+        &[],
+        TEST_HOSTNAME,
+    );
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
     assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js?v=2\""));
@@ -1824,6 +1830,7 @@ fn renders_server_home_with_enabled_projects() {
                 behind: 2,
             },
         )]),
+        &[],
         TEST_HOSTNAME,
     );
 
@@ -1845,6 +1852,61 @@ fn renders_server_home_with_enabled_projects() {
 }
 
 #[test]
+fn groups_linked_worktrees_on_server_home() {
+    let projects = vec![
+        ProjectConfig {
+            name: "latitude".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("C:/work/latitude"),
+            deployments: Vec::new(),
+        },
+        ProjectConfig {
+            name: "latitude--mobile-fix".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("C:/work/latitude-mobile-fix"),
+            deployments: Vec::new(),
+        },
+    ];
+    let common_git_dir = PathBuf::from("C:/work/latitude/.git");
+    let worktrees = vec![
+        WorktreeRecord {
+            project_name: "latitude".to_string(),
+            common_git_dir: common_git_dir.clone(),
+            worktree_dir: projects[0].project_dir.clone(),
+            branch: Some("master".to_string()),
+            head: "abc123".to_string(),
+            discovered: false,
+            archived: false,
+        },
+        WorktreeRecord {
+            project_name: "latitude--mobile-fix".to_string(),
+            common_git_dir,
+            worktree_dir: PathBuf::from(r"\\?\C:\work\latitude-mobile-fix"),
+            branch: Some("codex/mobile-fix".to_string()),
+            head: "def456".to_string(),
+            discovered: true,
+            archived: false,
+        },
+    ];
+
+    let rendered = render_server_home(
+        &BootConfig::default(),
+        &projects,
+        &HashMap::new(),
+        &worktrees,
+        TEST_HOSTNAME,
+    );
+
+    assert!(rendered.contains("class=\"worktree-group\""));
+    assert!(rendered.contains("<strong>latitude</strong>"));
+    assert!(rendered.contains("2 worktrees"));
+    assert!(rendered.contains("href=\"/latitude--mobile-fix\""));
+    assert!(rendered.contains("codex/mobile-fix"));
+    assert!(rendered.contains(r"C:\work\latitude-mobile-fix"));
+    assert!(!rendered.contains(r"\\?\C:\work\latitude-mobile-fix"));
+}
+
+#[test]
 fn renders_server_home_with_enabled_desktop() {
     let rendered = render_server_home(
         &BootConfig {
@@ -1856,6 +1918,7 @@ fn renders_server_home_with_enabled_desktop() {
         },
         &[],
         &HashMap::new(),
+        &[],
         TEST_HOSTNAME,
     );
 
@@ -1876,6 +1939,7 @@ fn renders_server_home_with_t3code_link() {
         },
         &[],
         &HashMap::new(),
+        &[],
         TEST_HOSTNAME,
     );
 

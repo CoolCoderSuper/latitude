@@ -34,7 +34,7 @@ use super::super::{
     desktop_api::execute_desktop_action_request,
     git::{
         collect_project_diff, collect_project_file_diff, collect_project_git_commit,
-        collect_project_git_history, handle_git_action_request,
+        collect_project_git_history, discover_worktrees, handle_git_action_request,
     },
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
@@ -1029,7 +1029,8 @@ async fn serve_server_home(
         );
     }
 
-    let projects = match state.catalog().list_projects().await {
+    discover_worktrees(state).await;
+    let mut projects = match state.catalog().list_projects().await {
         Ok(projects) => projects,
         Err(error) => {
             error!(%error, "project list failed");
@@ -1039,11 +1040,26 @@ async fn serve_server_home(
             );
         }
     };
+    let worktrees = state.catalog().list_worktrees().await.unwrap_or_default();
+    if !worktrees.is_empty() {
+        let archived = worktrees
+            .iter()
+            .filter(|worktree| worktree.archived)
+            .map(|worktree| worktree.project_name.clone())
+            .collect::<std::collections::HashSet<_>>();
+        projects.retain(|project| !archived.contains(&project.name));
+    }
     let git_statuses = super::project_git_statuses(&projects).await;
 
     html_response(
         req.method(),
-        render_server_home(config, &projects, &git_statuses, device_hostname),
+        render_server_home(
+            config,
+            &projects,
+            &git_statuses,
+            &worktrees,
+            device_hostname,
+        ),
     )
 }
 

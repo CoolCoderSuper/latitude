@@ -60,10 +60,10 @@ use public::{
     public_api_get_project_git_commit, public_api_get_project_git_history,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
     public_api_list_root_terminal_sessions, public_api_list_shares,
-    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_diff,
-    public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
-    public_entry, public_root_terminal_ws, public_terminal_ws, public_ui_create_share,
-    public_ui_delete_share, public_ui_get_shares,
+    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
+    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
+    public_api_session, public_entry, public_root_terminal_ws, public_terminal_ws,
+    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
 
@@ -149,6 +149,10 @@ fn public_router(state: AppState) -> Router {
             delete(public_api_delete_root_terminal_session),
         )
         .route(PUBLIC_API_PROJECT_PATH, get(public_api_get_project))
+        .route(
+            "/__latitude/api/projects/{project}/archive",
+            axum::routing::patch(public_api_patch_project_archive),
+        )
         .route(
             PUBLIC_API_PROJECT_DIFF_PATH,
             get(public_api_get_project_diff).patch(public_api_patch_project_diff),

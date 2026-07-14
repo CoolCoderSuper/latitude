@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use crate::config::{ApplicationConfig, ProjectConfig};
 use crate::desktop::{DesktopScreenResponse, detect_desktop_screens};
+use crate::storage::WorktreeRecord;
 
 use super::super::{
     constants::{
@@ -9,6 +10,7 @@ use super::super::{
         PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH, TERMINAL_ROUTE_SEGMENT,
     },
     git::GitStatusSummary,
+    paths::display_path,
     presentation::{
         deployment_home_label, deployment_kind, deployment_media_type, deployment_page_title,
         enabled_deployment_count, project_summary,
@@ -59,6 +61,17 @@ pub(in crate::server) struct PublicProjectSummary {
     pub(in crate::server) git_deletions: usize,
     pub(in crate::server) git_ahead: usize,
     pub(in crate::server) git_behind: usize,
+    pub(in crate::server) worktree: Option<PublicWorktreeSummary>,
+}
+
+#[derive(Debug, Serialize)]
+pub(in crate::server) struct PublicWorktreeSummary {
+    pub(in crate::server) repository: String,
+    pub(in crate::server) path: String,
+    pub(in crate::server) branch: Option<String>,
+    pub(in crate::server) head: String,
+    pub(in crate::server) discovered: bool,
+    pub(in crate::server) archived: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,6 +139,7 @@ pub(in crate::server) struct PublicDeploymentSummary {
 pub(in crate::server::public) fn public_project_summary(
     project: &ProjectConfig,
     git_status: &GitStatusSummary,
+    worktree: Option<&WorktreeRecord>,
 ) -> PublicProjectSummary {
     let deployment_count = enabled_deployment_count(project);
     PublicProjectSummary {
@@ -139,6 +153,14 @@ pub(in crate::server::public) fn public_project_summary(
         git_deletions: git_status.deletions,
         git_ahead: git_status.ahead,
         git_behind: git_status.behind,
+        worktree: worktree.map(|worktree| PublicWorktreeSummary {
+            repository: display_path(&worktree.common_git_dir),
+            path: display_path(&worktree.worktree_dir),
+            branch: worktree.branch.clone(),
+            head: worktree.head.clone(),
+            discovered: worktree.discovered,
+            archived: worktree.archived,
+        }),
     }
 }
 

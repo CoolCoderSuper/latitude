@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
+use std::collections::{HashMap, HashSet};
 use tracing::error;
 
 use crate::{
@@ -28,9 +29,9 @@ use super::{
         },
         git::{
             GitAction, PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
-            collect_project_git_history, collect_project_git_status, execute_git_action,
-            parse_public_git_action_payload, public_commit_response, public_diff_response,
-            public_history_response,
+            collect_project_git_history, collect_project_git_status, discover_worktrees,
+            execute_git_action, parse_public_git_action_payload, public_commit_response,
+            public_diff_response, public_history_response,
         },
         render::render_share_dialog_shell,
         response::{ApiError, json_error, plain_response},
@@ -374,13 +375,38 @@ pub(in crate::server) async fn public_api_list_projects(
         return public_api_auth_challenge();
     }
 
+    discover_worktrees(&state).await;
     let catalog_projects = match list_catalog_projects_or_response(&state).await {
         Ok(projects) => projects,
         Err(response) => return response,
     };
+    let worktrees = match state.catalog().list_worktrees().await {
+        Ok(worktrees) => worktrees,
+        Err(error) => {
+            error!(%error, "worktree metadata list failed");
+            Vec::new()
+        }
+    };
+    let worktrees_by_project = worktrees
+        .iter()
+        .map(|worktree| (worktree.project_name.as_str(), worktree))
+        .collect::<HashMap<_, _>>();
     if request_fetches_remote(&req) {
         let mut fetches = tokio::task::JoinSet::new();
+        let mut repositories = HashSet::new();
         for project in catalog_projects.iter().filter(|project| project.enabled) {
+            let repository = worktrees_by_project
+                .get(project.name.as_str())
+                .map(|worktree| {
+                    worktree
+                        .common_git_dir
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                })
+                .unwrap_or_else(|| project.project_dir.to_string_lossy().to_ascii_lowercase());
+            if !repositories.insert(repository) {
+                continue;
+            }
             let project_dir = project.project_dir.clone();
             fetches.spawn(async move {
                 let _ = execute_git_action(&project_dir, GitAction::Fetch).await;
@@ -394,7 +420,11 @@ pub(in crate::server) async fn public_api_list_projects(
         .filter(|project| project.enabled)
         .map(|project| {
             let status = git_statuses.get(&project.name).cloned().unwrap_or_default();
-            public_project_summary(project, &status)
+            public_project_summary(
+                project,
+                &status,
+                worktrees_by_project.get(project.name.as_str()).copied(),
+            )
         })
         .collect();
 
@@ -405,6 +435,48 @@ pub(in crate::server) async fn public_api_list_projects(
         projects,
     })
     .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+struct WorktreeArchivePayload {
+    archived: bool,
+}
+
+pub(in crate::server) async fn public_api_patch_project_archive(
+    AxumPath(project): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+    let body = match to_bytes(req.into_body(), MAX_LOGIN_PAYLOAD_BYTES).await {
+        Ok(body) => body,
+        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+    let payload: WorktreeArchivePayload = match serde_json::from_slice(&body) {
+        Ok(payload) => payload,
+        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+    match state
+        .catalog()
+        .set_worktree_archived(&project, payload.archived)
+        .await
+    {
+        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(false) => json_error(
+            StatusCode::NOT_FOUND,
+            format!("worktree project '{project}' was not found"),
+        ),
+        Err(error) => {
+            error!(%error, project = %project, "worktree archive update failed");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive state could not be updated",
+            )
+        }
+    }
 }
 
 pub(in crate::server) async fn public_api_get_project(

@@ -223,6 +223,27 @@ export function AppContent() {
     setSessions(await saveSessionOrder(nextSessions));
   }, []);
 
+  const handleSetWorktreeArchived = useCallback(
+    async (name: string, archived: boolean) => {
+      try {
+        await api.setWorktreeArchived(name, archived);
+        setProjects((current) =>
+          current.map((project) =>
+            project.name === name && project.worktree
+              ? {
+                  ...project,
+                  worktree: { ...project.worktree, archived },
+                }
+              : project,
+          ),
+        );
+      } catch (archiveError) {
+        setError(errorMessage(archiveError));
+      }
+    },
+    [api],
+  );
+
   if (booting) {
     return <Shell><LoadingScreen /></Shell>;
   }
@@ -271,6 +292,7 @@ export function AppContent() {
                 onManageServers={() => navigation.navigate('Servers')}
                 onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
                 onOpenProject={(name) => navigation.navigate('Project', { name })}
+                onSetWorktreeArchived={handleSetWorktreeArchived}
                 onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
                 onRefresh={loadProjects}
                 onSwitchServer={handleSwitchServer}
@@ -350,6 +372,7 @@ export function AppContent() {
                   onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
                   onOpenProject={(name) => navigation.navigate('Project', { name })}
                   onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
+                  onSetWorktreeArchived={handleSetWorktreeArchived}
                   onRefresh={loadProjects}
                   onSwitchServer={handleSwitchServer}
                 />

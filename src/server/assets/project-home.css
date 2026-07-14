@@ -50,6 +50,38 @@ li {
   background: #fff;
 }
 
+.worktree-group {
+  padding: 10px;
+  background: #f0f4f8;
+}
+
+.worktree-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 4px 10px;
+}
+
+.worktree-group-header strong {
+  font-size: 0.95rem;
+}
+
+.worktree-group-header span {
+  flex: none;
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.worktree-list {
+  gap: 8px;
+}
+
+.worktree-list .project-item {
+  background: #fff;
+}
+
 .deployment-item {
   display: flex;
   align-items: stretch;
@@ -417,6 +449,15 @@ span {
 :root[data-latitude-theme="dark"] li,
 :root[data-latitude-theme="dark"] .empty {
   border-color: #2f3a4a;
+  background: #151c28;
+}
+
+:root[data-latitude-theme="dark"] .worktree-group {
+  border-color: #2f3a4a;
+  background: #111824;
+}
+
+:root[data-latitude-theme="dark"] .worktree-list .project-item {
   background: #151c28;
 }
 
