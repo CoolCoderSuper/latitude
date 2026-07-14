@@ -1,7 +1,92 @@
 (() => {
-  const shell = document.querySelector('[data-project-shell]');
+  const shell = document.querySelector('[data-project-shell], [data-server-shell]');
   const dialog = shell?.querySelector('[data-share-dialog]');
-  if (!shell || !dialog) return;
+  if (!shell) return;
+
+  let gitRefreshPending = false;
+  const projectName = shell.dataset.project;
+
+  async function refreshGitStatuses(fetchRemote = false) {
+    if (gitRefreshPending || document.hidden) return;
+    gitRefreshPending = true;
+    const endpoint = projectName
+      ? `/__latitude/api/projects/${encodeURIComponent(projectName)}`
+      : '/__latitude/api/projects';
+    try {
+      const response = await fetch(`${endpoint}${fetchRemote ? '?fetch=1' : ''}`, {
+        credentials: 'same-origin',
+      });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const projects = projectName ? [payload] : payload.projects;
+      projects.forEach((project) => {
+        shell.querySelectorAll('[data-project-git-status]').forEach((container) => {
+          if (container.dataset.projectGitStatus === project.name) {
+            renderGitStatus(container, project);
+          }
+        });
+      });
+    } catch {
+      // Keep the current status visible while the server or remote is unavailable.
+    } finally {
+      gitRefreshPending = false;
+    }
+  }
+
+  function renderGitStatus(container, project) {
+    container.replaceChildren();
+    if (!project.git_dirty && project.git_ahead === 0 && project.git_behind === 0) return;
+
+    const badge = document.createElement('span');
+    badge.className = 'git-status';
+    const labels = [];
+    if (project.git_dirty) {
+      if (project.git_additions > 0) {
+        labels.push(`${project.git_additions} additions`);
+        appendStat(badge, 'git-additions', `+${project.git_additions}`);
+      }
+      if (project.git_deletions > 0) {
+        labels.push(`${project.git_deletions} deletions`);
+        appendStat(badge, 'git-deletions', `-${project.git_deletions}`);
+      }
+      if (project.git_additions === 0 && project.git_deletions === 0) {
+        labels.push('working tree changes');
+        appendStat(badge, '', 'changed');
+      }
+    }
+    if (project.git_behind > 0) {
+      labels.push(commitLabel(project.git_behind, 'pull'));
+      appendStat(badge, 'git-behind', `↓${project.git_behind}`, 'Commits to pull');
+    }
+    if (project.git_ahead > 0) {
+      labels.push(commitLabel(project.git_ahead, 'push'));
+      appendStat(badge, 'git-ahead', `↑${project.git_ahead}`, 'Commits to push');
+    }
+    badge.setAttribute('aria-label', labels.join(', '));
+    badge.title = labels.join(', ');
+    container.append(badge);
+  }
+
+  function appendStat(badge, className, text, title) {
+    const stat = document.createElement('span');
+    stat.className = `git-stat ${className}`;
+    stat.textContent = text;
+    if (title) stat.title = title;
+    badge.append(stat);
+  }
+
+  function commitLabel(count, action) {
+    return `${count} ${count === 1 ? 'commit' : 'commits'} to ${action}`;
+  }
+
+  window.setInterval(() => void refreshGitStatuses(false), 2000);
+  window.setInterval(() => void refreshGitStatuses(true), 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void refreshGitStatuses(true);
+  });
+  void refreshGitStatuses(true);
+
+  if (!dialog) return;
 
   shell.addEventListener('click', async (event) => {
     const target = event.target instanceof Element ? event.target : null;

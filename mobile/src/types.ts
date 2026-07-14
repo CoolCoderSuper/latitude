@@ -108,6 +108,11 @@ export type ProjectDetail = {
   api_href: string;
   summary: string;
   deployment_count: number;
+  git_dirty: boolean;
+  git_additions: number;
+  git_deletions: number;
+  git_ahead: number;
+  git_behind: number;
   diff: ProjectDiffLink;
   terminal: ProjectTerminalLink;
   deployments: DeploymentSummary[];
@@ -201,6 +206,7 @@ export type GitActionName =
   | 'discard_all'
   | 'discard_file'
   | 'commit'
+  | 'fetch'
   | 'pull'
   | 'push';
 

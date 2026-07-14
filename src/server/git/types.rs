@@ -30,7 +30,15 @@ impl GitStatusSummary {
     pub(in crate::server) fn label(&self) -> String {
         let mut parts = Vec::new();
         if self.is_dirty() {
-            parts.push(format!("+{} -{}", self.additions, self.deletions));
+            if self.additions > 0 {
+                parts.push(format!("+{}", self.additions));
+            }
+            if self.deletions > 0 {
+                parts.push(format!("-{}", self.deletions));
+            }
+            if self.additions == 0 && self.deletions == 0 {
+                parts.push("changes".to_string());
+            }
         }
         if self.behind > 0 {
             parts.push(format!("↓{}", self.behind));
@@ -44,10 +52,15 @@ impl GitStatusSummary {
     pub(in crate::server) fn accessible_label(&self) -> String {
         let mut parts = Vec::new();
         if self.is_dirty() {
-            parts.push(format!(
-                "{} additions, {} deletions",
-                self.additions, self.deletions
-            ));
+            if self.additions > 0 {
+                parts.push(format!("{} additions", self.additions));
+            }
+            if self.deletions > 0 {
+                parts.push(format!("{} deletions", self.deletions));
+            }
+            if self.additions == 0 && self.deletions == 0 {
+                parts.push("working tree changes".to_string());
+            }
         }
         if self.behind > 0 {
             parts.push(commit_sync_label(self.behind, "pull"));
@@ -96,6 +109,7 @@ pub(in crate::server) enum GitAction {
     DiscardAll,
     DiscardFile { path: String },
     Commit { message: String },
+    Fetch,
     Pull,
     Push,
 }

@@ -5,6 +5,8 @@
   const actionUrl = workspace.dataset.actionUrl || window.location.pathname;
   let openKeys = new Set();
   let refreshTimer = null;
+  let autoRefreshPending = false;
+  let commitMessage = '';
 
   const cardKey = (card) => {
     const section = card.dataset.fileSection;
@@ -36,6 +38,7 @@
 
   workspace.addEventListener('htmx:beforeSwap', (event) => {
     if (requestVerb(event) !== 'get') return;
+    commitMessage = workspace.querySelector('[data-commit-message]')?.value || '';
     openKeys = new Set(
       Array.from(workspace.querySelectorAll('details.file-card[open]'))
         .map(cardKey)
@@ -45,12 +48,16 @@
 
   workspace.addEventListener('htmx:afterSwap', (event) => {
     if (requestVerb(event) !== 'get') return;
+    autoRefreshPending = false;
+    const messageInput = workspace.querySelector('[data-commit-message]');
+    if (messageInput) messageInput.value = commitMessage;
     workspace.querySelectorAll('details.file-card').forEach((card) => {
       if (openKeys.has(cardKey(card))) card.open = true;
     });
   });
 
   workspace.addEventListener('htmx:responseError', (event) => {
+    autoRefreshPending = false;
     const message = event.detail.xhr?.responseText?.trim()
       || 'The Git action could not be completed.';
     showStatus(message, true);
@@ -123,6 +130,47 @@
       });
     }, 150);
   }
+
+  function refreshChanges() {
+    if (
+      autoRefreshPending
+      || document.hidden
+      || workspace.querySelector('.git-action-pending')
+      || document.activeElement?.matches('[data-commit-message]')
+    ) return;
+    autoRefreshPending = true;
+    htmx.ajax('GET', actionUrl, {
+      source: workspace,
+      target: workspace,
+      swap: 'innerHTML',
+    });
+  }
+
+  async function fetchRemote() {
+    if (document.hidden || workspace.querySelector('.git-action-pending')) return;
+    try {
+      const body = new URLSearchParams({ action: 'fetch' });
+      const response = await fetch(actionUrl, {
+        method: 'PATCH',
+        body,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      });
+      if (response.ok) refreshChanges();
+    } catch {
+      // Local changes can still refresh while the remote is unavailable.
+    }
+  }
+
+  window.setInterval(refreshChanges, 2000);
+  window.setInterval(fetchRemote, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      void fetchRemote();
+      refreshChanges();
+    }
+  });
+  void fetchRemote();
 
   function showStatus(message, isError) {
     const status = workspace.querySelector('[data-action-status]');

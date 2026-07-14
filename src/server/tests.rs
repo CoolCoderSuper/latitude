@@ -1281,6 +1281,10 @@ fn parses_git_action_forms() {
         }
     );
     assert_eq!(
+        parse_git_action_form(b"action=fetch").unwrap(),
+        GitAction::Fetch
+    );
+    assert_eq!(
         parse_git_action_form(b"action=pull").unwrap(),
         GitAction::Pull
     );

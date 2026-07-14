@@ -98,7 +98,7 @@ pub(in crate::server) fn render_server_home(
         PROJECT_HOME_STYLE_HREF,
         html! {},
         html! {
-            main {
+            main data-server-shell {
                 header { h1 { "Latitude" } p { "Available projects on " (device_hostname) } }
                 ul {
                     @if config.desktop.enabled {
@@ -115,8 +115,10 @@ pub(in crate::server) fn render_server_home(
                         li { a href=(format!("/{}", project.name)) {
                             strong {
                                 span class="project-name" { (&project.name) }
-                                @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
-                                    (git_status_badge(status))
+                                span data-project-git-status=(&project.name) {
+                                    @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
+                                        (git_status_badge(status))
+                                    }
                                 }
                             }
                             span { (project_summary(project)) }
@@ -124,6 +126,7 @@ pub(in crate::server) fn render_server_home(
                     }
                     @if no_enabled_projects { li class="empty" { "No enabled projects yet." } }
                 }
+                script src=(PROJECT_HOME_SCRIPT_SRC) {}
             }
         },
     )
@@ -133,7 +136,9 @@ fn code_changes_tool_link(project: &str, status: &GitStatusSummary) -> Markup {
     html! { li { a href=(format!("/{project}/{DIFF_ROUTE_SEGMENT}")) {
         strong {
             "Code changes"
-            @if status.has_status() { (git_status_badge(status)) }
+            span data-project-git-status=(project) {
+                @if status.has_status() { (git_status_badge(status)) }
+            }
         }
         span { "Review changes, commits, and history" }
     } } }
@@ -143,8 +148,15 @@ fn git_status_badge(status: &GitStatusSummary) -> Markup {
     html! {
         span class="git-status" aria-label=(status.accessible_label()) title=(status.accessible_label()) {
             @if status.is_dirty() {
-                span class="git-stat git-additions" { "+" (status.additions) }
-                span class="git-stat git-deletions" { "-" (status.deletions) }
+                @if status.additions > 0 {
+                    span class="git-stat git-additions" { "+" (status.additions) }
+                }
+                @if status.deletions > 0 {
+                    span class="git-stat git-deletions" { "-" (status.deletions) }
+                }
+                @if status.additions == 0 && status.deletions == 0 {
+                    span class="git-stat" { "changed" }
+                }
             }
             @if status.behind > 0 {
                 span class="git-stat git-behind" title="Commits to pull" { "↓" (status.behind) }

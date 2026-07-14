@@ -27,7 +27,7 @@ use super::{
             MAX_TERMINAL_COMMAND_BYTES, PUBLIC_API_PROJECTS_PATH,
         },
         git::{
-            PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
+            GitAction, PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
             collect_project_git_history, collect_project_git_status, execute_git_action,
             parse_public_git_action_payload, public_commit_response, public_diff_response,
             public_history_response,
@@ -378,6 +378,16 @@ pub(in crate::server) async fn public_api_list_projects(
         Ok(projects) => projects,
         Err(response) => return response,
     };
+    if request_fetches_remote(&req) {
+        let mut fetches = tokio::task::JoinSet::new();
+        for project in catalog_projects.iter().filter(|project| project.enabled) {
+            let project_dir = project.project_dir.clone();
+            fetches.spawn(async move {
+                let _ = execute_git_action(&project_dir, GitAction::Fetch).await;
+            });
+        }
+        while fetches.join_next().await.is_some() {}
+    }
     let git_statuses = super::project_git_statuses(&catalog_projects).await;
     let projects = catalog_projects
         .iter()
@@ -418,6 +428,10 @@ pub(in crate::server) async fn public_api_get_project(
         Err(response) => return response,
     };
 
+    if request_fetches_remote(&req) {
+        let _ = execute_git_action(&project_config.project_dir, GitAction::Fetch).await;
+    }
+
     let git_status = collect_project_git_status(&project_config.project_dir).await;
     Json(public_project_detail(
         &project_config,
@@ -425,6 +439,13 @@ pub(in crate::server) async fn public_api_get_project(
         state.device_hostname(),
     ))
     .into_response()
+}
+
+fn request_fetches_remote(req: &Request<Body>) -> bool {
+    req.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(key, value)| key == "fetch" && matches!(value.as_ref(), "1" | "true"))
+    })
 }
 
 pub(in crate::server) async fn public_api_get_project_diff(

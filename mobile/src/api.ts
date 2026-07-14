@@ -83,13 +83,15 @@ export class LatitudePublicApi {
     });
   }
 
-  async projects(): Promise<ProjectListResponse> {
-    return this.get<ProjectListResponse>(`${PUBLIC_API_PREFIX}/projects`);
+  async projects(fetchRemote = false): Promise<ProjectListResponse> {
+    const query = fetchRemote ? '?fetch=1' : '';
+    return this.get<ProjectListResponse>(`${PUBLIC_API_PREFIX}/projects${query}`);
   }
 
-  async project(name: string): Promise<ProjectDetail> {
+  async project(name: string, fetchRemote = false): Promise<ProjectDetail> {
+    const query = fetchRemote ? '?fetch=1' : '';
     return this.get<ProjectDetail>(
-      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(name)}`,
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(name)}${query}`,
     );
   }
 

@@ -196,8 +196,12 @@ fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
     html! {
         section class="git-overview" aria-label="Git change and sync totals" {
             strong { "Changes" }
-            span class="overview-additions" { "+" (report.status.additions) }
-            span class="overview-deletions" { "-" (report.status.deletions) }
+            @if report.status.additions > 0 {
+                span class="overview-additions" { "+" (report.status.additions) }
+            }
+            @if report.status.deletions > 0 {
+                span class="overview-deletions" { "-" (report.status.deletions) }
+            }
             span class="overview-spacer" {}
             @if report.status.behind > 0 {
                 span class="overview-behind" { "↓" (report.status.behind) " pull" }

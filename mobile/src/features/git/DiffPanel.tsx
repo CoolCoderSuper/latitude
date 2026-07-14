@@ -7,7 +7,7 @@ import {
   Upload,
 } from 'lucide-react-native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, ScrollView, Text, TextInput, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../../api';
 import { AppButton, EmptyState, InlineNotice, LoadingBlock } from '../../components/ui';
@@ -18,11 +18,13 @@ import { DiffSection } from './DiffSection';
 import { canStage, canUnstage, toggleExpanded } from './gitDiffUtils';
 
 export function DiffPanel({
+  active,
   api,
   onCodeInteractionChange,
   onOpenHistory,
   projectName,
 }: {
+  active: boolean;
   api: LatitudePublicApi;
   onCodeInteractionChange: (active: boolean) => void;
   onOpenHistory: () => void;
@@ -37,26 +39,77 @@ export function DiffPanel({
   );
   const pendingActionKeysRef = useRef<Set<string>>(new Set());
   const actionQueue = useRef<Promise<void>>(Promise.resolve());
+  const refreshPending = useRef(false);
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'success' | 'error'>('success');
 
-  const loadDiff = useCallback(async () => {
-    setLoading(true);
-    setNotice(null);
+  const loadDiff = useCallback(async (showLoading = true) => {
+    if (refreshPending.current) return;
+    refreshPending.current = true;
+    if (showLoading) {
+      setLoading(true);
+      setNotice(null);
+    }
     try {
       setDiff(await api.diff(projectName));
     } catch (diffError) {
-      setNotice(errorMessage(diffError));
-      setNoticeTone('error');
+      if (showLoading) {
+        setNotice(errorMessage(diffError));
+        setNoticeTone('error');
+      }
     } finally {
-      setLoading(false);
+      refreshPending.current = false;
+      if (showLoading) setLoading(false);
     }
   }, [api, projectName]);
 
   useEffect(() => {
     void loadDiff();
   }, [loadDiff]);
+
+  useEffect(() => {
+    if (!active) return;
+
+    let appActive = AppState.currentState === 'active';
+    const refresh = () => {
+      if (appActive) void loadDiff(false);
+    };
+    const fetchRemote = async () => {
+      if (
+        !appActive ||
+        refreshPending.current ||
+        pendingActionKeysRef.current.size > 0
+      ) return;
+      refreshPending.current = true;
+      try {
+        const response = await api.runGitAction(projectName, { action: 'fetch' });
+        setDiff(response.diff);
+      } catch {
+        // Background fetch failures should not interrupt local diff refreshes.
+      } finally {
+        refreshPending.current = false;
+      }
+    };
+
+    void fetchRemote();
+    const refreshInterval = setInterval(refresh, 2_000);
+    const fetchInterval = setInterval(() => void fetchRemote(), 30_000);
+    const subscription = AppState.addEventListener('change', (state) => {
+      const wasActive = appActive;
+      appActive = state === 'active';
+      if (appActive && !wasActive) {
+        void fetchRemote();
+        refresh();
+      }
+    });
+
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(fetchInterval);
+      subscription.remove();
+    };
+  }, [active, api, loadDiff, projectName]);
 
   const runAction = useCallback(
     (payload: GitActionPayload, successMessage: string) => {
@@ -239,8 +292,12 @@ export function DiffPanel({
       {diff && (
         <View style={styles.gitOverview}>
           <Text style={styles.gitOverviewLabel}>Changes</Text>
-          <Text style={styles.gitAdditionsText}>+{diff.additions}</Text>
-          <Text style={styles.gitDeletionsText}>-{diff.deletions}</Text>
+          {diff.additions > 0 && (
+            <Text style={styles.gitAdditionsText}>+{diff.additions}</Text>
+          )}
+          {diff.deletions > 0 && (
+            <Text style={styles.gitDeletionsText}>-{diff.deletions}</Text>
+          )}
           <View style={styles.gitOverviewSpacer} />
           {diff.behind > 0 && (
             <Text style={styles.gitBehindText}>↓{diff.behind} pull</Text>

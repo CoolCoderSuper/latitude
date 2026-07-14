@@ -5,8 +5,9 @@ import {
   Server,
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
-import { useCallback, useMemo } from 'react';
-import { PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { useIsFocused } from '@react-navigation/native';
+import { useCallback, useEffect, useMemo } from 'react';
+import { AppState, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
 
 import {
   EmptyState,
@@ -48,7 +49,7 @@ export function HomeScreen({
   onOpenRootDesktop: () => void;
   onOpenProject: (name: string) => void;
   onOpenRootTerminal: () => void;
-  onRefresh: () => void | Promise<void>;
+  onRefresh: (fetchRemote?: boolean, quiet?: boolean) => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
   projects: ProjectSummary[];
   rootDesktop: RootDesktopLink | null;
@@ -56,7 +57,29 @@ export function HomeScreen({
   serverSessions: SessionRecord[];
 }) {
   const { colors, styles } = useTheme();
+  const isFocused = useIsFocused();
   const refreshControl = useRefreshControl(loading, onRefresh);
+
+  useEffect(() => {
+    if (!isFocused) return;
+    let appActive = AppState.currentState === 'active';
+    const refresh = (fetchRemote = false) => {
+      if (appActive) void onRefresh(fetchRemote, true);
+    };
+    refresh(true);
+    const refreshInterval = setInterval(() => refresh(false), 2_000);
+    const fetchInterval = setInterval(() => refresh(true), 30_000);
+    const subscription = AppState.addEventListener('change', (state) => {
+      const wasActive = appActive;
+      appActive = state === 'active';
+      if (appActive && !wasActive) refresh(true);
+    });
+    return () => {
+      clearInterval(refreshInterval);
+      clearInterval(fetchInterval);
+      subscription.remove();
+    };
+  }, [isFocused, onRefresh]);
 
   const switchAdjacentServer = useCallback(
     (direction: number) => {
@@ -229,8 +252,15 @@ export function HomeScreen({
                   >
                     {project.git_dirty && (
                       <>
-                        <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
-                        <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
+                        {project.git_additions > 0 && (
+                          <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
+                        )}
+                        {project.git_deletions > 0 && (
+                          <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
+                        )}
+                        {project.git_additions === 0 && project.git_deletions === 0 && (
+                          <Text style={styles.gitAdditionsText}>changed</Text>
+                        )}
                       </>
                     )}
                     {project.git_behind > 0 && (

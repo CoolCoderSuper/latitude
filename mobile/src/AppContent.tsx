@@ -65,6 +65,7 @@ export function AppContent() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeBaseUrlRef = useRef<string | null>(null);
+  const projectsRequestPendingRef = useRef<string | null>(null);
 
   const api = useMemo(
     () => new LatitudePublicApi(session?.baseUrl ?? '', session?.token),
@@ -75,15 +76,19 @@ export function AppContent() {
     activeBaseUrlRef.current = session?.baseUrl ?? null;
   }, [session]);
 
-  const loadProjects = useCallback(async () => {
-    if (!session) {
+  const loadProjects = useCallback(async (fetchRemote = false, quiet = false) => {
+    if (!session || projectsRequestPendingRef.current === session.baseUrl) {
       return;
     }
+    const requestKey = session.baseUrl;
+    projectsRequestPendingRef.current = requestKey;
 
-    setProjectsLoading(true);
-    setError(null);
+    if (!quiet) {
+      setProjectsLoading(true);
+      setError(null);
+    }
     try {
-      const response = await api.projects();
+      const response = await api.projects(fetchRemote);
       if (activeBaseUrlRef.current === session.baseUrl) {
         setProjects(response.projects);
         setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
@@ -101,7 +106,7 @@ export function AppContent() {
         }
       }
     } catch (loadError) {
-      if (activeBaseUrlRef.current !== session.baseUrl) {
+      if (activeBaseUrlRef.current !== session.baseUrl || quiet) {
         return;
       }
 
@@ -117,7 +122,10 @@ export function AppContent() {
         setError(errorMessage(loadError));
       }
     } finally {
-      if (activeBaseUrlRef.current === session.baseUrl) {
+      if (projectsRequestPendingRef.current === requestKey) {
+        projectsRequestPendingRef.current = null;
+      }
+      if (!quiet && activeBaseUrlRef.current === session.baseUrl) {
         setProjectsLoading(false);
         setBooting(false);
       }
@@ -154,7 +162,7 @@ export function AppContent() {
 
   useEffect(() => {
     if (session) {
-      void loadProjects();
+      void loadProjects(true);
     }
   }, [loadProjects, session]);
 
@@ -264,9 +272,7 @@ export function AppContent() {
                 onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
                 onOpenProject={(name) => navigation.navigate('Project', { name })}
                 onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
-                onRefresh={() => {
-                  void loadProjects();
-                }}
+                onRefresh={loadProjects}
                 onSwitchServer={handleSwitchServer}
               />
             )}
@@ -344,9 +350,7 @@ export function AppContent() {
                   onOpenRootDesktop={() => navigation.navigate('RootDesktop')}
                   onOpenProject={(name) => navigation.navigate('Project', { name })}
                   onOpenRootTerminal={() => navigation.navigate('RootTerminal')}
-                  onRefresh={() => {
-                    void loadProjects();
-                  }}
+                  onRefresh={loadProjects}
                   onSwitchServer={handleSwitchServer}
                 />
               )

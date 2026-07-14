@@ -18,9 +18,7 @@ pub(super) use diff::{parse_diff_file_sections, parse_porcelain_status};
 pub(super) use public::{
     PublicGitActionResponse, public_commit_response, public_diff_response, public_history_response,
 };
-#[cfg(test)]
-pub(super) use types::GitAction;
 pub(super) use types::{
-    FileSectionKind, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff, GitHistoryReport,
-    GitStatusSummary,
+    FileSectionKind, GitAction, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff,
+    GitHistoryReport, GitStatusSummary,
 };

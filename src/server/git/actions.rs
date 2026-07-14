@@ -48,6 +48,7 @@ impl PublicGitActionPayload {
                     Ok(GitAction::Commit { message })
                 }
             }
+            "fetch" => Ok(GitAction::Fetch),
             "pull" => Ok(GitAction::Pull),
             "push" => Ok(GitAction::Push),
             action if !action.is_empty() => Err(format!("unknown git action '{action}'")),
@@ -105,6 +106,9 @@ pub(in crate::server) async fn execute_git_action(
                 &[0],
             )
             .await
+        }
+        GitAction::Fetch => {
+            run_git_action_text(&repo_dir, "Fetch", &["fetch", "--prune"], &[0]).await
         }
         GitAction::Pull => {
             run_git_action_text(&repo_dir, "Pull", &["pull", "--ff-only"], &[0]).await
@@ -279,6 +283,7 @@ pub(in crate::server) fn parse_git_action_form(body: &[u8]) -> Result<GitAction,
                 Ok(GitAction::Commit { message })
             }
         }
+        Some("fetch") => Ok(GitAction::Fetch),
         Some("pull") => Ok(GitAction::Pull),
         Some("push") => Ok(GitAction::Push),
         Some(action) if !action.is_empty() => Err(format!("unknown git action '{action}'")),

@@ -173,6 +173,7 @@ export function ProjectScreen({
           ]}
         >
           <DiffPanel
+            active={tab === 'code'}
             api={api}
             onCodeInteractionChange={handleCodeInteractionChange}
             onOpenHistory={onOpenGitHistory}
