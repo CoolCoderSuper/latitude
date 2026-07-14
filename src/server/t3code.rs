@@ -1,4 +1,4 @@
-use std::{ffi::OsString, net::SocketAddr, process::Stdio, time::Duration};
+use std::{ffi::OsString, net::SocketAddr, path::Path, process::Stdio, time::Duration};
 
 use axum::{
     Router,
@@ -133,42 +133,31 @@ pub(super) async fn open_project_in_t3code(
         return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
     }
 
-    let t3code_project_id = match state.t3code_project_id(&project.project_dir).await {
-        Some(project_id) => project_id,
-        None => {
-            let mut project_args = vec![
-                OsString::from("project"),
-                OsString::from("add"),
-                project.project_dir.as_os_str().to_owned(),
-                OsString::from("--title"),
-                OsString::from(&project.name),
-                OsString::from("--if-missing"),
-                OsString::from("--json"),
-            ];
-            append_base_dir(&mut project_args, &config.t3code);
-            let output = match run_cli(&config.t3code, project_args).await {
-                Ok(output) => output,
-                Err(message) => {
-                    error!(project = %project_name, %message, "T3 Code project registration failed");
-                    return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
-                }
-            };
-            let registration: ProjectRegistrationOutput = match serde_json::from_slice(&output) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    error!(%error, project = %project_name, "T3 Code project output was invalid");
-                    return plain_response(
-                        StatusCode::BAD_GATEWAY,
-                        "T3 Code returned an invalid project response\n",
-                    );
-                }
-            };
-            state
-                .remember_t3code_project(project.project_dir.clone(), registration.id.clone())
-                .await;
-            registration.id
+    // Revalidate the cached mapping against the live server on every launch. T3 Code
+    // can replace or rebuild its state while Latitude stays running, leaving a cached
+    // project id that makes the pairing route wait forever for a project that no
+    // longer exists. `project add --if-missing` is idempotent and returns the current
+    // live id in both cases.
+    let project_args =
+        project_registration_args(&config.t3code, &project.project_dir, &project.name);
+    let output = match run_cli(&config.t3code, project_args).await {
+        Ok(output) => output,
+        Err(message) => {
+            error!(project = %project_name, %message, "T3 Code project registration failed");
+            return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
         }
     };
+    let registration: ProjectRegistrationOutput = match serde_json::from_slice(&output) {
+        Ok(registration) => registration,
+        Err(error) => {
+            error!(%error, project = %project_name, "T3 Code project output was invalid");
+            return plain_response(
+                StatusCode::BAD_GATEWAY,
+                "T3 Code returned an invalid project response\n",
+            );
+        }
+    };
+    let t3code_project_id = registration.id;
 
     let mut pairing_url = match create_pairing_url(
         &config.t3code,
@@ -518,6 +507,24 @@ fn append_base_dir(args: &mut Vec<OsString>, config: &T3CodeConfig) {
     }
 }
 
+fn project_registration_args(
+    config: &T3CodeConfig,
+    project_dir: &Path,
+    project_name: &str,
+) -> Vec<OsString> {
+    let mut args = vec![
+        OsString::from("project"),
+        OsString::from("add"),
+        project_dir.as_os_str().to_owned(),
+        OsString::from("--title"),
+        OsString::from(project_name),
+        OsString::from("--if-missing"),
+        OsString::from("--json"),
+    ];
+    append_base_dir(&mut args, config);
+    args
+}
+
 async fn ensure_server(state: &AppState, config: &T3CodeConfig) -> Result<(), String> {
     if !config.start_if_needed {
         return Ok(());
@@ -656,6 +663,34 @@ mod tests {
         assert_eq!(
             cookie_header_without(&value, AUTH_COOKIE_NAME).as_deref(),
             Some("theme=dark; t3_session=allowed")
+        );
+    }
+
+    #[test]
+    fn project_registration_uses_the_configured_t3code_home() {
+        let config = T3CodeConfig {
+            server_url: "http://127.0.0.1:4773".to_string(),
+            base_dir: Some("C:/Users/test/.t3".into()),
+            ..T3CodeConfig::default()
+        };
+        let args = project_registration_args(&config, Path::new("C:/work/demo"), "demo")
+            .into_iter()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            args,
+            vec![
+                "project",
+                "add",
+                "C:/work/demo",
+                "--title",
+                "demo",
+                "--if-missing",
+                "--json",
+                "--base-dir",
+                "C:/Users/test/.t3",
+            ]
         );
     }
 }

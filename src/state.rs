@@ -1,14 +1,10 @@
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use hmac::{Hmac, Mac};
 use rand::random;
 use reqwest::Client;
 use sha2::Sha256;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::{
     config::{BootConfig, ConfigError},
@@ -34,7 +30,6 @@ struct AppStateInner {
     public_auth_secret: [u8; 32],
     desktop_manager: Arc<ManagedDesktopManager>,
     terminal_sessions: Arc<TerminalSessionManager>,
-    t3code_projects: Mutex<HashMap<PathBuf, String>>,
 }
 
 impl AppState {
@@ -54,7 +49,6 @@ impl AppState {
                 public_auth_secret: random(),
                 desktop_manager: Arc::new(ManagedDesktopManager::default()),
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
-                t3code_projects: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -93,18 +87,6 @@ impl AppState {
 
     pub async fn config_snapshot(&self) -> BootConfig {
         self.inner.config.read().await.clone()
-    }
-
-    pub async fn t3code_project_id(&self, path: &Path) -> Option<String> {
-        self.inner.t3code_projects.lock().await.get(path).cloned()
-    }
-
-    pub async fn remember_t3code_project(&self, path: PathBuf, project_id: String) {
-        self.inner
-            .t3code_projects
-            .lock()
-            .await
-            .insert(path, project_id);
     }
 
     pub async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {
