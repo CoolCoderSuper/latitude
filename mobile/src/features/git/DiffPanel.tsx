@@ -6,7 +6,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react-native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, Text, TextInput, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../../api';
@@ -32,7 +32,11 @@ export function DiffPanel({
   const [diff, setDiff] = useState<GitDiffResponse | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [actioning, setActioning] = useState(false);
+  const [pendingActionKeys, setPendingActionKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const pendingActionKeysRef = useRef<Set<string>>(new Set());
+  const actionQueue = useRef<Promise<void>>(Promise.resolve());
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'success' | 'error'>('success');
@@ -55,23 +59,39 @@ export function DiffPanel({
   }, [loadDiff]);
 
   const runAction = useCallback(
-    async (payload: GitActionPayload, successMessage: string) => {
-      setActioning(true);
-      setNotice(null);
-      try {
-        const response = await api.runGitAction(projectName, payload);
-        setDiff(response.diff);
-        setNotice(response.ok ? successMessage : response.error ?? 'Action failed.');
-        setNoticeTone(response.ok ? 'success' : 'error');
-        if (response.ok && payload.action === 'commit') {
-          setMessage('');
-        }
-      } catch (actionError) {
-        setNotice(errorMessage(actionError));
-        setNoticeTone('error');
-      } finally {
-        setActioning(false);
+    (payload: GitActionPayload, successMessage: string) => {
+      const actionKey = gitActionKey(payload);
+      if (pendingActionKeysRef.current.has(actionKey)) {
+        return Promise.resolve();
       }
+
+      pendingActionKeysRef.current.add(actionKey);
+      setPendingActionKeys(new Set(pendingActionKeysRef.current));
+      setNotice(null);
+
+      const execute = async () => {
+        try {
+          const response = await api.runGitAction(projectName, payload);
+          setDiff(response.diff);
+          setNotice(
+            response.ok ? successMessage : response.error ?? 'Action failed.',
+          );
+          setNoticeTone(response.ok ? 'success' : 'error');
+          if (response.ok && payload.action === 'commit') {
+            setMessage('');
+          }
+        } catch (actionError) {
+          setNotice(errorMessage(actionError));
+          setNoticeTone('error');
+        } finally {
+          pendingActionKeysRef.current.delete(actionKey);
+          setPendingActionKeys(new Set(pendingActionKeysRef.current));
+        }
+      };
+
+      const queuedAction = actionQueue.current.then(execute, execute);
+      actionQueue.current = queuedAction;
+      return queuedAction;
     },
     [api, projectName],
   );
@@ -130,7 +150,9 @@ export function DiffPanel({
       <View style={styles.diffToolbar}>
         <AppButton
           compact
-          disabled={actioning || unstaged.length === 0}
+          disabled={
+            pendingActionKeys.has('stage_all') || unstaged.length === 0
+          }
           icon={<Upload color={colors.onAccent} size={16} />}
           label="Stage all"
           onPress={() =>
@@ -139,7 +161,9 @@ export function DiffPanel({
         />
         <AppButton
           compact
-          disabled={actioning || staged.length === 0}
+          disabled={
+            pendingActionKeys.has('unstage_all') || staged.length === 0
+          }
           icon={<Download color={colors.text} size={16} />}
           label="Unstage all"
           onPress={() =>
@@ -149,7 +173,9 @@ export function DiffPanel({
         />
         <AppButton
           compact
-          disabled={actioning || unstaged.length === 0}
+          disabled={
+            pendingActionKeys.has('discard_all') || unstaged.length === 0
+          }
           icon={<Trash2 color={colors.danger} size={16} />}
           label="Discard all"
           onPress={confirmDiscardAll}
@@ -159,7 +185,7 @@ export function DiffPanel({
 
       <View style={styles.commitRow}>
         <TextInput
-          editable={!actioning}
+          editable={!pendingActionKeys.has('commit')}
           onChangeText={setMessage}
           placeholder="Commit message"
           placeholderTextColor={colors.muted}
@@ -168,7 +194,11 @@ export function DiffPanel({
         />
         <AppButton
           compact
-          disabled={actioning || staged.length === 0 || !message.trim()}
+          disabled={
+            pendingActionKeys.has('commit') ||
+            staged.length === 0 ||
+            !message.trim()
+          }
           icon={<GitCommitHorizontal color={colors.onAccent} size={16} />}
           label="Commit"
           onPress={() =>
@@ -190,7 +220,7 @@ export function DiffPanel({
         />
         <AppButton
           compact
-          disabled={actioning}
+          disabled={pendingActionKeys.has('pull')}
           icon={<Download color={colors.text} size={16} />}
           label="Pull"
           onPress={() => runAction({ action: 'pull' }, 'Pull completed.')}
@@ -198,7 +228,7 @@ export function DiffPanel({
         />
         <AppButton
           compact
-          disabled={actioning}
+          disabled={pendingActionKeys.has('push')}
           icon={<Rocket color={colors.text} size={16} />}
           label="Push"
           onPress={() => runAction({ action: 'push' }, 'Push completed.')}
@@ -228,7 +258,6 @@ export function DiffPanel({
       ) : diff ? (
         <>
           <DiffSection
-            actioning={actioning}
             changes={unstaged}
             empty="No unstaged files."
             expanded={expanded}
@@ -241,11 +270,11 @@ export function DiffPanel({
             onCodeInteractionChange={onCodeInteractionChange}
             onDiscard={confirmDiscardFile}
             onToggle={(path) => toggleExpanded(setExpanded, path)}
+            pendingActionKeys={pendingActionKeys}
             section="unstaged"
             title="Unstaged"
           />
           <DiffSection
-            actioning={actioning}
             changes={staged}
             empty="No staged files."
             expanded={expanded}
@@ -257,6 +286,7 @@ export function DiffPanel({
             }
             onCodeInteractionChange={onCodeInteractionChange}
             onToggle={(path) => toggleExpanded(setExpanded, path)}
+            pendingActionKeys={pendingActionKeys}
             section="staged"
             title="Staged"
           />
@@ -266,4 +296,8 @@ export function DiffPanel({
       )}
     </ScrollView>
   );
+}
+
+function gitActionKey(payload: GitActionPayload): string {
+  return payload.path ? `${payload.action}:${payload.path}` : payload.action;
 }

@@ -1,10 +1,11 @@
 import { Download, Trash2, Upload } from 'lucide-react-native';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import {
   FlatList,
   Pressable,
   ScrollView,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 
@@ -20,11 +21,11 @@ import {
   tokenStyle,
 } from './diffSyntax';
 
-const SELECTABLE_DIFF_LINE_LIMIT = 600;
-const SELECTABLE_DIFF_TOKEN_LIMIT = 7000;
+const SELECTABLE_DIFF_LINE_LIMIT = 80;
+const SELECTABLE_DIFF_TOKEN_LIMIT = 800;
+const PLAIN_TEXT_TOKEN_LIMIT = 160;
 
 export function DiffSection({
-  actioning,
   changes,
   empty,
   expanded,
@@ -32,10 +33,10 @@ export function DiffSection({
   onCodeInteractionChange,
   onDiscard,
   onToggle,
+  pendingActionKeys,
   section,
   title,
 }: {
-  actioning: boolean;
   changes: GitFileChange[];
   empty: string;
   expanded: Set<string>;
@@ -43,6 +44,7 @@ export function DiffSection({
   onCodeInteractionChange: (active: boolean) => void;
   onDiscard?: (change: GitFileChange) => void;
   onToggle: (path: string) => void;
+  pendingActionKeys: ReadonlySet<string>;
   section: 'unstaged' | 'staged';
   title: string;
 }) {
@@ -65,6 +67,14 @@ export function DiffSection({
           const isOpen = expanded.has(`${section}:${change.path}`);
           const visibleDiffs = visibleDiffsForSection(change, section);
           const actionLabel = section === 'unstaged' ? 'Stage' : 'Unstage';
+          const actionName =
+            section === 'unstaged' ? 'stage_file' : 'unstage_file';
+          const actionPending = pendingActionKeys.has(
+            `${actionName}:${change.path}`,
+          );
+          const discardPending = pendingActionKeys.has(
+            `discard_file:${change.path}`,
+          );
           return (
             <View key={`${section}:${change.path}`} style={styles.fileCard}>
               <View style={styles.fileSummary}>
@@ -95,12 +105,12 @@ export function DiffSection({
                 <View style={styles.fileRowActions}>
                   <Pressable
                     accessibilityLabel={`${actionLabel} ${change.path}`}
-                    disabled={actioning}
+                    disabled={actionPending}
                     onPress={() => onAction(change)}
                     style={({ pressed }) => [
                       styles.fileRowAction,
-                      actioning && styles.fileRowActionDisabled,
-                      pressed && !actioning && styles.pressed,
+                      actionPending && styles.fileRowActionDisabled,
+                      pressed && !actionPending && styles.pressed,
                     ]}
                   >
                     {section === 'unstaged' ? (
@@ -113,13 +123,13 @@ export function DiffSection({
                   {section === 'unstaged' && onDiscard && (
                     <Pressable
                       accessibilityLabel={`Discard ${change.path}`}
-                      disabled={actioning}
+                      disabled={discardPending}
                       onPress={() => onDiscard(change)}
                       style={({ pressed }) => [
                         styles.fileRowAction,
                         styles.fileRowDangerAction,
-                        actioning && styles.fileRowActionDisabled,
-                        pressed && !actioning && styles.pressed,
+                        discardPending && styles.fileRowActionDisabled,
+                        pressed && !discardPending && styles.pressed,
                       ]}
                     >
                       <Trash2 color={colors.danger} size={14} />
@@ -166,7 +176,7 @@ type DiffRow = {
   key: string;
 };
 
-export function DiffBlock({
+export const DiffBlock = memo(function DiffBlock({
   diff,
   onInteractionChange,
 }: {
@@ -174,8 +184,11 @@ export function DiffBlock({
   onInteractionChange: (active: boolean) => void;
 }) {
   const { styles } = useTheme();
-  const lines = diff.lines ?? fallbackDiffLines(diff.content);
-  const [viewportWidth, setViewportWidth] = useState(1);
+  const lines = useMemo(
+    () => diff.lines ?? fallbackDiffLines(diff.content),
+    [diff.content, diff.lines],
+  );
+  const { width: windowWidth } = useWindowDimensions();
   const endInteraction = useCallback(() => {
     onInteractionChange(false);
   }, [onInteractionChange]);
@@ -201,14 +214,14 @@ export function DiffBlock({
   const estimatedContentWidth = useMemo(
     () =>
       Math.max(
-        viewportWidth,
+        windowWidth,
         rows.reduce(
           (width, row) =>
             Math.max(width, Math.min(row.text.length, 2200) * 7.2 + 24),
           0,
         ),
       ),
-    [rows, viewportWidth],
+    [rows, windowWidth],
   );
   const listHeight = Math.max(38, Math.min(520, rows.length * 19 + 16));
   const renderLine = useCallback(
@@ -217,15 +230,7 @@ export function DiffBlock({
   );
 
   return (
-    <View
-      onLayout={(event) => {
-        const nextWidth = Math.max(1, event.nativeEvent.layout.width);
-        setViewportWidth((current) =>
-          Math.abs(current - nextWidth) > 1 ? nextWidth : current,
-        );
-      }}
-      style={styles.diffBlock}
-    >
+    <View style={styles.diffBlock}>
       <ScrollView
         horizontal
         contentContainerStyle={styles.diffScrollerContent}
@@ -249,9 +254,9 @@ export function DiffBlock({
               length: 19,
               offset: 19 * index,
             })}
-            initialNumToRender={28}
+            initialNumToRender={14}
             keyExtractor={(item) => item.key}
-            maxToRenderPerBatch={36}
+            maxToRenderPerBatch={18}
             nestedScrollEnabled
             onMomentumScrollEnd={endInteraction}
             onScrollBeginDrag={() => onInteractionChange(true)}
@@ -265,13 +270,13 @@ export function DiffBlock({
               { height: listHeight, width: estimatedContentWidth },
             ]}
             updateCellsBatchingPeriod={16}
-            windowSize={7}
+            windowSize={5}
           />
         )}
       </ScrollView>
     </View>
   );
-}
+});
 
 function SelectableDiffBlock({ rows }: { rows: DiffRow[] }) {
   const { styles } = useTheme();
@@ -300,6 +305,7 @@ function SelectableDiffBlock({ rows }: { rows: DiffRow[] }) {
 
 const DiffLineRow = memo(function DiffLineRow({ row }: { row: DiffRow }) {
   const { styles } = useTheme();
+  const renderPlainText = row.line.tokens.length > PLAIN_TEXT_TOKEN_LIMIT;
 
   return (
     <Text
@@ -307,14 +313,16 @@ const DiffLineRow = memo(function DiffLineRow({ row }: { row: DiffRow }) {
       selectable
       style={[styles.diffLineText, diffLineStyle(row.line.kind, styles)]}
     >
-      {row.line.tokens.map((token, tokenIndex) => (
-        <Text
-          key={`${tokenIndex}:${token.text}`}
-          style={tokenStyle(token.kind, styles)}
-        >
-          {token.text}
-        </Text>
-      ))}
+      {renderPlainText
+        ? row.text
+        : row.line.tokens.map((token, tokenIndex) => (
+            <Text
+              key={`${tokenIndex}:${token.text}`}
+              style={tokenStyle(token.kind, styles)}
+            >
+              {token.text}
+            </Text>
+          ))}
     </Text>
   );
 });
