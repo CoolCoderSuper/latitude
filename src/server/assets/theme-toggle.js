@@ -3,7 +3,7 @@
   var toggle = document.querySelector('[data-latitude-theme-toggle]');
 
   var embeddedInT3Code = (document.cookie ? document.cookie.split(';') : []).some(function(part) {
-    return part.trim() === 'latitude_t3code_embed=1';
+    return part.trim() === 'latitude_t3code_embed_session=1';
   });
   if (embeddedInT3Code) {
     if (toggle) {

@@ -133,9 +133,7 @@ pub(super) fn t3code_embed_set_cookies(
 ) -> [String; 3] {
     [
         public_auth_set_cookie(state, password),
-        format!(
-            "{T3CODE_EMBED_COOKIE}=1; SameSite=Lax; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE_SECONDS}"
-        ),
+        format!("{T3CODE_EMBED_COOKIE}=1; SameSite=Lax; Path=/"),
         format!(
             "{LATITUDE_THEME_COOKIE}={theme}; SameSite=Lax; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE_SECONDS}"
         ),

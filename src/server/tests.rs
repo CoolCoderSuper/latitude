@@ -26,7 +26,7 @@ use super::{
     assets::{embedded_asset_names, public_asset},
     auth::{
         clean_next_path, open_t3code_embed, public_password_matches,
-        public_request_is_authenticated,
+        public_request_is_authenticated, request_is_t3code_embed,
     },
     command::{
         CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_t3code_embed_session,
@@ -255,11 +255,33 @@ async fn t3code_embed_session_authenticates_the_browser_and_carries_theme() {
             .iter()
             .any(|cookie| cookie.starts_with(&format!("{T3CODE_EMBED_COOKIE}=1")))
     );
+    let embed_cookie = cookies
+        .iter()
+        .find(|cookie| cookie.starts_with(&format!("{T3CODE_EMBED_COOKIE}=1")))
+        .unwrap();
+    assert!(!embed_cookie.contains("Max-Age="));
+    assert!(!embed_cookie.contains("Expires="));
     assert!(
         cookies
             .iter()
             .any(|cookie| cookie.starts_with(&format!("{LATITUDE_THEME_COOKIE}=dark")))
     );
+}
+
+#[test]
+fn t3code_embed_session_ignores_the_legacy_persistent_cookie() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::COOKIE,
+        HeaderValue::from_static("latitude_t3code_embed=1"),
+    );
+    assert!(!request_is_t3code_embed(&headers));
+
+    headers.insert(
+        header::COOKIE,
+        HeaderValue::from_static("latitude_t3code_embed_session=1"),
+    );
+    assert!(request_is_t3code_embed(&headers));
 }
 
 #[tokio::test]
