@@ -2,6 +2,16 @@
   var cookieName = "latitude_theme";
   var toggle = document.querySelector('[data-latitude-theme-toggle]');
 
+  var embeddedInT3Code = (document.cookie ? document.cookie.split(';') : []).some(function(part) {
+    return part.trim() === 'latitude_t3code_embed=1';
+  });
+  if (embeddedInT3Code) {
+    if (toggle) {
+      toggle.remove();
+    }
+    return;
+  }
+
   function cleanTheme(value) {
     return value === 'light' || value === 'dark' ? value : null;
   }

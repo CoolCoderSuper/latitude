@@ -1,12 +1,16 @@
 use axum::{
     body::Body,
+    extract::State,
     http::{HeaderMap, Method, Request, Response, StatusCode, header},
 };
 
 use crate::{config::BootConfig, state::AppState};
 
 use super::{
-    constants::{AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, LOGIN_PATH},
+    constants::{
+        AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH,
+        T3CODE_EMBED_COOKIE,
+    },
     render::render_public_login,
     response::{internal_response, json_error},
 };
@@ -120,6 +124,59 @@ pub(super) fn public_auth_set_cookie(state: &AppState, password: &str) -> String
     format!(
         "{AUTH_COOKIE_NAME}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE_SECONDS}"
     )
+}
+
+pub(super) fn t3code_embed_set_cookies(
+    state: &AppState,
+    password: &str,
+    theme: &str,
+) -> [String; 3] {
+    [
+        public_auth_set_cookie(state, password),
+        format!(
+            "{T3CODE_EMBED_COOKIE}=1; SameSite=Lax; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE_SECONDS}"
+        ),
+        format!(
+            "{LATITUDE_THEME_COOKIE}={theme}; SameSite=Lax; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE_SECONDS}"
+        ),
+    ]
+}
+
+pub(super) fn request_is_t3code_embed(headers: &HeaderMap) -> bool {
+    header_cookie_value(headers, T3CODE_EMBED_COOKIE).as_deref() == Some("1")
+}
+
+pub(super) async fn open_t3code_embed(
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let query = req.uri().query().unwrap_or_default();
+    let values = url::form_urlencoded::parse(query.as_bytes())
+        .into_owned()
+        .collect::<std::collections::HashMap<_, _>>();
+    let config = state.config_snapshot().await;
+    let token = values.get("token").map(String::as_str);
+    if !public_headers_are_authenticated(&state, &config, req.headers(), token) {
+        return public_api_auth_challenge();
+    }
+    let theme = match values.get("theme").map(String::as_str) {
+        Some("light") => "light",
+        Some("dark") => "dark",
+        _ => return json_error(StatusCode::BAD_REQUEST, "invalid theme"),
+    };
+    let next = clean_next_path(values.get("next").cloned());
+    let mut response = Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, next)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::empty())
+        .unwrap_or_else(internal_response);
+    for cookie in t3code_embed_set_cookies(&state, &config.public_password, theme) {
+        if let Ok(value) = cookie.parse() {
+            response.headers_mut().append(header::SET_COOKIE, value);
+        }
+    }
+    response
 }
 
 pub(super) fn public_login_success_response(next: &str, set_cookie: String) -> Response<Body> {

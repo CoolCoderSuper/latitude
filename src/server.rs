@@ -28,11 +28,13 @@ use tracing::info;
 use crate::state::AppState;
 
 use assets::{ASSET_BASE_PATH, public_asset};
+use auth::open_t3code_embed;
 use command::{
     command_health, create_deployment_share, create_project, create_project_deployment,
-    delete_deployment_share, delete_project, delete_project_deployment, get_config,
-    get_deployment_share, get_project, get_project_deployment, get_project_page_content,
-    list_deployment_shares, list_project_deployments, list_projects, put_config, replace_project,
+    create_t3code_embed_session, delete_deployment_share, delete_project,
+    delete_project_deployment, get_config, get_deployment_share, get_project,
+    get_project_deployment, get_project_page_content, list_deployment_shares,
+    list_project_deployments, list_projects, put_config, replace_project,
     replace_project_deployment, upsert_project_page,
 };
 use constants::{
@@ -44,6 +46,7 @@ use constants::{
     PUBLIC_API_ROOT_TERMINAL_SESSION_PATH, PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH,
     PUBLIC_API_SESSION_PATH, PUBLIC_API_SHARE_PATH, PUBLIC_API_SHARES_PATH,
     PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH, PUBLIC_TERMINAL_WS_PATH,
+    T3CODE_EMBED_PATH,
 };
 use desktop_api::{
     public_api_get_root_desktop, public_api_patch_root_desktop, public_root_desktop_ws,
@@ -113,6 +116,7 @@ fn public_router(state: AppState) -> Router {
         .route(LOGIN_PATH, get(get_public_login).post(post_public_login))
         .route("/__latitude/t3code", get(open_t3code))
         .route("/__latitude/t3code/{project}", get(open_project_in_t3code))
+        .route(T3CODE_EMBED_PATH, get(open_t3code_embed))
         .route(
             PUBLIC_API_SESSION_PATH,
             get(public_api_session).post(public_api_login),
@@ -198,6 +202,7 @@ fn command_router(state: AppState) -> Router {
     let api = Router::new()
         .route("/config", get(get_config).put(put_config))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/t3code/embed-session", post(create_t3code_embed_session))
         .route(
             "/projects/{project}",
             get(get_project).put(replace_project).delete(delete_project),

@@ -24,11 +24,15 @@ use crate::{
 
 use super::{
     assets::{embedded_asset_names, public_asset},
-    auth::{clean_next_path, public_password_matches, public_request_is_authenticated},
-    command::{
-        CreateDeploymentShareRequest, get_config, get_project_deployment, get_project_page_content,
+    auth::{
+        clean_next_path, open_t3code_embed, public_password_matches,
+        public_request_is_authenticated,
     },
-    constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH},
+    command::{
+        CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_t3code_embed_session,
+        get_config, get_project_deployment, get_project_page_content,
+    },
+    constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, T3CODE_EMBED_COOKIE},
     files_api::public_ui_put_project_file,
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, GitStatusSummary,
@@ -210,6 +214,80 @@ async fn authenticates_public_requests_with_bearer_token() {
         .unwrap();
 
     assert!(public_request_is_authenticated(&state, &config, &req));
+}
+
+#[tokio::test]
+async fn t3code_embed_session_authenticates_the_browser_and_carries_theme() {
+    let config = BootConfig::default();
+    let state = test_state_with_seed(config.clone(), demo_seed(Vec::new())).await;
+    let response = create_t3code_embed_session(
+        State(state.clone()),
+        axum::Json(T3CodeEmbedSessionRequest {
+            project: "demo".to_string(),
+            theme: "dark".to_string(),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let href = value["href"].as_str().unwrap();
+    assert!(href.starts_with("/__latitude/t3code/embed?"));
+
+    let request = Request::builder().uri(href).body(Body::empty()).unwrap();
+    let response = open_t3code_embed(State(state), request).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/demo");
+    let cookies = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .map(|value| value.to_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        cookies
+            .iter()
+            .any(|cookie| cookie.starts_with(AUTH_COOKIE_NAME))
+    );
+    assert!(
+        cookies
+            .iter()
+            .any(|cookie| cookie.starts_with(&format!("{T3CODE_EMBED_COOKIE}=1")))
+    );
+    assert!(
+        cookies
+            .iter()
+            .any(|cookie| cookie.starts_with(&format!("{LATITUDE_THEME_COOKIE}=dark")))
+    );
+}
+
+#[tokio::test]
+async fn embedded_project_page_hides_open_in_t3code() {
+    let config = BootConfig {
+        t3code: T3CodeConfig {
+            enabled: true,
+            ..T3CodeConfig::default()
+        },
+        ..BootConfig::default()
+    };
+    let state = test_state_with_seed(config.clone(), demo_seed(Vec::new())).await;
+    let auth = state.public_auth_cookie_value(&config.public_password);
+    let request = Request::builder()
+        .uri("/demo")
+        .header(
+            header::COOKIE,
+            format!(
+                "{AUTH_COOKIE_NAME}={auth}; {T3CODE_EMBED_COOKIE}=1; {LATITUDE_THEME_COOKIE}=light"
+            ),
+        )
+        .body(Body::empty())
+        .unwrap();
+    let response = public_entry(State(state), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let rendered = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!rendered.contains("Open in T3 Code"));
 }
 
 #[tokio::test]

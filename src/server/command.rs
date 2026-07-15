@@ -50,6 +50,55 @@ pub(in crate::server) struct DeploymentShareResponse {
     expired: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub(super) struct T3CodeEmbedSessionRequest {
+    pub(in crate::server) project: String,
+    pub(in crate::server) theme: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct T3CodeEmbedSessionResponse {
+    pub(in crate::server) href: String,
+}
+
+pub(super) async fn create_t3code_embed_session(
+    State(state): State<AppState>,
+    Json(request): Json<T3CodeEmbedSessionRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let theme = match request.theme.as_str() {
+        "light" => "light",
+        "dark" => "dark",
+        _ => {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "theme must be 'light' or 'dark'",
+            ));
+        }
+    };
+    if state
+        .catalog()
+        .get_project(&request.project)
+        .await?
+        .is_none()
+    {
+        return Err(ApiError::not_found(format!(
+            "project '{}' was not found",
+            request.project
+        )));
+    }
+    let config = state.config_snapshot().await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let next = format!("/{}", request.project);
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("token", &token)
+        .append_pair("next", &next)
+        .append_pair("theme", theme)
+        .finish();
+    Ok(Json(T3CodeEmbedSessionResponse {
+        href: format!("/__latitude/t3code/embed?{query}"),
+    }))
+}
+
 pub(super) async fn command_health(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {

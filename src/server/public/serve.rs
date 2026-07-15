@@ -24,7 +24,7 @@ use super::super::{
     auth::{
         clean_next_path, header_cookie_value, parse_public_login_form, public_auth_challenge,
         public_login_success_response, public_password_matches, public_request_is_authenticated,
-        request_bearer_token,
+        request_bearer_token, request_is_t3code_embed,
     },
     constants::{
         AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
@@ -770,10 +770,11 @@ async fn serve_project_home(
         );
     }
 
+    let show_t3code = t3code_enabled && !request_is_t3code_embed(req.headers());
     let git_status = super::super::git::collect_project_git_status(&project.project_dir).await;
     html_response(
         req.method(),
-        render_project_home(project, &git_status, t3code_enabled, device_hostname),
+        render_project_home(project, &git_status, show_t3code, device_hostname),
     )
 }
 
@@ -1049,12 +1050,16 @@ async fn serve_server_home(
             .collect::<std::collections::HashSet<_>>();
         projects.retain(|project| !archived.contains(&project.name));
     }
+    let show_t3code = config.t3code.enabled && !request_is_t3code_embed(req.headers());
     let git_statuses = super::project_git_statuses(&projects).await;
+
+    let mut rendered_config = config.clone();
+    rendered_config.t3code.enabled = show_t3code;
 
     html_response(
         req.method(),
         render_server_home(
-            config,
+            &rendered_config,
             &projects,
             &git_statuses,
             &worktrees,
