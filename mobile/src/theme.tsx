@@ -1004,6 +1004,20 @@ function createStyles(colors: ThemeColors) {
     alignItems: 'center',
     gap: 8,
   },
+  fileSelect: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: colors.border,
+    borderRadius: 6,
+    backgroundColor: colors.panel,
+  },
+  fileSelectSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accent,
+  },
   fileRowActions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -7,6 +7,13 @@
   let refreshTimer = null;
   let autoRefreshPending = false;
   let commitMessage = '';
+  let selectedPaths = {
+    unstaged: new Set(),
+    staged: new Set(),
+  };
+  let pointerInteractionActive = false;
+  let interactionBlockedUntil = 0;
+  let forceNextRefresh = false;
 
   const cardKey = (card) => {
     const section = card.dataset.fileSection;
@@ -38,7 +45,19 @@
 
   workspace.addEventListener('htmx:beforeSwap', (event) => {
     if (requestVerb(event) !== 'get') return;
+    if (
+      (!forceNextRefresh && userIsInteracting())
+      || !diffContentChanged(event.detail.xhr?.responseText || '')
+    ) {
+      forceNextRefresh = false;
+      event.detail.shouldSwap = false;
+      autoRefreshPending = false;
+      hideStatus();
+      return;
+    }
+    forceNextRefresh = false;
     commitMessage = workspace.querySelector('[data-commit-message]')?.value || '';
+    captureSelections();
     openKeys = new Set(
       Array.from(workspace.querySelectorAll('details.file-card[open]'))
         .map(cardKey)
@@ -54,10 +73,37 @@
     workspace.querySelectorAll('details.file-card').forEach((card) => {
       if (openKeys.has(cardKey(card))) card.open = true;
     });
+    restoreSelection();
   });
+
+  workspace.addEventListener('click', (event) => {
+    if (event.target.matches('[data-file-select]')) event.stopPropagation();
+  });
+
+  workspace.addEventListener('change', (event) => {
+    if (!event.target.matches('[data-file-select]')) return;
+    captureSelections();
+    updateSelectionActions();
+  });
+
+  workspace.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('button, input, a, form')) return;
+    pointerInteractionActive = true;
+  });
+
+  document.addEventListener('pointerup', () => {
+    if (!pointerInteractionActive) return;
+    pointerInteractionActive = false;
+    blockRefreshFor(5000);
+  });
+
+  workspace.addEventListener('scroll', () => blockRefreshFor(3000), true);
+  window.addEventListener('scroll', () => blockRefreshFor(3000), { passive: true });
+  workspace.addEventListener('wheel', () => blockRefreshFor(3000), { passive: true });
 
   workspace.addEventListener('htmx:responseError', (event) => {
     autoRefreshPending = false;
+    forceNextRefresh = false;
     const message = event.detail.xhr?.responseText?.trim()
       || 'The Git action could not be completed.';
     showStatus(message, true);
@@ -96,7 +142,109 @@
       updatePanel(panel);
     });
     htmx.process(workspace);
+    restoreSelection();
     return true;
+  }
+
+  function restoreSelection() {
+    const availablePaths = {
+      unstaged: new Set(),
+      staged: new Set(),
+    };
+    workspace.querySelectorAll('[data-file-select]').forEach((checkbox) => {
+      const kind = checkbox.dataset.selectionKind;
+      availablePaths[kind].add(checkbox.value);
+      checkbox.checked = selectedPaths[kind].has(checkbox.value);
+    });
+    for (const kind of ['unstaged', 'staged']) {
+      selectedPaths[kind] = new Set(
+        Array.from(selectedPaths[kind]).filter((path) => availablePaths[kind].has(path)),
+      );
+    }
+    updateSelectionActions();
+  }
+
+  function captureSelections() {
+    for (const kind of ['unstaged', 'staged']) {
+      selectedPaths[kind] = new Set(
+        Array.from(workspace.querySelectorAll(
+          `[data-file-select][data-selection-kind="${kind}"]:checked`,
+        )).map((checkbox) => checkbox.value),
+      );
+    }
+  }
+
+  function updateSelectionActions() {
+    updateSelectionAction('unstaged', 'stage', 'Stage');
+    updateSelectionAction('staged', 'unstage', 'Unstage');
+  }
+
+  function updateSelectionAction(kind, actionVerb, labelVerb) {
+    const button = workspace.querySelector(`[data-${actionVerb}-action]`);
+    if (!button) return;
+    const form = button.closest('form');
+    form.querySelectorAll('[data-selected-path]').forEach((input) => input.remove());
+    const paths = Array.from(workspace.querySelectorAll(
+      `[data-file-select][data-selection-kind="${kind}"]:checked`,
+    )).map((checkbox) => checkbox.value);
+    for (const path of paths) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'path';
+      input.value = path;
+      input.dataset.selectedPath = '';
+      form.append(input);
+    }
+    const count = paths.length;
+    const action = count > 0 ? `${actionVerb}_selected` : `${actionVerb}_all`;
+    button.value = action;
+    button.dataset.gitAction = action;
+    button.textContent = count > 0
+      ? `${labelVerb} selected (${count})`
+      : `${labelVerb} all`;
+  }
+
+  function diffContentChanged(responseText) {
+    const incoming = new DOMParser().parseFromString(responseText, 'text/html');
+    return diffSnapshot(workspace) !== diffSnapshot(incoming);
+  }
+
+  function diffSnapshot(root) {
+    const overview = root.querySelector('.git-overview')?.outerHTML || '';
+    const panels = Array.from(root.querySelectorAll('[data-file-panel]')).map((panel) => {
+      const clone = panel.cloneNode(true);
+      clone.querySelectorAll('details[open]').forEach((details) => details.removeAttribute('open'));
+      clone.querySelectorAll('[data-file-select]').forEach((checkbox) => {
+        checkbox.checked = false;
+      });
+      const button = clone.querySelector('[data-stage-action]');
+      if (button) {
+        button.value = 'stage_all';
+        button.dataset.gitAction = 'stage_all';
+        button.textContent = 'Stage all';
+      }
+      return clone.outerHTML;
+    });
+    return `${overview}\n${panels.join('\n')}`;
+  }
+
+  function blockRefreshFor(milliseconds) {
+    interactionBlockedUntil = Math.max(interactionBlockedUntil, Date.now() + milliseconds);
+  }
+
+  function userIsInteracting() {
+    const selection = window.getSelection();
+    const selectionIsInsideWorkspace = Boolean(
+      selection
+      && !selection.isCollapsed
+      && selection.anchorNode
+      && workspace.contains(selection.anchorNode),
+    );
+    return (
+      pointerInteractionActive
+      || Date.now() < interactionBlockedUntil
+      || selectionIsInsideWorkspace
+    );
   }
 
   function updatePanel(panel) {
@@ -121,6 +269,8 @@
 
   function scheduleFullRefresh() {
     clearTimeout(refreshTimer);
+    autoRefreshPending = false;
+    forceNextRefresh = true;
     showStatus('Refreshing changes in the background…', false);
     refreshTimer = window.setTimeout(() => {
       htmx.ajax('GET', actionUrl, {
@@ -135,6 +285,7 @@
     if (
       autoRefreshPending
       || document.hidden
+      || userIsInteracting()
       || workspace.querySelector('.git-action-pending')
       || document.activeElement?.matches('[data-commit-message]')
     ) return;
@@ -171,6 +322,7 @@
     }
   });
   void fetchRemote();
+  restoreSelection();
 
   function showStatus(message, isError) {
     const status = workspace.querySelector('[data-action-status]');

@@ -211,8 +211,10 @@ export type GitCommitResponse = GitCommitSummary & {
 export type GitActionName =
   | 'stage_all'
   | 'stage_file'
+  | 'stage_selected'
   | 'unstage_all'
   | 'unstage_file'
+  | 'unstage_selected'
   | 'discard_all'
   | 'discard_file'
   | 'commit'
@@ -223,6 +225,7 @@ export type GitActionName =
 export type GitActionPayload = {
   action: GitActionName;
   path?: string;
+  paths?: string[];
   message?: string;
 };
 

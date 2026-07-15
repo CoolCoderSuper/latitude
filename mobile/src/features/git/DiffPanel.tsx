@@ -33,6 +33,10 @@ export function DiffPanel({
   const { colors, styles } = useTheme();
   const [diff, setDiff] = useState<GitDiffResponse | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [selectedStagedPaths, setSelectedStagedPaths] = useState<Set<string>>(
+    new Set(),
+  );
   const [loading, setLoading] = useState(true);
   const [pendingActionKeys, setPendingActionKeys] = useState<Set<string>>(
     new Set(),
@@ -133,6 +137,12 @@ export function DiffPanel({
           if (response.ok && payload.action === 'commit') {
             setMessage('');
           }
+          if (response.ok && payload.action === 'stage_selected') {
+            setSelectedPaths(new Set());
+          }
+          if (response.ok && payload.action === 'unstage_selected') {
+            setSelectedStagedPaths(new Set());
+          }
         } catch (actionError) {
           setNotice(errorMessage(actionError));
           setNoticeTone('error');
@@ -194,6 +204,45 @@ export function DiffPanel({
   const staged = diff?.file_changes.filter(canUnstage) ?? [];
   const refreshControl = useRefreshControl(loading, loadDiff);
 
+  useEffect(() => {
+    const availablePaths = new Set(
+      (diff?.file_changes ?? []).filter(canStage).map((change) => change.path),
+    );
+    setSelectedPaths((current) => {
+      const next = new Set(
+        Array.from(current).filter((path) => availablePaths.has(path)),
+      );
+      return next.size === current.size ? current : next;
+    });
+    const availableStagedPaths = new Set(
+      (diff?.file_changes ?? []).filter(canUnstage).map((change) => change.path),
+    );
+    setSelectedStagedPaths((current) => {
+      const next = new Set(
+        Array.from(current).filter((path) => availableStagedPaths.has(path)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [diff]);
+
+  const toggleSelected = useCallback((path: string) => {
+    setSelectedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
+  const toggleStagedSelected = useCallback((path: string) => {
+    setSelectedStagedPaths((current) => {
+      const next = new Set(current);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, []);
+
   return (
     <ScrollView
       contentContainerStyle={styles.screenContent}
@@ -204,23 +253,51 @@ export function DiffPanel({
         <AppButton
           compact
           disabled={
-            pendingActionKeys.has('stage_all') || unstaged.length === 0
+            pendingActionKeys.has('stage_all') ||
+            pendingActionKeys.has('stage_selected') ||
+            unstaged.length === 0
           }
           icon={<Upload color={colors.onAccent} size={16} />}
-          label="Stage all"
+          label={
+            selectedPaths.size > 0
+              ? `Stage selected (${selectedPaths.size})`
+              : 'Stage all'
+          }
           onPress={() =>
-            runAction({ action: 'stage_all' }, 'All changes staged.')
+            selectedPaths.size > 0
+              ? runAction(
+                  {
+                    action: 'stage_selected',
+                    paths: Array.from(selectedPaths),
+                  },
+                  `${selectedPaths.size} ${selectedPaths.size === 1 ? 'file' : 'files'} staged.`,
+                )
+              : runAction({ action: 'stage_all' }, 'All changes staged.')
           }
         />
         <AppButton
           compact
           disabled={
-            pendingActionKeys.has('unstage_all') || staged.length === 0
+            pendingActionKeys.has('unstage_all') ||
+            pendingActionKeys.has('unstage_selected') ||
+            staged.length === 0
           }
           icon={<Download color={colors.text} size={16} />}
-          label="Unstage all"
+          label={
+            selectedStagedPaths.size > 0
+              ? `Unstage selected (${selectedStagedPaths.size})`
+              : 'Unstage all'
+          }
           onPress={() =>
-            runAction({ action: 'unstage_all' }, 'All changes unstaged.')
+            selectedStagedPaths.size > 0
+              ? runAction(
+                  {
+                    action: 'unstage_selected',
+                    paths: Array.from(selectedStagedPaths),
+                  },
+                  `${selectedStagedPaths.size} ${selectedStagedPaths.size === 1 ? 'file' : 'files'} unstaged.`,
+                )
+              : runAction({ action: 'unstage_all' }, 'All changes unstaged.')
           }
           variant="secondary"
         />
@@ -326,8 +403,10 @@ export function DiffPanel({
             }
             onCodeInteractionChange={onCodeInteractionChange}
             onDiscard={confirmDiscardFile}
+            onSelectionToggle={toggleSelected}
             onToggle={(path) => toggleExpanded(setExpanded, path)}
             pendingActionKeys={pendingActionKeys}
+            selectedPaths={selectedPaths}
             section="unstaged"
             title="Unstaged"
           />
@@ -342,8 +421,10 @@ export function DiffPanel({
               )
             }
             onCodeInteractionChange={onCodeInteractionChange}
+            onSelectionToggle={toggleStagedSelected}
             onToggle={(path) => toggleExpanded(setExpanded, path)}
             pendingActionKeys={pendingActionKeys}
+            selectedPaths={selectedStagedPaths}
             section="staged"
             title="Staged"
           />

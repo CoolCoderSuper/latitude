@@ -220,8 +220,8 @@ fn git_action_panel(action_url: &str) -> Markup {
     html! {
         section class="action-panel" {
             div class="action-group" {
-                (git_action_button(action_url, "stage_all", "Stage all"))
-                (git_action_button(action_url, "unstage_all", "Unstage all"))
+                (git_stage_action_button(action_url))
+                (git_unstage_action_button(action_url))
                 (git_destructive_action_button(
                     action_url,
                     "discard_all",
@@ -246,6 +246,22 @@ fn git_action_button(action_url: &str, action: &str, label: &str) -> Markup {
     html! {
         form class="git-action-form" hx-patch=(action_url) hx-swap="none" {
             button type="submit" name="action" value=(action) data-git-action=(action) { (label) }
+        }
+    }
+}
+
+fn git_stage_action_button(action_url: &str) -> Markup {
+    html! {
+        form id="stage-action-form" class="git-action-form" hx-patch=(action_url) hx-swap="none" {
+            button type="submit" name="action" value="stage_all" data-git-action="stage_all" data-stage-action { "Stage all" }
+        }
+    }
+}
+
+fn git_unstage_action_button(action_url: &str) -> Markup {
+    html! {
+        form id="unstage-action-form" class="git-action-form" hx-patch=(action_url) hx-swap="none" {
+            button type="submit" name="action" value="unstage_all" data-git-action="unstage_all" data-unstage-action { "Unstage all" }
         }
     }
 }
@@ -307,10 +323,15 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind, action_url: &str
         .iter()
         .filter(|diff| kind.includes_diff(diff))
         .collect::<Vec<_>>();
+    let (selection_form, selection_action) = match kind {
+        FileSectionKind::Unstaged => ("stage-action-form", "staging"),
+        FileSectionKind::Staged => ("unstage-action-form", "unstaging"),
+    };
 
     html! {
         details class="file-card" data-file-section=(kind.data_key()) data-file-path=(&change.path) {
             summary class="file-summary" {
+                input class="file-select" type="checkbox" value=(&change.path) form=(selection_form) data-file-select data-selection-kind=(kind.data_key()) aria-label=(format!("Select {} for {selection_action}", change.path));
                 div class="status-code" { (change.status_label()) }
                 div class="file-path" {
                     (&change.path)

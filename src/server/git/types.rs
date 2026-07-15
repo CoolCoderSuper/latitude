@@ -104,8 +104,10 @@ pub(in crate::server) struct GitCommit {
 pub(in crate::server) enum GitAction {
     StageAll,
     StageFile { path: String },
+    StageFiles { paths: Vec<String> },
     UnstageAll,
     UnstageFile { path: String },
+    UnstageFiles { paths: Vec<String> },
     DiscardAll,
     DiscardFile { path: String },
     Commit { message: String },

@@ -22,6 +22,7 @@ use super::{
 struct PublicGitActionPayload {
     action: String,
     path: Option<String>,
+    paths: Option<Vec<String>>,
     message: Option<String>,
 }
 
@@ -32,9 +33,15 @@ impl PublicGitActionPayload {
             "stage_file" => Ok(GitAction::StageFile {
                 path: clean_git_form_path(self.path)?,
             }),
+            "stage_selected" => Ok(GitAction::StageFiles {
+                paths: clean_git_form_paths(self.paths.unwrap_or_default())?,
+            }),
             "unstage_all" => Ok(GitAction::UnstageAll),
             "unstage_file" => Ok(GitAction::UnstageFile {
                 path: clean_git_form_path(self.path)?,
+            }),
+            "unstage_selected" => Ok(GitAction::UnstageFiles {
+                paths: clean_git_form_paths(self.paths.unwrap_or_default())?,
             }),
             "discard_all" => Ok(GitAction::DiscardAll),
             "discard_file" => Ok(GitAction::DiscardFile {
@@ -94,8 +101,14 @@ pub(in crate::server) async fn execute_git_action(
             )
             .await
         }
+        GitAction::StageFiles { paths } => {
+            let mut args = vec!["add".to_string(), "--".to_string()];
+            args.extend(paths);
+            run_git_action_text_owned(&repo_dir, "Stage selected files", &args, &[0]).await
+        }
         GitAction::UnstageAll => unstage_all(&repo_dir).await,
         GitAction::UnstageFile { path } => unstage_file(&repo_dir, path).await,
+        GitAction::UnstageFiles { paths } => unstage_files(&repo_dir, paths).await,
         GitAction::DiscardAll => discard_unstaged_all(&repo_dir).await,
         GitAction::DiscardFile { path } => discard_unstaged_file(&repo_dir, path).await,
         GitAction::Commit { message } => {
@@ -245,16 +258,45 @@ async fn unstage_all(repo_dir: &Path) -> Result<(), String> {
     }
 }
 
+async fn unstage_files(repo_dir: &Path, paths: Vec<String>) -> Result<(), String> {
+    let has_head = run_git_command(repo_dir, &["rev-parse", "--verify", "HEAD"], &[0])
+        .await
+        .is_ok();
+    let mut args = if has_head {
+        vec![
+            "reset".to_string(),
+            "-q".to_string(),
+            "HEAD".to_string(),
+            "--".to_string(),
+        ]
+    } else {
+        vec![
+            "rm".to_string(),
+            "--cached".to_string(),
+            "-r".to_string(),
+            "--ignore-unmatch".to_string(),
+            "--".to_string(),
+        ]
+    };
+    args.extend(paths);
+    run_git_action_text_owned(repo_dir, "Unstage selected files", &args, &[0]).await
+}
+
 pub(in crate::server) fn parse_git_action_form(body: &[u8]) -> Result<GitAction, String> {
     let mut action = None;
     let mut message = None;
     let mut path = None;
+    let mut paths = Vec::new();
 
     for (key, value) in url::form_urlencoded::parse(body) {
         match key.as_ref() {
             "action" => action = Some(value.into_owned()),
             "message" => message = Some(value.into_owned()),
-            "path" => path = Some(value.into_owned()),
+            "path" => {
+                let value = value.into_owned();
+                path = Some(value.clone());
+                paths.push(value);
+            }
             _ => {}
         }
     }
@@ -265,11 +307,17 @@ pub(in crate::server) fn parse_git_action_form(body: &[u8]) -> Result<GitAction,
             let path = clean_git_form_path(path)?;
             Ok(GitAction::StageFile { path })
         }
+        Some("stage_selected") => Ok(GitAction::StageFiles {
+            paths: clean_git_form_paths(paths)?,
+        }),
         Some("unstage_all") => Ok(GitAction::UnstageAll),
         Some("unstage_file") => {
             let path = clean_git_form_path(path)?;
             Ok(GitAction::UnstageFile { path })
         }
+        Some("unstage_selected") => Ok(GitAction::UnstageFiles {
+            paths: clean_git_form_paths(paths)?,
+        }),
         Some("discard_all") => Ok(GitAction::DiscardAll),
         Some("discard_file") => {
             let path = clean_git_form_path(path)?;
@@ -313,5 +361,20 @@ fn clean_git_form_path(path: Option<String>) -> Result<String, String> {
         Err("path is required".to_string())
     } else {
         Ok(path)
+    }
+}
+
+fn clean_git_form_paths(paths: Vec<String>) -> Result<Vec<String>, String> {
+    let mut cleaned = Vec::new();
+    for path in paths {
+        let path = clean_git_form_path(Some(path))?;
+        if !cleaned.contains(&path) {
+            cleaned.push(path);
+        }
+    }
+    if cleaned.is_empty() {
+        Err("at least one path is required".to_string())
+    } else {
+        Ok(cleaned)
     }
 }

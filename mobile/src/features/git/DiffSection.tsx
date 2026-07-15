@@ -1,4 +1,4 @@
-import { Download, Trash2, Upload } from 'lucide-react-native';
+import { Check, Download, Trash2, Upload } from 'lucide-react-native';
 import { memo, useCallback, useMemo } from 'react';
 import {
   FlatList,
@@ -32,8 +32,10 @@ export function DiffSection({
   onAction,
   onCodeInteractionChange,
   onDiscard,
+  onSelectionToggle,
   onToggle,
   pendingActionKeys,
+  selectedPaths,
   section,
   title,
 }: {
@@ -43,8 +45,10 @@ export function DiffSection({
   onAction: (change: GitFileChange) => void;
   onCodeInteractionChange: (active: boolean) => void;
   onDiscard?: (change: GitFileChange) => void;
+  onSelectionToggle?: (path: string) => void;
   onToggle: (path: string) => void;
   pendingActionKeys: ReadonlySet<string>;
+  selectedPaths?: ReadonlySet<string>;
   section: 'unstaged' | 'staged';
   title: string;
 }) {
@@ -75,9 +79,34 @@ export function DiffSection({
           const discardPending = pendingActionKeys.has(
             `discard_file:${change.path}`,
           );
+          const selected = selectedPaths?.has(change.path) ?? false;
+          const selectionPending = pendingActionKeys.has(
+            section === 'unstaged' ? 'stage_selected' : 'unstage_selected',
+          );
           return (
             <View key={`${section}:${change.path}`} style={styles.fileCard}>
               <View style={styles.fileSummary}>
+                {onSelectionToggle && (
+                  <Pressable
+                    accessibilityLabel={`Select ${change.path} for ${section === 'unstaged' ? 'staging' : 'unstaging'}`}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{
+                      checked: selected,
+                      disabled: selectionPending,
+                    }}
+                    disabled={selectionPending}
+                    hitSlop={6}
+                    onPress={() => onSelectionToggle(change.path)}
+                    style={({ pressed }) => [
+                      styles.fileSelect,
+                      selected && styles.fileSelectSelected,
+                      selectionPending && styles.fileRowActionDisabled,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    {selected && <Check color={colors.onAccent} size={15} />}
+                  </Pressable>
+                )}
                 <Pressable
                   onPress={() => onToggle(`${section}:${change.path}`)}
                   style={({ pressed }) => [

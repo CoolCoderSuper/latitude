@@ -1277,6 +1277,11 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-git-action=\"stage_all\""));
     assert!(rendered.contains("data-git-action=\"discard_all\""));
     assert!(rendered.contains("data-git-action=\"stage_file\""));
+    assert!(rendered.contains("data-stage-action"));
+    assert!(rendered.contains("data-unstage-action"));
+    assert!(rendered.contains("data-file-select"));
+    assert!(rendered.contains("form=\"stage-action-form\""));
+    assert!(rendered.contains("form=\"unstage-action-form\""));
     assert!(rendered.contains("data-git-action=\"discard_file\""));
     assert!(rendered.contains("data-path=\"src/server.rs\""));
     assert!(rendered.contains("hx-confirm=\"Discard all unstaged changes"));
@@ -1372,6 +1377,14 @@ fn parses_git_action_forms() {
         }
     );
     assert_eq!(
+        parse_git_action_form(b"action=stage_selected&path=src%2Fserver.rs&path=README.md")
+            .unwrap(),
+        GitAction::StageFiles {
+            paths: vec!["src/server.rs".to_string(), "README.md".to_string()]
+        }
+    );
+    assert!(parse_git_action_form(b"action=stage_selected").is_err());
+    assert_eq!(
         parse_git_action_form(b"action=unstage_all").unwrap(),
         GitAction::UnstageAll
     );
@@ -1381,6 +1394,14 @@ fn parses_git_action_forms() {
             path: "src/server.rs".to_string()
         }
     );
+    assert_eq!(
+        parse_git_action_form(b"action=unstage_selected&path=src%2Fserver.rs&path=README.md")
+            .unwrap(),
+        GitAction::UnstageFiles {
+            paths: vec!["src/server.rs".to_string(), "README.md".to_string()]
+        }
+    );
+    assert!(parse_git_action_form(b"action=unstage_selected").is_err());
     assert_eq!(
         parse_git_action_form(b"action=discard_all").unwrap(),
         GitAction::DiscardAll
@@ -1423,6 +1444,26 @@ fn parses_public_git_action_json_payloads() {
         .unwrap(),
         GitAction::StageFile {
             path: "src/server.rs".to_string()
+        }
+    );
+    assert_eq!(
+        parse_public_git_action_payload(
+            Some("application/json"),
+            br#"{"action":"stage_selected","paths":["src\\server.rs","README.md"]}"#,
+        )
+        .unwrap(),
+        GitAction::StageFiles {
+            paths: vec!["src/server.rs".to_string(), "README.md".to_string()]
+        }
+    );
+    assert_eq!(
+        parse_public_git_action_payload(
+            Some("application/json"),
+            br#"{"action":"unstage_selected","paths":["src\\server.rs","README.md"]}"#,
+        )
+        .unwrap(),
+        GitAction::UnstageFiles {
+            paths: vec!["src/server.rs".to_string(), "README.md".to_string()]
         }
     );
     assert_eq!(
