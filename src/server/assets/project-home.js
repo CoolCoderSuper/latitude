@@ -3,6 +3,35 @@
   const dialog = shell?.querySelector('[data-share-dialog]');
   if (!shell) return;
 
+  document.addEventListener('htmx:beforeSwap', (event) => {
+    const target = event.detail?.target;
+    if (!(target instanceof Element) || !target.matches('[data-project-list]')) return;
+
+    const incoming = new DOMParser().parseFromString(
+      event.detail.xhr?.responseText || '',
+      'text/html',
+    );
+    if (projectListSnapshot(document) === projectListSnapshot(incoming)) {
+      event.detail.shouldSwap = false;
+    }
+  });
+
+  function projectListSnapshot(root) {
+    const list = root.querySelector('[data-project-list]');
+    if (!list) return '';
+    const clone = list.cloneNode(true);
+    clone.classList.remove('htmx-request', 'htmx-swapping', 'htmx-settling');
+    if (clone.classList.length === 0) clone.removeAttribute('class');
+    clone.querySelectorAll('[data-project-git-status]').forEach((status) => {
+      status.replaceChildren();
+    });
+    clone.querySelectorAll('.worktree-archive').forEach((button) => {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+    });
+    return clone.outerHTML;
+  }
+
   let gitRefreshPending = false;
   const projectName = shell.dataset.project;
 
@@ -86,10 +115,9 @@
   });
   void refreshGitStatuses(true);
 
-  if (!dialog) return;
-
   shell.addEventListener('click', async (event) => {
     const target = event.target instanceof Element ? event.target : null;
+    if (!dialog) return;
     const trigger = target?.closest('[data-share-trigger]');
     if (trigger) {
       dialog.showModal();
@@ -118,6 +146,8 @@
       if (error?.name !== 'AbortError') showStatus('The share link could not be shared.', true);
     }
   });
+
+  if (!dialog) return;
 
   dialog.addEventListener('click', (event) => {
     if (event.target === dialog) dialog.close();

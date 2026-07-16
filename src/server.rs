@@ -66,7 +66,8 @@ use public::{
     public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
     public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
     public_api_session, public_entry, public_root_terminal_ws, public_terminal_ws,
-    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
+    public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
+    public_ui_get_shares,
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
 
@@ -134,6 +135,10 @@ fn public_router(state: AppState) -> Router {
         .route(
             "/__latitude/ui/shares/{project}/{deployment}/{token}",
             delete(public_ui_delete_share),
+        )
+        .route(
+            "/__latitude/ui/projects/{project}/archive",
+            axum::routing::patch(public_ui_archive_project),
         )
         .route(
             PUBLIC_API_ROOT_TERMINAL_PATH,

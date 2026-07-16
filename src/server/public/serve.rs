@@ -35,6 +35,7 @@ use super::super::{
     git::{
         collect_project_diff, collect_project_file_diff, collect_project_git_commit,
         collect_project_git_history, discover_worktrees, handle_git_action_request,
+        schedule_worktree_discovery,
     },
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
@@ -1030,7 +1031,16 @@ async fn serve_server_home(
         );
     }
 
-    discover_worktrees(state).await;
+    let is_htmx_refresh = req
+        .headers()
+        .get("HX-Request")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"));
+    if is_htmx_refresh {
+        schedule_worktree_discovery(state.clone());
+    } else {
+        discover_worktrees(state).await;
+    }
     let mut projects = match state.catalog().list_projects().await {
         Ok(projects) => projects,
         Err(error) => {
@@ -1051,7 +1061,11 @@ async fn serve_server_home(
         projects.retain(|project| !archived.contains(&project.name));
     }
     let show_t3code = config.t3code.enabled && !request_is_t3code_embed(req.headers());
-    let git_statuses = super::project_git_statuses(&projects).await;
+    let git_statuses = if is_htmx_refresh {
+        std::collections::HashMap::new()
+    } else {
+        super::project_git_statuses(&projects).await
+    };
 
     let mut rendered_config = config.clone();
     rendered_config.t3code.enabled = show_t3code;

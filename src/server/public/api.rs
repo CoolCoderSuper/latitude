@@ -479,6 +479,35 @@ pub(in crate::server) async fn public_api_patch_project_archive(
     }
 }
 
+pub(in crate::server) async fn public_ui_archive_project(
+    AxumPath(project): AxumPath<String>,
+    State(state): State<AppState>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if !public_request_is_authenticated(&state, &config, &req) {
+        return public_api_auth_challenge();
+    }
+    match state.catalog().set_worktree_archived(&project, true).await {
+        Ok(true) => Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header("HX-Trigger", "worktreeArchived")
+            .body(Body::empty())
+            .expect("HTMX archive response"),
+        Ok(false) => json_error(
+            StatusCode::NOT_FOUND,
+            format!("worktree project '{project}' was not found"),
+        ),
+        Err(error) => {
+            error!(%error, project = %project, "worktree archive update failed");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive state could not be updated",
+            )
+        }
+    }
+}
+
 pub(in crate::server) async fn public_api_get_project(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,

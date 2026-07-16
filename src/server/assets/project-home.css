@@ -82,6 +82,53 @@ li {
   background: #fff;
 }
 
+.project-item {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.project-item > a {
+  flex: 1;
+  min-width: 0;
+}
+
+.worktree-archive {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin: 8px;
+  border: 1px solid #b7c2cf;
+  border-radius: 7px;
+  padding: 0;
+  color: #526173;
+  background: #f7f8fb;
+  cursor: pointer;
+}
+
+.worktree-archive svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.worktree-archive:hover {
+  border-color: #9b2c2c;
+  color: #9b2c2c;
+  background: #fff5f5;
+}
+
+.worktree-archive:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .deployment-item {
   display: flex;
   align-items: stretch;
@@ -459,6 +506,18 @@ span {
 
 :root[data-latitude-theme="dark"] .worktree-list .project-item {
   background: #151c28;
+}
+
+:root[data-latitude-theme="dark"] .worktree-archive {
+  border-color: #465568;
+  color: #aeb9c7;
+  background: #111824;
+}
+
+:root[data-latitude-theme="dark"] .worktree-archive:hover {
+  border-color: #ff7b72;
+  color: #ff7b72;
+  background: #2d1d22;
 }
 
 :root[data-latitude-theme="dark"] a:hover {

@@ -2045,6 +2045,16 @@ fn groups_linked_worktrees_on_server_home() {
     assert!(rendered.contains("codex/mobile-fix"));
     assert!(rendered.contains(r"C:\work\latitude-mobile-fix"));
     assert!(!rendered.contains(r"\\?\C:\work\latitude-mobile-fix"));
+    assert!(rendered.contains("data-project-list"));
+    assert!(rendered.contains("hx-trigger=\"every 1s, worktreeArchived from:body\""));
+    assert!(rendered.contains("hx-target=\"#project-list\""));
+    assert!(rendered.contains("hx-sync=\"this:drop\""));
+    assert!(rendered.contains("id=\"project-git-status-latitude--mobile-fix\""));
+    assert!(rendered.contains("hx-preserve"));
+    assert!(rendered.contains("hx-patch=\"/__latitude/ui/projects/latitude/archive\""));
+    assert!(rendered.contains("hx-patch=\"/__latitude/ui/projects/latitude--mobile-fix/archive\""));
+    assert!(rendered.contains("hx-swap=\"none\""));
+    assert!(rendered.contains("aria-label=\"Archive codex/mobile-fix\""));
 }
 
 #[test]

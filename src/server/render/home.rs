@@ -109,11 +109,19 @@ pub(in crate::server) fn render_server_home(
         "Latitude Projects",
         device_hostname,
         PROJECT_HOME_STYLE_HREF,
-        html! {},
+        html! { script src=(HTMX_SCRIPT_SRC) {} },
         html! {
             main data-server-shell {
                 header { h1 { "Latitude" } p { "Available projects on " (device_hostname) } }
-                ul {
+                ul
+                    id="project-list"
+                    data-project-list
+                    hx-get="/"
+                    hx-trigger="every 1s, worktreeArchived from:body"
+                    hx-select="[data-project-list]"
+                    hx-target="#project-list"
+                    hx-sync="this:drop"
+                    hx-swap="outerHTML" {
                     @if config.desktop.enabled {
                         li { a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
                             strong { (&config.desktop.label) }
@@ -225,17 +233,44 @@ fn server_project_item(
         .map(|worktree| display_path(&worktree.worktree_dir))
         .unwrap_or_else(|| project_summary(project));
 
-    html! { li class="project-item" { a href=(format!("/{}", project.name)) {
-        strong {
-            span class="project-name" { (label) }
-            span data-project-git-status=(&project.name) {
-                @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
-                    (git_status_badge(status))
+    html! {
+        li class="project-item" data-worktree-item=[worktree.map(|_| project.name.as_str())] {
+            a href=(format!("/{}", project.name)) {
+                strong {
+                    span class="project-name" { (label) }
+                    span
+                        id=(format!("project-git-status-{}", project.name))
+                        data-project-git-status=(&project.name)
+                        hx-preserve {
+                        @if let Some(status) = git_statuses.get(&project.name).filter(|status| status.has_status()) {
+                            (git_status_badge(status))
+                        }
+                    }
+                }
+                span { (description) }
+            }
+            @if worktree.is_some() {
+                button
+                    class="worktree-archive"
+                    type="button"
+                    hx-patch=(format!("/__latitude/ui/projects/{}/archive", project.name))
+                    hx-confirm=(format!("Archive {label}? It will be hidden from the project list. Its files and Git branch will not be changed."))
+                    hx-swap="none"
+                    hx-disabled-elt="this"
+                    aria-label=(format!("Archive {label}"))
+                    title="Hide this worktree without changing its files or branch" {
+                        svg
+                            viewBox="0 0 24 24"
+                            width="16"
+                            height="16"
+                            aria-hidden="true"
+                            focusable="false" {
+                                path d="M4 7h16v13H4zM3 3h18v4H3zm6 8h6" {}
+                            }
                 }
             }
         }
-        span { (description) }
-    } } }
+    }
 }
 
 fn code_changes_tool_link(project: &str, status: &GitStatusSummary) -> Markup {

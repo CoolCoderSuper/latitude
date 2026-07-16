@@ -1,10 +1,37 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use tracing::warn;
 
 use crate::{state::AppState, storage::DiscoveredWorktree};
 
 use super::command::run_git_command;
+
+static DISCOVERY_RUNNING: AtomicBool = AtomicBool::new(false);
+
+pub(in crate::server) fn schedule_worktree_discovery(state: AppState) {
+    if DISCOVERY_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    tokio::spawn(async move {
+        let _guard = DiscoveryGuard;
+        discover_worktrees(&state).await;
+    });
+}
+
+struct DiscoveryGuard;
+
+impl Drop for DiscoveryGuard {
+    fn drop(&mut self) {
+        DISCOVERY_RUNNING.store(false, Ordering::Release);
+    }
+}
 
 pub(in crate::server) async fn discover_worktrees(state: &AppState) {
     let roots = match state.catalog().list_worktree_roots().await {
