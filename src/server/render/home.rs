@@ -46,7 +46,7 @@ pub(in crate::server) fn render_project_home(
                     (code_changes_tool_link(&project.name, git_status))
                     (tool_link(&project.name, TERMINAL_ROUTE_SEGMENT, "Terminal", "Run commands in the project directory"))
                     @if t3code_enabled {
-                        li { a href=(format!("/__latitude/t3code/{}", project.name)) target="_blank" rel="noopener" {
+                        li data-t3code-open { a href=(format!("/__latitude/t3code/{}", project.name)) target="_blank" rel="noopener" {
                             strong { "Open in T3 Code" }
                             span { "Start a coding agent in this repository" }
                         } }
@@ -133,7 +133,7 @@ pub(in crate::server) fn render_server_home(
                         span { "Run commands in your user directory" }
                     } }
                     @if config.t3code.enabled {
-                        li { a href="/__latitude/t3code" target="_blank" rel="noopener" {
+                        li data-t3code-open { a href="/__latitude/t3code" target="_blank" rel="noopener" {
                             strong { "Open T3 Code" }
                             span { "Open the coding agent workspace" }
                         } }

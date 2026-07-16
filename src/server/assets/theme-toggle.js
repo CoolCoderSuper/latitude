@@ -2,9 +2,7 @@
   var cookieName = "latitude_theme";
   var toggle = document.querySelector('[data-latitude-theme-toggle]');
 
-  var embeddedInT3Code = (document.cookie ? document.cookie.split(';') : []).some(function(part) {
-    return part.trim() === 'latitude_t3code_embed_session=1';
-  });
+  var embeddedInT3Code = document.documentElement.dataset.latitudeT3codeEmbed === 'true';
   if (embeddedInT3Code) {
     if (toggle) {
       toggle.remove();

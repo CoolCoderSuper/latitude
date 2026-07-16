@@ -26,7 +26,7 @@ use super::{
     assets::{embedded_asset_names, public_asset},
     auth::{
         clean_next_path, open_t3code_embed, public_password_matches,
-        public_request_is_authenticated, request_is_t3code_embed,
+        public_request_is_authenticated,
     },
     command::{
         CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_t3code_embed_session,
@@ -268,24 +268,8 @@ async fn t3code_embed_session_authenticates_the_browser_and_carries_theme() {
     );
 }
 
-#[test]
-fn t3code_embed_session_ignores_the_legacy_persistent_cookie() {
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::COOKIE,
-        HeaderValue::from_static("latitude_t3code_embed=1"),
-    );
-    assert!(!request_is_t3code_embed(&headers));
-
-    headers.insert(
-        header::COOKIE,
-        HeaderValue::from_static("latitude_t3code_embed_session=1"),
-    );
-    assert!(request_is_t3code_embed(&headers));
-}
-
 #[tokio::test]
-async fn embedded_project_page_hides_open_in_t3code() {
+async fn t3code_session_cookie_does_not_hide_open_action_from_normal_pages() {
     let config = BootConfig {
         t3code: T3CodeConfig {
             enabled: true,
@@ -309,7 +293,8 @@ async fn embedded_project_page_hides_open_in_t3code() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let rendered = String::from_utf8(body.to_vec()).unwrap();
-    assert!(!rendered.contains("Open in T3 Code"));
+    assert!(rendered.contains("Open in T3 Code"));
+    assert!(rendered.contains("data-t3code-open"));
 }
 
 #[tokio::test]
@@ -558,6 +543,18 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
     assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js?v=2\""));
     assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js?v=2\""));
     assert!(!rendered.contains("var cookieName"));
+}
+
+#[test]
+fn t3code_embed_ui_requires_both_the_session_cookie_and_an_iframe() {
+    let bootstrap = include_str!("assets/theme-bootstrap.js");
+    let theme_toggle = include_str!("assets/theme-toggle.js");
+    let common_theme = include_str!("assets/common-theme.css");
+
+    assert!(bootstrap.contains("window.self !== window.top"));
+    assert!(bootstrap.contains("latitude_t3code_embed_session"));
+    assert!(theme_toggle.contains("dataset.latitudeT3codeEmbed === 'true'"));
+    assert!(common_theme.contains("[data-latitude-t3code-embed=\"true\"] [data-t3code-open]"));
 }
 
 #[tokio::test]
@@ -855,6 +852,7 @@ fn renders_project_home_with_enabled_deployments() {
         rendered.contains("href=\"/__latitude/t3code/demo\" target=\"_blank\" rel=\"noopener\"")
     );
     assert!(rendered.contains("Open in T3 Code"));
+    assert!(rendered.contains("data-t3code-open"));
     assert!(rendered.contains("href=\"/demo/website\""));
     assert!(rendered.contains("Static website"));
     assert!(rendered.contains("href=\"/demo/report\""));
@@ -2097,6 +2095,7 @@ fn renders_server_home_with_t3code_link() {
     assert!(rendered.contains("href=\"/__latitude/t3code\" target=\"_blank\" rel=\"noopener\""));
     assert!(rendered.contains("Open T3 Code"));
     assert!(rendered.contains("Open the coding agent workspace"));
+    assert!(rendered.contains("data-t3code-open"));
 }
 
 #[test]

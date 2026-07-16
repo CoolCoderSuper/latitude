@@ -140,10 +140,6 @@ pub(super) fn t3code_embed_set_cookies(
     ]
 }
 
-pub(super) fn request_is_t3code_embed(headers: &HeaderMap) -> bool {
-    header_cookie_value(headers, T3CODE_EMBED_COOKIE).as_deref() == Some("1")
-}
-
 pub(super) async fn open_t3code_embed(
     State(state): State<AppState>,
     req: Request<Body>,

@@ -17,7 +17,7 @@ use tokio_tungstenite::{
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::{config::T3CodeConfig, state::AppState};
+use crate::{config::T3CodeConfig, state::AppState, storage::WorktreeRecord};
 
 use super::{
     auth::{
@@ -128,6 +128,39 @@ pub(super) async fn open_project_in_t3code(
         }
     };
 
+    let worktrees = match state.catalog().list_worktrees().await {
+        Ok(worktrees) => worktrees,
+        Err(error) => {
+            error!(%error, project = %project_name, "T3 Code worktree lookup failed");
+            return plain_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Latitude could not resolve this project's worktree\n",
+            );
+        }
+    };
+    let (root_project_name, launch_worktree) =
+        resolve_t3code_launch_mapping(&project.name, &worktrees);
+    let root_project = if root_project_name == project.name {
+        project.clone()
+    } else {
+        match state.catalog().get_project(&root_project_name).await {
+            Ok(Some(root_project)) if root_project.enabled => root_project,
+            Ok(_) => {
+                return plain_response(
+                    StatusCode::NOT_FOUND,
+                    format!("Root project '{root_project_name}' was not found\n"),
+                );
+            }
+            Err(error) => {
+                error!(%error, project = %project_name, root_project = %root_project_name, "T3 Code root project lookup failed");
+                return plain_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Latitude could not load this project's repository root\n",
+                );
+            }
+        }
+    };
+
     if let Err(message) = ensure_server(&state, &config.t3code).await {
         error!(project = %project_name, %message, "T3 Code server startup failed");
         return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
@@ -138,8 +171,11 @@ pub(super) async fn open_project_in_t3code(
     // project id that makes the pairing route wait forever for a project that no
     // longer exists. `project add --if-missing` is idempotent and returns the current
     // live id in both cases.
-    let project_args =
-        project_registration_args(&config.t3code, &project.project_dir, &project.name);
+    let project_args = project_registration_args(
+        &config.t3code,
+        &root_project.project_dir,
+        &root_project.name,
+    );
     let output = match run_cli(&config.t3code, project_args).await {
         Ok(output) => output,
         Err(message) => {
@@ -176,8 +212,17 @@ pub(super) async fn open_project_in_t3code(
         url::form_urlencoded::parse(pairing_url.fragment().unwrap_or_default().as_bytes())
             .into_owned()
             .collect::<Vec<_>>();
-    fragment.retain(|(name, _)| name != "project");
+    fragment.retain(|(name, _)| !matches!(name.as_str(), "project" | "worktree" | "branch"));
     fragment.push(("project".to_string(), t3code_project_id));
+    if let Some(worktree) = &launch_worktree {
+        fragment.push((
+            "worktree".to_string(),
+            worktree.worktree_dir.to_string_lossy().into_owned(),
+        ));
+        if let Some(branch) = &worktree.branch {
+            fragment.push(("branch".to_string(), branch.clone()));
+        }
+    }
     pairing_url.set_fragment(Some(
         &url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(fragment)
@@ -186,6 +231,44 @@ pub(super) async fn open_project_in_t3code(
 
     info!(project = %project_name, "opening project in T3 Code");
     pairing_redirect(pairing_url)
+}
+
+fn resolve_t3code_launch_mapping(
+    project_name: &str,
+    worktrees: &[WorktreeRecord],
+) -> (String, Option<WorktreeRecord>) {
+    let Some(selected) = worktrees
+        .iter()
+        .find(|worktree| worktree.project_name == project_name)
+    else {
+        return (project_name.to_string(), None);
+    };
+    let repository_root = selected.common_git_dir.parent();
+    let root = worktrees
+        .iter()
+        .filter(|candidate| candidate.common_git_dir == selected.common_git_dir)
+        .find(|candidate| {
+            repository_root.is_some_and(|root| same_t3code_path(&candidate.worktree_dir, root))
+        })
+        .or_else(|| {
+            worktrees.iter().find(|candidate| {
+                candidate.common_git_dir == selected.common_git_dir && !candidate.discovered
+            })
+        });
+
+    match root {
+        Some(root) => (root.project_name.clone(), Some(selected.clone())),
+        None => (project_name.to_string(), Some(selected.clone())),
+    }
+}
+
+fn same_t3code_path(left: &Path, right: &Path) -> bool {
+    if cfg!(windows) {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
 }
 
 async fn create_pairing_url(
@@ -691,6 +774,74 @@ mod tests {
                 "--base-dir",
                 "C:/Users/test/.t3",
             ]
+        );
+    }
+
+    #[test]
+    fn linked_worktree_launch_uses_root_project_and_preserves_worktree_context() {
+        let common_git_dir = Path::new("C:/work/demo/.git").to_path_buf();
+        let worktrees = vec![
+            WorktreeRecord {
+                project_name: "demo".to_string(),
+                common_git_dir: common_git_dir.clone(),
+                worktree_dir: Path::new("C:/work/demo").to_path_buf(),
+                branch: Some("main".to_string()),
+                head: "abc123".to_string(),
+                discovered: false,
+                archived: false,
+            },
+            WorktreeRecord {
+                project_name: "demo--feature-fix".to_string(),
+                common_git_dir,
+                worktree_dir: Path::new("C:/worktrees/demo-feature-fix").to_path_buf(),
+                branch: Some("feature/fix".to_string()),
+                head: "def456".to_string(),
+                discovered: true,
+                archived: false,
+            },
+        ];
+
+        let (root_project_name, launch_worktree) =
+            resolve_t3code_launch_mapping("demo--feature-fix", &worktrees);
+
+        assert_eq!(root_project_name, "demo");
+        assert_eq!(
+            launch_worktree
+                .as_ref()
+                .map(|worktree| &worktree.worktree_dir),
+            Some(&Path::new("C:/worktrees/demo-feature-fix").to_path_buf())
+        );
+        assert_eq!(
+            launch_worktree.and_then(|worktree| worktree.branch),
+            Some("feature/fix".to_string())
+        );
+    }
+
+    #[test]
+    fn primary_worktree_launch_preserves_its_branch_context() {
+        let worktrees = vec![WorktreeRecord {
+            project_name: "demo".to_string(),
+            common_git_dir: Path::new("C:/work/demo/.git").to_path_buf(),
+            worktree_dir: Path::new("C:/work/demo").to_path_buf(),
+            branch: Some("feature/current-checkout".to_string()),
+            head: "abc123".to_string(),
+            discovered: false,
+            archived: false,
+        }];
+
+        let (root_project_name, launch_worktree) =
+            resolve_t3code_launch_mapping("demo", &worktrees);
+
+        assert_eq!(root_project_name, "demo");
+        assert_eq!(
+            launch_worktree
+                .as_ref()
+                .map(|worktree| &worktree.worktree_dir),
+            Some(&Path::new("C:/work/demo").to_path_buf())
+        );
+        assert_eq!(
+            launch_worktree.and_then(|worktree| worktree.branch),
+            Some("feature/current-checkout".to_string())
         );
     }
 }
