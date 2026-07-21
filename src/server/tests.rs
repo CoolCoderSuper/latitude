@@ -1521,6 +1521,10 @@ fn renders_project_files_with_htmx_save_form() {
     assert!(rendered.contains("hx-put=\"/__latitude/ui/files/demo\""));
     assert!(rendered.contains("hx-target=\"[data-save-state]\""));
     assert!(rendered.contains("src=\"/__latitude/assets/file-viewer.js?v=2\""));
+    assert!(rendered.contains("data-find-file"));
+    assert!(rendered.contains("data-grep-search"));
+    assert!(rendered.contains("data-search-palette"));
+    assert!(rendered.contains("data-search-preview-content"));
 }
 
 #[tokio::test]

@@ -1,5 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
+use fff_search::{FFFMode, FilePicker, FilePickerOptions, SharedFilePicker, SharedFrecency};
 use hmac::{Hmac, Mac};
 use rand::random;
 use reqwest::Client;
@@ -30,6 +35,7 @@ struct AppStateInner {
     public_auth_secret: [u8; 32],
     desktop_manager: Arc<ManagedDesktopManager>,
     terminal_sessions: Arc<TerminalSessionManager>,
+    file_search_pickers: Mutex<HashMap<PathBuf, SharedFilePicker>>,
 }
 
 impl AppState {
@@ -49,6 +55,7 @@ impl AppState {
                 public_auth_secret: random(),
                 desktop_manager: Arc::new(ManagedDesktopManager::default()),
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
+                file_search_pickers: Mutex::new(HashMap::new()),
             }),
         }
     }
@@ -71,6 +78,35 @@ impl AppState {
 
     pub fn catalog(&self) -> &CatalogStore {
         &self.inner.catalog
+    }
+
+    pub fn file_search_picker(&self, project_dir: &Path) -> Result<SharedFilePicker, String> {
+        let project_dir = std::fs::canonicalize(project_dir).map_err(|error| error.to_string())?;
+        let mut pickers = self
+            .inner
+            .file_search_pickers
+            .lock()
+            .map_err(|_| "file search index lock was poisoned".to_string())?;
+        if let Some(picker) = pickers.get(&project_dir) {
+            return Ok(picker.clone());
+        }
+
+        let picker = SharedFilePicker::default();
+        FilePicker::new_with_shared_state(
+            picker.clone(),
+            SharedFrecency::default(),
+            FilePickerOptions {
+                base_path: project_dir.to_string_lossy().into_owned(),
+                enable_mmap_cache: true,
+                enable_content_indexing: true,
+                mode: FFFMode::Ai,
+                watch: true,
+                ..Default::default()
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        pickers.insert(project_dir, picker.clone());
+        Ok(picker)
     }
 
     pub fn public_auth_cookie_value(&self, password: &str) -> String {

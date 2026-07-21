@@ -11,6 +11,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 hmac = "0.12"
 hostname = "0.4"
 futures-util = "0.3"
+fff-search = "0.10.1"
 maud = "0.27.0"
 mime_guess = "2.0"
 percent-encoding = "2.3"

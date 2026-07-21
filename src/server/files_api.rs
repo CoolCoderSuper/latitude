@@ -1,6 +1,6 @@
 use std::{
     path::{Component, Path, PathBuf},
-    time::UNIX_EPOCH,
+    time::{Duration, UNIX_EPOCH},
 };
 
 use axum::{
@@ -9,6 +9,10 @@ use axum::{
     extract::{Path as AxumPath, Query, State},
     http::{Request, Response, StatusCode, header},
     response::IntoResponse,
+};
+use fff_search::{
+    FFFQuery, FileSearchConfig, FuzzySearchOptions, GrepConfig, GrepMode, GrepSearchOptions,
+    PaginationArgs, SharedFilePicker,
 };
 use maud::html;
 use serde::{Deserialize, Serialize};
@@ -29,6 +33,10 @@ pub(super) struct FileQuery {
     path: String,
     #[serde(default)]
     raw: bool,
+    #[serde(default)]
+    search: String,
+    #[serde(default)]
+    search_kind: String,
 }
 
 #[derive(Serialize)]
@@ -43,6 +51,20 @@ struct FileEntry {
 struct DirectoryResponse {
     path: String,
     entries: Vec<FileEntry>,
+}
+
+#[derive(Serialize)]
+struct SearchResult {
+    path: String,
+    line: Option<usize>,
+    column: Option<usize>,
+    preview: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    results: Vec<SearchResult>,
+    limited: bool,
 }
 
 #[derive(Serialize)]
@@ -83,6 +105,23 @@ pub(in crate::server) async fn public_api_get_project_files(
         Ok(p) => p,
         Err(r) => return r,
     };
+    if !query.search.trim().is_empty() {
+        let search_state = state.clone();
+        let project_dir = project.project_dir.clone();
+        let needle = query.search.trim().to_string();
+        let kind = query.search_kind.clone();
+        return match tokio::task::spawn_blocking(move || {
+            let picker = search_state.file_search_picker(&project_dir)?;
+            picker.wait_for_indexing_complete(Duration::from_secs(10));
+            search_project_files(&picker, &needle, kind == "grep")
+        })
+        .await
+        {
+            Ok(Ok(response)) => Json(response).into_response(),
+            Ok(Err(message)) => json_error(StatusCode::INTERNAL_SERVER_ERROR, message),
+            Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        };
+    }
     let (root, target) = match safe_target(&project, &query.path).await {
         Ok(v) => v,
         Err(r) => return r,
@@ -169,6 +208,139 @@ pub(in crate::server) async fn public_api_get_project_files(
         git_base_content,
     })
     .into_response()
+}
+
+fn search_project_files(
+    shared_picker: &SharedFilePicker,
+    needle: &str,
+    grep: bool,
+) -> Result<SearchResponse, String> {
+    const MAX_RESULTS: usize = 100;
+    const MAX_SEARCH_FILE_BYTES: u64 = 1024 * 1024;
+
+    let guard = shared_picker.read().map_err(|error| error.to_string())?;
+    let picker = guard
+        .as_ref()
+        .ok_or_else(|| "file search index is not ready".to_string())?;
+
+    if !grep {
+        let query = FFFQuery::parse(needle, FileSearchConfig);
+        let found = picker.fuzzy_search(
+            &query,
+            None,
+            FuzzySearchOptions {
+                pagination: PaginationArgs {
+                    offset: 0,
+                    limit: MAX_RESULTS,
+                },
+                ..Default::default()
+            },
+        );
+        let results = found
+            .items
+            .iter()
+            .map(|file| SearchResult {
+                path: file.relative_path(picker).replace('\\', "/"),
+                line: None,
+                column: None,
+                preview: None,
+            })
+            .collect();
+        return Ok(SearchResponse {
+            results,
+            limited: found.total_matched > found.items.len(),
+        });
+    }
+
+    let query = FFFQuery::parse(needle, GrepConfig);
+    let found = picker.grep(
+        &query,
+        &GrepSearchOptions {
+            max_file_size: MAX_SEARCH_FILE_BYTES,
+            max_matches_per_file: MAX_RESULTS,
+            smart_case: true,
+            page_limit: MAX_RESULTS,
+            mode: GrepMode::PlainText,
+            time_budget_ms: 2_000,
+            ..Default::default()
+        },
+    );
+    let limited = found.next_file_offset != 0 || found.matches.len() > MAX_RESULTS;
+    let results = found
+        .matches
+        .iter()
+        .take(MAX_RESULTS)
+        .map(|matched| {
+            let file = found.files[matched.file_index];
+            let column = matched.line_content[..matched.col].chars().count() + 1;
+            SearchResult {
+                path: file.relative_path(picker).replace('\\', "/"),
+                line: Some(matched.line_number as usize),
+                column: Some(column),
+                preview: Some(matched.line_content.trim().chars().take(240).collect()),
+            }
+        })
+        .collect();
+    Ok(SearchResponse { results, limited })
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::search_project_files;
+    use fff_search::{FFFMode, FilePicker, FilePickerOptions, SharedFilePicker, SharedFrecency};
+
+    #[test]
+    fn finds_files_and_content_while_honoring_gitignore() {
+        let root = std::env::temp_dir().join(format!(
+            "latitude-file-search-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("ignored")).unwrap();
+        std::fs::create_dir_all(root.join(".git/refs/heads")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(
+            root.join(".git/config"),
+            "[core]\nrepositoryformatversion = 0\nbare = false\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::write(
+            root.join("src/search_widget.rs"),
+            "fn main() {\n    println!(\"Needle\");\n}\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("ignored/search_widget.txt"), "needle").unwrap();
+
+        let picker = SharedFilePicker::default();
+        FilePicker::new_with_shared_state(
+            picker.clone(),
+            SharedFrecency::default(),
+            FilePickerOptions {
+                base_path: root.to_string_lossy().into_owned(),
+                mode: FFFMode::Ai,
+                watch: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(picker.wait_for_indexing_complete(std::time::Duration::from_secs(10)));
+
+        let files = search_project_files(&picker, "widget", false).unwrap();
+        assert_eq!(files.results.len(), 1);
+        assert_eq!(files.results[0].path, "src/search_widget.rs");
+
+        let matches = search_project_files(&picker, "needle", true).unwrap();
+        assert_eq!(matches.results.len(), 1);
+        assert_eq!(matches.results[0].path, "src/search_widget.rs");
+        assert_eq!(matches.results[0].line, Some(2));
+        assert_eq!(matches.results[0].column, Some(15));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 pub(in crate::server) async fn public_api_put_project_file(

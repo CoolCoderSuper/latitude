@@ -60,6 +60,9 @@ html, body { margin: 0; height: 100%; }
 
 .file-workspace { --file-sidebar-width: 280px; display: grid; grid-template-columns: var(--file-sidebar-width) 5px minmax(0, 1fr); min-height: 0; overflow: hidden; border: 1px solid var(--files-strong-border); border-radius: 8px; background: var(--files-panel); }
 .file-sidebar { overflow: auto; background: var(--files-panel); }
+.file-search-actions { position: sticky; top: 0; z-index: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 6px; border-bottom: 1px solid var(--files-border); background: var(--files-panel); }
+.file-search-actions button { min-height: 32px; border: 1px solid var(--files-border); border-radius: 6px; color: var(--files-text); background: var(--files-subtle); font: inherit; font-size: .78rem; font-weight: 800; cursor: pointer; }
+.file-search-actions button:hover, .file-search-actions button:focus-visible { border-color: var(--files-accent); background: var(--files-hover); }
 .file-resizer { position: relative; z-index: 6; width: 5px; cursor: col-resize; touch-action: none; background: var(--files-border); outline: none; }
 .file-resizer::after { content: ""; position: absolute; inset: 0 -3px; }
 .file-resizer:hover, .file-resizer:focus-visible, .file-workspace.is-resizing .file-resizer { background: var(--files-accent); }
@@ -101,6 +104,35 @@ html, body { margin: 0; height: 100%; }
 .download-preview { display: grid; height: 100%; place-items: center; color: var(--files-muted); }
 .download-preview a { color: var(--files-accent); font-weight: 800; }
 
+.search-palette { position: fixed; inset: 0; z-index: 100; display: grid; align-items: start; justify-items: center; padding: min(12vh, 90px) 16px 16px; }
+.search-palette[hidden] { display: none; }
+.search-palette-backdrop { position: absolute; inset: 0; background: rgb(15 23 42 / .48); backdrop-filter: blur(2px); }
+.search-palette-dialog { position: relative; display: grid; grid-template-rows: auto auto minmax(80px, 56vh) auto; width: min(1080px, 100%); max-height: 82vh; overflow: hidden; border: 1px solid var(--files-strong-border); border-radius: 10px; box-shadow: 0 20px 60px rgb(15 23 42 / .28); background: var(--files-panel); }
+.search-palette-dialog header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 8px; }
+.search-palette-dialog h2 { margin: 0; color: var(--files-heading); font-size: .92rem; }
+.search-palette-dialog header button { border: 0; color: var(--files-muted); background: transparent; font-size: 1.5rem; line-height: 1; cursor: pointer; }
+.search-palette-dialog input { box-sizing: border-box; margin: 0 12px 10px; border: 1px solid var(--files-border); border-radius: 7px; padding: 10px 11px; color: var(--files-text); outline: none; background: var(--files-editor-bg); font: inherit; }
+.search-palette-dialog input:focus { border-color: var(--files-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--files-accent) 20%, transparent); }
+.search-palette-body { display: grid; min-width: 0; min-height: 0; grid-template-columns: minmax(280px, 42%) minmax(0, 1fr); border-top: 1px solid var(--files-border); border-bottom: 1px solid var(--files-border); }
+.search-results { min-width: 0; overflow: auto; border-right: 1px solid var(--files-border); }
+.search-result { display: grid; width: 100%; gap: 3px; border: 0; border-bottom: 1px solid var(--files-border); padding: 9px 13px; color: var(--files-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.search-result:hover, .search-result.is-selected { background: var(--files-hover); }
+.search-result-path { overflow: hidden; font-family: "SFMono-Regular", Consolas, monospace; font-size: .8rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.search-result-preview { overflow: hidden; color: var(--files-muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
+.search-results-empty { padding: 24px; color: var(--files-muted); font-size: .84rem; font-weight: 700; text-align: center; }
+.search-preview { display: grid; min-width: 0; min-height: 0; grid-template-rows: auto minmax(0, 1fr); background: var(--files-editor-bg); }
+.search-preview-path { overflow: hidden; border-bottom: 1px solid var(--files-border); padding: 9px 12px; color: var(--files-muted); font-family: "SFMono-Regular", Consolas, monospace; font-size: .75rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.search-preview-content { min-width: 0; min-height: 0; overflow: auto; }
+.search-preview-empty { display: grid; box-sizing: border-box; min-height: 100%; place-items: center; padding: 24px; color: var(--files-muted); font-size: .8rem; font-weight: 700; text-align: center; }
+.search-preview-code { min-width: max-content; padding: 8px 0; font-family: "SFMono-Regular", Consolas, monospace; font-size: .75rem; line-height: 1.55; }
+.search-preview-line { display: grid; grid-template-columns: 48px minmax(0, 1fr); min-height: 1.55em; }
+.search-preview-line.is-match { background: var(--files-active); }
+.search-preview-line-number { padding: 0 10px 0 6px; color: var(--files-muted); text-align: right; user-select: none; }
+.search-preview-line-text { padding-right: 14px; white-space: pre; }
+.search-preview-media { display: grid; box-sizing: border-box; width: 100%; height: 100%; place-items: center; padding: 16px; }
+.search-preview-media img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.search-palette-dialog footer { padding: 7px 12px; color: var(--files-muted); font-size: .72rem; font-weight: 700; }
+
 :root[data-latitude-theme="dark"] {
   --files-page-bg: #101514;
   --files-text: #edf4f1;
@@ -140,4 +172,9 @@ html, body { margin: 0; height: 100%; }
   .file-workspace { grid-template-columns: 1fr; grid-template-rows: minmax(150px, 34vh) minmax(0, 1fr); }
   .file-sidebar { border-right: 0; border-bottom: 1px solid var(--files-border); }
   .file-resizer { display: none; }
+  .search-palette { padding: 6vh 8px 8px; }
+  .search-palette-dialog { grid-template-rows: auto auto minmax(80px, 62vh) auto; }
+  .search-palette-body { grid-template-columns: 1fr; }
+  .search-preview { display: none; }
+  .search-results { border-right: 0; }
 }
