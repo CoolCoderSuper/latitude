@@ -343,11 +343,13 @@ impl CatalogStore {
         project: &str,
         archived: bool,
     ) -> Result<bool, StorageError> {
-        let result = sqlx::query("UPDATE worktrees SET archived = ?1 WHERE project_name = ?2")
-            .bind(bool_to_i64(archived))
-            .bind(project)
-            .execute(&self.inner.pool)
-            .await?;
+        let result = sqlx::query(
+            "UPDATE worktrees SET archived = ?1 WHERE project_name = ?2 AND discovered = 1",
+        )
+        .bind(bool_to_i64(archived))
+        .bind(project)
+        .execute(&self.inner.pool)
+        .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -1323,6 +1325,13 @@ mod tests {
             .unwrap();
         let records = store.list_worktrees().await.unwrap();
         assert_eq!(records.len(), 2);
+        let root = records.iter().find(|record| !record.discovered).unwrap();
+        assert!(
+            !store
+                .set_worktree_archived(&root.project_name, true)
+                .await
+                .unwrap()
+        );
         let linked = records.iter().find(|record| record.discovered).unwrap();
         assert_eq!(linked.branch.as_deref(), Some("codex/fix"));
         assert!(

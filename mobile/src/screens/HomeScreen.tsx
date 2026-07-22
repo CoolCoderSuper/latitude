@@ -377,7 +377,7 @@ function ProjectCard({
         )}
         <ChevronRight color={colors.muted} size={20} />
       </Pressable>
-      {project.worktree && (
+      {project.worktree?.discovered && (
         <IconButton
           accessibilityLabel={`Archive ${label}`}
           icon={<Archive color={colors.muted} size={18} />}

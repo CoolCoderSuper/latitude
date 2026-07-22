@@ -2,12 +2,11 @@ mod api;
 mod models;
 mod serve;
 
-use crate::config::ProjectConfig;
-use std::collections::HashMap;
+use crate::{config::ProjectConfig, state::AppState};
 
-use super::git::{GitStatusSummary, collect_project_git_status};
+use super::git::{GitDiffReport, collect_project_diff, collect_project_git_status};
 
-async fn project_git_statuses(projects: &[ProjectConfig]) -> HashMap<String, GitStatusSummary> {
+async fn refresh_project_git_statuses(state: &AppState, projects: &[ProjectConfig]) {
     let mut checks = tokio::task::JoinSet::new();
     for project in projects.iter().filter(|project| project.enabled) {
         let name = project.name.clone();
@@ -15,13 +14,52 @@ async fn project_git_statuses(projects: &[ProjectConfig]) -> HashMap<String, Git
         checks.spawn(async move { (name, collect_project_git_status(&project_dir).await) });
     }
 
-    let mut statuses = HashMap::new();
     while let Some(result) = checks.join_next().await {
         if let Ok((name, status)) = result {
-            statuses.insert(name, status);
+            state.set_project_git_status(name, status).await;
         }
     }
-    statuses
+}
+
+async fn project_diff_snapshot(state: &AppState, project: &ProjectConfig) -> GitDiffReport {
+    if let Some(report) = state.project_git_diff(&project.name).await {
+        return (*report).clone();
+    }
+    let status = state
+        .project_git_statuses()
+        .await
+        .remove(&project.name)
+        .unwrap_or_default();
+    GitDiffReport {
+        repo_dir: project.project_dir.clone(),
+        status,
+        file_changes: Vec::new(),
+    }
+}
+
+fn schedule_project_diff_refresh(state: AppState, project: ProjectConfig) {
+    if !state.try_begin_project_git_diff_refresh(&project.name) {
+        return;
+    }
+    tokio::spawn(async move {
+        let _guard = ProjectDiffRefreshGuard {
+            state: state.clone(),
+            project: project.name.clone(),
+        };
+        let report = collect_project_diff(&project.project_dir).await;
+        state.set_project_git_diff(project.name, report).await;
+    });
+}
+
+struct ProjectDiffRefreshGuard {
+    state: AppState,
+    project: String,
+}
+
+impl Drop for ProjectDiffRefreshGuard {
+    fn drop(&mut self) {
+        self.state.finish_project_git_diff_refresh(&self.project);
+    }
 }
 
 #[cfg(test)]

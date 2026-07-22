@@ -6,12 +6,16 @@ use axum::{
     response::IntoResponse,
 };
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicBool, Ordering},
+};
 use tracing::error;
 
 use crate::{
     config::{ProjectConfig, current_unix_timestamp},
     state::AppState,
+    storage::WorktreeRecord,
 };
 
 use super::{
@@ -29,9 +33,9 @@ use super::{
         },
         git::{
             GitAction, PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
-            collect_project_git_history, collect_project_git_status, discover_worktrees,
-            execute_git_action, parse_public_git_action_payload, public_commit_response,
-            public_diff_response, public_history_response,
+            collect_project_git_history, discover_worktrees, execute_git_action,
+            parse_public_git_action_payload, public_commit_response, public_diff_response,
+            public_history_response,
         },
         render::render_share_dialog_shell,
         response::{ApiError, json_error, plain_response},
@@ -391,35 +395,17 @@ pub(in crate::server) async fn public_api_list_projects(
         .iter()
         .map(|worktree| (worktree.project_name.as_str(), worktree))
         .collect::<HashMap<_, _>>();
-    if request_fetches_remote(&req) {
-        let mut fetches = tokio::task::JoinSet::new();
-        let mut repositories = HashSet::new();
-        for project in catalog_projects.iter().filter(|project| project.enabled) {
-            let repository = worktrees_by_project
-                .get(project.name.as_str())
-                .map(|worktree| {
-                    worktree
-                        .common_git_dir
-                        .to_string_lossy()
-                        .to_ascii_lowercase()
-                })
-                .unwrap_or_else(|| project.project_dir.to_string_lossy().to_ascii_lowercase());
-            if !repositories.insert(repository) {
-                continue;
-            }
-            let project_dir = project.project_dir.clone();
-            fetches.spawn(async move {
-                let _ = execute_git_action(&project_dir, GitAction::Fetch).await;
-            });
-        }
-        while fetches.join_next().await.is_some() {}
-    }
-    let git_statuses = super::project_git_statuses(&catalog_projects).await;
+    let git_statuses = state.project_git_statuses().await;
+    schedule_project_list_refresh(state.clone(), request_fetches_remote(&req));
     let projects = catalog_projects
         .iter()
         .filter(|project| project.enabled)
         .map(|project| {
-            let status = git_statuses.get(&project.name).cloned().unwrap_or_default();
+            let status = if project_needs_git_status(&project.name, &worktrees_by_project) {
+                git_statuses.get(&project.name).cloned().unwrap_or_default()
+            } else {
+                Default::default()
+            };
             public_project_summary(
                 project,
                 &status,
@@ -479,6 +465,68 @@ pub(in crate::server) async fn public_api_patch_project_archive(
     }
 }
 
+static PROJECT_LIST_REFRESH_RUNNING: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn schedule_project_list_refresh(state: AppState, fetch_remote: bool) {
+    if PROJECT_LIST_REFRESH_RUNNING
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+
+    tokio::spawn(async move {
+        let _guard = ProjectListRefreshGuard;
+        let Ok(projects) = state.catalog().list_projects().await else {
+            return;
+        };
+        let worktrees = state.catalog().list_worktrees().await.unwrap_or_default();
+        let worktrees_by_project = worktrees
+            .iter()
+            .map(|worktree| (worktree.project_name.as_str(), worktree))
+            .collect::<HashMap<_, _>>();
+        let status_projects = projects
+            .into_iter()
+            .filter(|project| {
+                project.enabled && project_needs_git_status(&project.name, &worktrees_by_project)
+            })
+            .collect::<Vec<_>>();
+
+        let mut fetches = tokio::task::JoinSet::new();
+        if fetch_remote {
+            let mut repositories = HashSet::new();
+            for project in &status_projects {
+                let repository = worktrees_by_project
+                    .get(project.name.as_str())
+                    .map(|worktree| {
+                        worktree
+                            .common_git_dir
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                    })
+                    .unwrap_or_else(|| project.project_dir.to_string_lossy().to_ascii_lowercase());
+                if repositories.insert(repository) {
+                    let project_dir = project.project_dir.clone();
+                    fetches.spawn(async move {
+                        let _ = execute_git_action(&project_dir, GitAction::Fetch).await;
+                    });
+                }
+            }
+        }
+
+        super::refresh_project_git_statuses(&state, &status_projects).await;
+        while fetches.join_next().await.is_some() {}
+    });
+}
+
+struct ProjectListRefreshGuard;
+
+impl Drop for ProjectListRefreshGuard {
+    fn drop(&mut self) {
+        PROJECT_LIST_REFRESH_RUNNING.store(false, Ordering::Release);
+    }
+}
+
 pub(in crate::server) async fn public_ui_archive_project(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
@@ -529,11 +577,12 @@ pub(in crate::server) async fn public_api_get_project(
         Err(response) => return response,
     };
 
-    if request_fetches_remote(&req) {
-        let _ = execute_git_action(&project_config.project_dir, GitAction::Fetch).await;
-    }
-
-    let git_status = collect_project_git_status(&project_config.project_dir).await;
+    let git_status = state
+        .project_git_statuses()
+        .await
+        .remove(&project_config.name)
+        .unwrap_or_default();
+    schedule_project_list_refresh(state.clone(), request_fetches_remote(&req));
     Json(public_project_detail(
         &project_config,
         &git_status,
@@ -547,6 +596,15 @@ fn request_fetches_remote(req: &Request<Body>) -> bool {
         url::form_urlencoded::parse(query.as_bytes())
             .any(|(key, value)| key == "fetch" && matches!(value.as_ref(), "1" | "true"))
     })
+}
+
+fn project_needs_git_status(
+    project: &str,
+    worktrees_by_project: &HashMap<&str, &WorktreeRecord>,
+) -> bool {
+    !worktrees_by_project
+        .get(project)
+        .is_some_and(|worktree| worktree.archived)
 }
 
 pub(in crate::server) async fn public_api_get_project_diff(
@@ -570,10 +628,9 @@ pub(in crate::server) async fn public_api_get_project_diff(
         Err(response) => return response,
     };
 
-    Json(public_diff_response(
-        collect_project_diff(&project_config.project_dir).await,
-    ))
-    .into_response()
+    let report = super::project_diff_snapshot(&state, &project_config).await;
+    super::schedule_project_diff_refresh(state, project_config);
+    Json(public_diff_response(report)).into_response()
 }
 
 pub(in crate::server) async fn public_api_get_project_git_history(
@@ -662,10 +719,14 @@ pub(in crate::server) async fn public_api_patch_project_diff(
         error!(%error, project = %project_config.name, "git action failed");
     }
 
+    let diff = collect_project_diff(&project_config.project_dir).await;
+    state
+        .set_project_git_diff(project_config.name.clone(), diff.clone())
+        .await;
     Json(PublicGitActionResponse {
         ok: action_result.is_ok(),
         error: action_result.err(),
-        diff: public_diff_response(collect_project_diff(&project_config.project_dir).await),
+        diff: public_diff_response(diff),
     })
     .into_response()
 }
@@ -1035,4 +1096,43 @@ pub(in crate::server) async fn public_root_terminal_ws(
     };
 
     ws.on_upgrade(move |socket| terminal_websocket_session(socket, session))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, path::PathBuf};
+
+    use crate::storage::WorktreeRecord;
+
+    use super::project_needs_git_status;
+
+    #[test]
+    fn skips_git_status_for_archived_worktrees() {
+        let active = WorktreeRecord {
+            project_name: "active".to_string(),
+            common_git_dir: PathBuf::from("C:/repo/.git"),
+            worktree_dir: PathBuf::from("C:/repo-active"),
+            branch: Some("active".to_string()),
+            head: "abc123".to_string(),
+            discovered: true,
+            archived: false,
+        };
+        let archived = WorktreeRecord {
+            project_name: "archived".to_string(),
+            common_git_dir: PathBuf::from("C:/repo/.git"),
+            worktree_dir: PathBuf::from("C:/repo-archived"),
+            branch: Some("archived".to_string()),
+            head: "def456".to_string(),
+            discovered: true,
+            archived: true,
+        };
+        let worktrees = HashMap::from([
+            (active.project_name.as_str(), &active),
+            (archived.project_name.as_str(), &archived),
+        ]);
+
+        assert!(project_needs_git_status("active", &worktrees));
+        assert!(!project_needs_git_status("archived", &worktrees));
+        assert!(project_needs_git_status("not-a-worktree", &worktrees));
+    }
 }

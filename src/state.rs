@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -15,6 +15,7 @@ use crate::{
     config::{BootConfig, ConfigError},
     desktop::ManagedDesktopManager,
     device::current_hostname,
+    server::{GitDiffReport, GitStatusSummary},
     storage::CatalogStore,
     terminal::TerminalSessionManager,
 };
@@ -36,6 +37,9 @@ struct AppStateInner {
     desktop_manager: Arc<ManagedDesktopManager>,
     terminal_sessions: Arc<TerminalSessionManager>,
     file_search_pickers: Mutex<HashMap<PathBuf, SharedFilePicker>>,
+    project_git_statuses: RwLock<HashMap<String, GitStatusSummary>>,
+    project_git_diffs: RwLock<HashMap<String, Arc<GitDiffReport>>>,
+    project_git_diff_refreshes: Mutex<HashSet<String>>,
 }
 
 impl AppState {
@@ -56,6 +60,9 @@ impl AppState {
                 desktop_manager: Arc::new(ManagedDesktopManager::default()),
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
                 file_search_pickers: Mutex::new(HashMap::new()),
+                project_git_statuses: RwLock::new(HashMap::new()),
+                project_git_diffs: RwLock::new(HashMap::new()),
+                project_git_diff_refreshes: Mutex::new(HashSet::new()),
             }),
         }
     }
@@ -123,6 +130,48 @@ impl AppState {
 
     pub async fn config_snapshot(&self) -> BootConfig {
         self.inner.config.read().await.clone()
+    }
+
+    pub async fn project_git_statuses(&self) -> HashMap<String, GitStatusSummary> {
+        self.inner.project_git_statuses.read().await.clone()
+    }
+
+    pub async fn set_project_git_status(&self, project: String, status: GitStatusSummary) {
+        self.inner
+            .project_git_statuses
+            .write()
+            .await
+            .insert(project, status);
+    }
+
+    pub async fn project_git_diff(&self, project: &str) -> Option<Arc<GitDiffReport>> {
+        self.inner
+            .project_git_diffs
+            .read()
+            .await
+            .get(project)
+            .cloned()
+    }
+
+    pub async fn set_project_git_diff(&self, project: String, diff: GitDiffReport) {
+        self.inner
+            .project_git_diffs
+            .write()
+            .await
+            .insert(project, Arc::new(diff));
+    }
+
+    pub fn try_begin_project_git_diff_refresh(&self, project: &str) -> bool {
+        self.inner
+            .project_git_diff_refreshes
+            .lock()
+            .is_ok_and(|mut refreshes| refreshes.insert(project.to_string()))
+    }
+
+    pub fn finish_project_git_diff_refresh(&self, project: &str) {
+        if let Ok(mut refreshes) = self.inner.project_git_diff_refreshes.lock() {
+            refreshes.remove(project);
+        }
     }
 
     pub async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {

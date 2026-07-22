@@ -21,6 +21,6 @@ pub(super) use public::{
     PublicGitActionResponse, public_commit_response, public_diff_response, public_history_response,
 };
 pub(super) use types::{
-    FileSectionKind, GitAction, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff,
-    GitHistoryReport, GitStatusSummary,
+    FileSectionKind, GitAction, GitCommitReport, GitFileChange, GitFileDiff, GitHistoryReport,
 };
+pub(crate) use types::{GitDiffReport, GitStatusSummary};

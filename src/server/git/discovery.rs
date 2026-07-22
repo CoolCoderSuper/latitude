@@ -41,24 +41,37 @@ pub(in crate::server) async fn discover_worktrees(state: &AppState) {
             return;
         }
     };
-    let mut reconciled = HashSet::new();
-
+    let mut scans = tokio::task::JoinSet::new();
     for root in roots.into_iter().filter(|project| project.enabled) {
-        let common_git_dir = match common_git_dir(&root.project_dir).await {
-            Ok(path) => path,
-            Err(_) => continue,
-        };
-        let common_key = common_git_dir.to_string_lossy().to_ascii_lowercase();
-        if !reconciled.insert(common_key) {
+        scans.spawn(async move {
+            let common_git_dir = match common_git_dir(&root.project_dir).await {
+                Ok(path) => path,
+                Err(_) => return (root, Ok(None)),
+            };
+            match list_git_worktrees(&root.project_dir).await {
+                Ok(worktrees) => (root, Ok(Some((common_git_dir, worktrees)))),
+                Err(error) => (root, Err(error)),
+            }
+        });
+    }
+
+    let mut reconciled = HashSet::new();
+    while let Some(result) = scans.join_next().await {
+        let Ok((root, scan)) = result else {
             continue;
-        }
-        let worktrees = match list_git_worktrees(&root.project_dir).await {
-            Ok(worktrees) => worktrees,
+        };
+        let (common_git_dir, worktrees) = match scan {
+            Ok(Some(scan)) => scan,
+            Ok(None) => continue,
             Err(error) => {
                 warn!(project = %root.name, %error, "Git worktrees could not be discovered");
                 continue;
             }
         };
+        let common_key = common_git_dir.to_string_lossy().to_ascii_lowercase();
+        if !reconciled.insert(common_key) {
+            continue;
+        }
         if let Err(error) = state
             .catalog()
             .reconcile_worktrees(&common_git_dir, &root, &worktrees)

@@ -27,6 +27,8 @@ use tracing::info;
 
 use crate::state::AppState;
 
+pub(crate) use git::{GitDiffReport, GitStatusSummary};
+
 use assets::{ASSET_BASE_PATH, public_asset};
 use auth::open_t3code_embed;
 use command::{
@@ -75,6 +77,8 @@ pub async fn run(state: AppState) -> anyhow::Result<()> {
     let config = state.config_snapshot().await;
     let public_bind = config.public_bind.clone();
     let command_bind = config.command_bind.clone();
+
+    render::warm_syntax_highlighter();
 
     let public_listener = TcpListener::bind(&public_bind).await?;
     let command_listener = TcpListener::bind(&command_bind).await?;

@@ -2,15 +2,15 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
-#[derive(Debug)]
-pub(in crate::server) struct GitDiffReport {
+#[derive(Clone, Debug)]
+pub(crate) struct GitDiffReport {
     pub(in crate::server) repo_dir: PathBuf,
     pub(in crate::server) status: GitStatusSummary,
     pub(in crate::server) file_changes: Vec<GitFileChange>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
-pub(in crate::server) struct GitStatusSummary {
+pub(crate) struct GitStatusSummary {
     pub(in crate::server) dirty: bool,
     pub(in crate::server) additions: usize,
     pub(in crate::server) deletions: usize,
@@ -127,7 +127,7 @@ impl GitAction {
     }
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub(in crate::server) struct GitFileChange {
     pub(in crate::server) path: String,
     pub(in crate::server) original_path: Option<String>,
@@ -136,7 +136,7 @@ pub(in crate::server) struct GitFileChange {
     pub(in crate::server) diffs: Vec<GitFileDiff>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub(in crate::server) struct GitFileDiff {
     pub(in crate::server) label: String,
     pub(in crate::server) command: String,

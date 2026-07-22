@@ -19,6 +19,11 @@ const DEFAULT_COLOR: Color = Color {
     a: 255,
 };
 
+pub(in crate::server) fn warm_syntax_highlighter() {
+    LazyLock::force(&SYNTAX_SET);
+    LazyLock::force(&TOKEN_THEME);
+}
+
 fn syntax_set() -> SyntaxSet {
     let mut builder = two_face::syntax::extra_no_newlines().into_builder();
     builder.add(

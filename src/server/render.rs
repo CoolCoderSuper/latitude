@@ -21,11 +21,13 @@ pub(super) use terminal_page::{render_project_terminal, render_root_terminal};
 #[cfg(test)]
 pub(super) use syntax::{
     HighlightedDiffLine, diff_line_class, highlight_diff_lines, highlight_source_lines,
-    render_diff_code_output, syntax_name_for_path,
+    render_diff_code_output, syntax_name_for_path, warm_syntax_highlighter,
 };
 
 #[cfg(not(test))]
-pub(super) use syntax::{HighlightedDiffLine, highlight_diff_lines, highlight_source_lines};
+pub(super) use syntax::{
+    HighlightedDiffLine, highlight_diff_lines, highlight_source_lines, warm_syntax_highlighter,
+};
 
 use maud::html;
 

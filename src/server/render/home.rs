@@ -249,7 +249,7 @@ fn server_project_item(
                 }
                 span { (description) }
             }
-            @if worktree.is_some() {
+            @if worktree.is_some_and(|worktree| worktree.discovered) {
                 button
                     class="worktree-archive"
                     type="button"

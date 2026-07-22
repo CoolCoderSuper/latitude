@@ -162,7 +162,7 @@ export function AppContent() {
 
   useEffect(() => {
     if (session) {
-      void loadProjects(true);
+      void loadProjects();
     }
   }, [loadProjects, session]);
 
