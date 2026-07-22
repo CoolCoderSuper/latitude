@@ -20,6 +20,7 @@ use url::Url;
 use crate::{config::T3CodeConfig, state::AppState, storage::WorktreeRecord};
 
 use super::{
+    assets::public_asset,
     auth::{
         public_api_auth_challenge, public_auth_challenge, public_headers_are_authenticated,
         public_request_is_authenticated,
@@ -43,10 +44,15 @@ struct ProjectRegistrationOutput {
 
 pub(super) fn t3code_gateway_router(state: AppState) -> Router {
     Router::new()
+        .route("/__latitude/assets/{name}", get(t3code_gateway_asset))
         .route(LOGIN_PATH, get(get_public_login).post(post_public_login))
         .route("/ws", get(t3code_gateway_websocket))
         .fallback(t3code_gateway_http)
         .with_state(state)
+}
+
+async fn t3code_gateway_asset(path: AxumPath<String>, headers: HeaderMap) -> Response<Body> {
+    public_asset(path, headers).await
 }
 
 pub(super) async fn open_t3code(
@@ -746,6 +752,21 @@ mod tests {
         assert_eq!(
             cookie_header_without(&value, AUTH_COOKIE_NAME).as_deref(),
             Some("theme=dark; t3_session=allowed")
+        );
+    }
+
+    #[tokio::test]
+    async fn gateway_serves_login_assets_without_authentication() {
+        let response =
+            t3code_gateway_asset(AxumPath("auth.css".to_string()), HeaderMap::new()).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("text/css; charset=utf-8")
         );
     }
 

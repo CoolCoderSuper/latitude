@@ -159,9 +159,24 @@ pub(super) async fn open_t3code_embed(
         _ => return json_error(StatusCode::BAD_REQUEST, "invalid theme"),
     };
     let next = clean_next_path(values.get("next").cloned());
+    let (next_without_fragment, fragment) = next
+        .split_once('#')
+        .map_or((next.as_str(), None), |(path, fragment)| {
+            (path, Some(fragment))
+        });
+    let separator = if next_without_fragment.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    let mut embed_next = format!("{next_without_fragment}{separator}latitude_t3code_embed=1");
+    if let Some(fragment) = fragment {
+        embed_next.push('#');
+        embed_next.push_str(fragment);
+    }
     let mut response = Response::builder()
         .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, next)
+        .header(header::LOCATION, embed_next)
         .header(header::CACHE_CONTROL, "no-store")
         .body(Body::empty())
         .unwrap_or_else(internal_response);

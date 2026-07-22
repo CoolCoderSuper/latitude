@@ -23,8 +23,23 @@
     return null;
   }
 
+  function isT3CodeEmbedSurface() {
+    var marker = 'latitude_t3code_embed';
+    try {
+      if (new URLSearchParams(window.location.search).get(marker) === '1') {
+        window.sessionStorage.setItem(marker, '1');
+      }
+      return window.sessionStorage.getItem(marker) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
   var root = document.documentElement;
-  if (window.self !== window.top && hasCookie('latitude_t3code_embed_session', '1')) {
+  if (
+    hasCookie('latitude_t3code_embed_session', '1') &&
+    (window.self !== window.top || isT3CodeEmbedSurface())
+  ) {
     root.dataset.latitudeT3codeEmbed = 'true';
   }
   var theme = cleanTheme(root.dataset.latitudeTheme) || cookieTheme() || 'light';

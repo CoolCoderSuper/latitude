@@ -29,8 +29,8 @@ use super::{
         public_request_is_authenticated,
     },
     command::{
-        CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_t3code_embed_session,
-        get_config, get_project_deployment, get_project_page_content,
+        CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_project,
+        create_t3code_embed_session, get_config, get_project_deployment, get_project_page_content,
     },
     constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, T3CODE_EMBED_COOKIE},
     files_api::public_ui_put_project_file,
@@ -238,7 +238,10 @@ async fn t3code_embed_session_authenticates_the_browser_and_carries_theme() {
     let request = Request::builder().uri(href).body(Body::empty()).unwrap();
     let response = open_t3code_embed(State(state), request).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers().get(header::LOCATION).unwrap(), "/demo");
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "/demo?latitude_t3code_embed=1"
+    );
     let cookies = response
         .headers()
         .get_all(header::SET_COOKIE)
@@ -546,13 +549,15 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
 }
 
 #[test]
-fn t3code_embed_ui_requires_both_the_session_cookie_and_an_iframe() {
+fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
     let bootstrap = include_str!("assets/theme-bootstrap.js");
     let theme_toggle = include_str!("assets/theme-toggle.js");
     let common_theme = include_str!("assets/common-theme.css");
 
     assert!(bootstrap.contains("window.self !== window.top"));
     assert!(bootstrap.contains("latitude_t3code_embed_session"));
+    assert!(bootstrap.contains("URLSearchParams(window.location.search)"));
+    assert!(bootstrap.contains("window.sessionStorage.setItem(marker, '1')"));
     assert!(theme_toggle.contains("dataset.latitudeT3codeEmbed === 'true'"));
     assert!(common_theme.contains("[data-latitude-t3code-embed=\"true\"] [data-t3code-open]"));
 }
@@ -687,6 +692,85 @@ async fn command_config_response_is_boot_only() {
     assert!(value.get("public_bind").is_some());
     assert!(value.get("projects").is_none());
     assert!(value.get("share_links").is_none());
+}
+
+#[tokio::test]
+async fn command_project_create_discovers_the_requested_worktree_without_creating_a_duplicate() {
+    let repository_dir = std::env::temp_dir().join(format!(
+        "latitude-command-project-list-repo-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let worktree_dir = repository_dir.with_extension("worktree");
+    std::fs::create_dir_all(&repository_dir).unwrap();
+    let git = |directory: &Path, args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(directory)
+            .status()
+            .expect("git should run");
+        assert!(status.success(), "git {args:?} should succeed");
+    };
+    git(&repository_dir, &["init", "--quiet"]);
+    git(&repository_dir, &["config", "user.name", "Latitude Tests"]);
+    git(
+        &repository_dir,
+        &["config", "user.email", "latitude@example.invalid"],
+    );
+    std::fs::write(repository_dir.join("README.md"), "# Demo\n").unwrap();
+    git(&repository_dir, &["add", "README.md"]);
+    git(&repository_dir, &["commit", "--quiet", "-m", "initial"]);
+    let worktree_arg = worktree_dir.to_string_lossy().into_owned();
+    git(
+        &repository_dir,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            "codex/fix",
+            &worktree_arg,
+        ],
+    );
+
+    let seed = CatalogSeed {
+        projects: vec![SeedProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: repository_dir,
+            deployments: Vec::new(),
+        }],
+        ..CatalogSeed::default()
+    };
+    let state = test_state_with_seed(BootConfig::default(), seed).await;
+
+    let response = create_project(
+        State(state.clone()),
+        axum::Json(ProjectConfig {
+            name: "demo-2".to_string(),
+            enabled: true,
+            project_dir: worktree_dir,
+            deployments: Vec::new(),
+        }),
+    )
+    .await
+    .unwrap()
+    .into_response();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let project: ProjectConfig = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(project.name, "demo--fix");
+    assert!(
+        state
+            .catalog()
+            .get_project("demo-2")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

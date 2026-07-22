@@ -4,13 +4,15 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::{state::AppState, storage::DiscoveredWorktree};
+use crate::{config::ProjectConfig, state::AppState, storage::DiscoveredWorktree};
 
 use super::command::run_git_command;
 
 static DISCOVERY_RUNNING: AtomicBool = AtomicBool::new(false);
+static DISCOVERY_LOCK: Mutex<()> = Mutex::const_new(());
 
 pub(in crate::server) fn schedule_worktree_discovery(state: AppState) {
     if DISCOVERY_RUNNING
@@ -34,6 +36,7 @@ impl Drop for DiscoveryGuard {
 }
 
 pub(in crate::server) async fn discover_worktrees(state: &AppState) {
+    let _discovery_guard = DISCOVERY_LOCK.lock().await;
     let roots = match state.catalog().list_worktree_roots().await {
         Ok(roots) => roots,
         Err(error) => {
@@ -80,6 +83,66 @@ pub(in crate::server) async fn discover_worktrees(state: &AppState) {
             warn!(project = %root.name, %error, "Git worktrees could not be synchronized");
         }
     }
+}
+
+pub(in crate::server) async fn discover_worktree_project(
+    state: &AppState,
+    project_dir: &std::path::Path,
+) -> Result<Option<ProjectConfig>, String> {
+    let _discovery_guard = DISCOVERY_LOCK.lock().await;
+    let common_git_dir = match common_git_dir(project_dir).await {
+        Ok(path) => path,
+        Err(_) => return Ok(None),
+    };
+    let worktrees = list_git_worktrees(project_dir).await?;
+    let Some(primary_worktree) = worktrees.first() else {
+        return Ok(None);
+    };
+    let projects = state
+        .catalog()
+        .list_projects()
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(root) = projects
+        .into_iter()
+        .find(|root| same_path(&root.project_dir, &primary_worktree.worktree_dir))
+    else {
+        return Ok(None);
+    };
+
+    state
+        .catalog()
+        .reconcile_worktrees(&common_git_dir, &root, &worktrees)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let requested_dir = canonical_or_original(project_dir);
+    let projects = state
+        .catalog()
+        .list_projects()
+        .await
+        .map_err(|error| error.to_string())?;
+    let Some(project) = projects
+        .into_iter()
+        .find(|project| same_path(&project.project_dir, &requested_dir))
+    else {
+        return Ok(None);
+    };
+    state
+        .catalog()
+        .get_project(&project.name)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+fn canonical_or_original(path: &std::path::Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    canonical_or_original(left)
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&canonical_or_original(right).to_string_lossy())
 }
 
 async fn common_git_dir(project_dir: &std::path::Path) -> Result<PathBuf, String> {

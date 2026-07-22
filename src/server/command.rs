@@ -138,6 +138,12 @@ pub(super) async fn create_project(
     Json(project): Json<crate::config::ProjectConfig>,
 ) -> Result<impl IntoResponse, ApiError> {
     project.validate()?;
+    if let Some(discovered) = super::git::discover_worktree_project(&state, &project.project_dir)
+        .await
+        .map_err(|error| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error))?
+    {
+        return Ok((StatusCode::OK, Json(discovered)));
+    }
     let created = project.clone();
     state.catalog().create_project(project).await?;
     Ok((StatusCode::CREATED, Json(created)))
