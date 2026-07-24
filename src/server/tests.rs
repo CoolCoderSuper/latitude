@@ -2132,7 +2132,8 @@ fn groups_linked_worktrees_on_server_home() {
     assert!(rendered.contains(r"C:\work\latitude-mobile-fix"));
     assert!(!rendered.contains(r"\\?\C:\work\latitude-mobile-fix"));
     assert!(rendered.contains("data-project-list"));
-    assert!(rendered.contains("hx-trigger=\"every 1s, worktreeArchived from:body\""));
+    assert!(rendered.contains("hx-get=\"/?refresh=auto\""));
+    assert!(rendered.contains("hx-trigger=\"every 5s, worktreeArchived from:body\""));
     assert!(rendered.contains("hx-target=\"#project-list\""));
     assert!(rendered.contains("hx-sync=\"this:drop\""));
     assert!(rendered.contains("id=\"project-git-status-latitude--mobile-fix\""));
@@ -2281,4 +2282,82 @@ fn serves_full_html_document_without_wrapping() {
         render_page_content(None, PageFormat::Html, html, Some("dark"), TEST_HOSTNAME),
         html
     );
+}
+
+#[tokio::test]
+async fn coalesces_concurrent_git_refresh_requests() {
+    let state = test_state(BootConfig::default()).await;
+    let crate::state::GitRefreshAccess::Leader(leader) = state
+        .acquire_git_refresh(false, std::time::Duration::from_millis(500))
+        .await
+    else {
+        panic!("the first request should lead the refresh");
+    };
+    let waiting_state = state.clone();
+    let waiter = tokio::spawn(async move {
+        waiting_state
+            .acquire_git_refresh(false, std::time::Duration::from_millis(500))
+            .await
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiter.is_finished());
+
+    leader.complete();
+    assert!(matches!(
+        waiter.await.unwrap(),
+        crate::state::GitRefreshAccess::Reused
+    ));
+}
+
+#[tokio::test]
+async fn remote_fetch_request_upgrades_after_local_refresh() {
+    let state = test_state(BootConfig::default()).await;
+    let crate::state::GitRefreshAccess::Leader(local_refresh) = state
+        .acquire_git_refresh(false, std::time::Duration::from_millis(500))
+        .await
+    else {
+        panic!("the first request should lead the refresh");
+    };
+    let waiting_state = state.clone();
+    let remote_waiter = tokio::spawn(async move {
+        waiting_state
+            .acquire_git_refresh(true, std::time::Duration::from_millis(500))
+            .await
+    });
+    tokio::task::yield_now().await;
+
+    local_refresh.complete();
+    let crate::state::GitRefreshAccess::Leader(remote_refresh) = remote_waiter.await.unwrap()
+    else {
+        panic!("a local refresh must not satisfy a remote-fetch request");
+    };
+    remote_refresh.complete();
+}
+
+#[tokio::test]
+async fn auto_refresh_reuses_snapshot_until_its_max_age_expires() {
+    let state = test_state(BootConfig::default()).await;
+    let crate::state::GitRefreshAccess::Leader(initial_refresh) = state
+        .acquire_git_refresh(false, std::time::Duration::from_millis(500))
+        .await
+    else {
+        panic!("the initial request should lead the refresh");
+    };
+    initial_refresh.complete();
+
+    assert!(matches!(
+        state
+            .acquire_git_refresh(false, std::time::Duration::from_secs(10))
+            .await,
+        crate::state::GitRefreshAccess::Reused
+    ));
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    let crate::state::GitRefreshAccess::Leader(expired_refresh) = state
+        .acquire_git_refresh(false, std::time::Duration::from_millis(1))
+        .await
+    else {
+        panic!("an expired snapshot should be refreshed");
+    };
+    expired_refresh.complete();
 }

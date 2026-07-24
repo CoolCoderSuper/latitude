@@ -1,8 +1,4 @@
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 use tokio::sync::Mutex;
 use tracing::warn;
@@ -11,29 +7,7 @@ use crate::{config::ProjectConfig, state::AppState, storage::DiscoveredWorktree}
 
 use super::command::run_git_command;
 
-static DISCOVERY_RUNNING: AtomicBool = AtomicBool::new(false);
 static DISCOVERY_LOCK: Mutex<()> = Mutex::const_new(());
-
-pub(in crate::server) fn schedule_worktree_discovery(state: AppState) {
-    if DISCOVERY_RUNNING
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return;
-    }
-    tokio::spawn(async move {
-        let _guard = DiscoveryGuard;
-        discover_worktrees(&state).await;
-    });
-}
-
-struct DiscoveryGuard;
-
-impl Drop for DiscoveryGuard {
-    fn drop(&mut self) {
-        DISCOVERY_RUNNING.store(false, Ordering::Release);
-    }
-}
 
 pub(in crate::server) async fn discover_worktrees(state: &AppState) {
     let _discovery_guard = DISCOVERY_LOCK.lock().await;
@@ -44,9 +18,14 @@ pub(in crate::server) async fn discover_worktrees(state: &AppState) {
             return;
         }
     };
+    let concurrency = Arc::new(tokio::sync::Semaphore::new(4));
     let mut scans = tokio::task::JoinSet::new();
     for root in roots.into_iter().filter(|project| project.enabled) {
+        let concurrency = concurrency.clone();
         scans.spawn(async move {
+            let Ok(_permit) = concurrency.acquire_owned().await else {
+                return (root, Ok(None));
+            };
             let common_git_dir = match common_git_dir(&root.project_dir).await {
                 Ok(path) => path,
                 Err(_) => return (root, Ok(None)),

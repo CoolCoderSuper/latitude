@@ -2,64 +2,60 @@ mod api;
 mod models;
 mod serve;
 
-use crate::{config::ProjectConfig, state::AppState};
+use crate::{
+    config::ProjectConfig,
+    state::{AppState, GitRefreshAccess},
+};
+use tracing::{debug, warn};
 
-use super::git::{GitDiffReport, collect_project_diff, collect_project_git_status};
+use super::git::{collect_project_git_status, discover_worktrees};
+
+const INTERACTIVE_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(500);
+const AUTO_REFRESH_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
 
 async fn refresh_project_git_statuses(state: &AppState, projects: &[ProjectConfig]) {
+    let concurrency = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
     let mut checks = tokio::task::JoinSet::new();
     for project in projects.iter().filter(|project| project.enabled) {
         let name = project.name.clone();
         let project_dir = project.project_dir.clone();
-        checks.spawn(async move { (name, collect_project_git_status(&project_dir).await) });
+        let concurrency = concurrency.clone();
+        checks.spawn(async move {
+            let Ok(_permit) = concurrency.acquire_owned().await else {
+                return None;
+            };
+            Some((name, collect_project_git_status(&project_dir).await))
+        });
     }
 
     while let Some(result) = checks.join_next().await {
-        if let Ok((name, status)) = result {
-            state.set_project_git_status(name, status).await;
+        match result {
+            Ok(Some((name, status))) => state.set_project_git_status(name, status).await,
+            Ok(None) => {}
+            Err(error) => warn!(%error, "Git status refresh task failed"),
         }
     }
 }
 
-async fn project_diff_snapshot(state: &AppState, project: &ProjectConfig) -> GitDiffReport {
-    if let Some(report) = state.project_git_diff(&project.name).await {
-        return (*report).clone();
-    }
-    let status = state
-        .project_git_statuses()
+async fn refresh_git_snapshot(
+    state: &AppState,
+    fetch_remote: bool,
+    max_snapshot_age: std::time::Duration,
+) {
+    let GitRefreshAccess::Leader(permit) = state
+        .acquire_git_refresh(fetch_remote, max_snapshot_age)
         .await
-        .remove(&project.name)
-        .unwrap_or_default();
-    GitDiffReport {
-        repo_dir: project.project_dir.clone(),
-        status,
-        file_changes: Vec::new(),
-    }
-}
-
-fn schedule_project_diff_refresh(state: AppState, project: ProjectConfig) {
-    if !state.try_begin_project_git_diff_refresh(&project.name) {
+    else {
         return;
-    }
-    tokio::spawn(async move {
-        let _guard = ProjectDiffRefreshGuard {
-            state: state.clone(),
-            project: project.name.clone(),
-        };
-        let report = collect_project_diff(&project.project_dir).await;
-        state.set_project_git_diff(project.name, report).await;
-    });
-}
-
-struct ProjectDiffRefreshGuard {
-    state: AppState,
-    project: String,
-}
-
-impl Drop for ProjectDiffRefreshGuard {
-    fn drop(&mut self) {
-        self.state.finish_project_git_diff_refresh(&self.project);
-    }
+    };
+    let started = std::time::Instant::now();
+    discover_worktrees(state).await;
+    api::refresh_project_list(state, fetch_remote).await;
+    permit.complete();
+    debug!(
+        elapsed_ms = started.elapsed().as_millis(),
+        fetch_remote, "request-time Git snapshot refreshed"
+    );
 }
 
 #[cfg(test)]

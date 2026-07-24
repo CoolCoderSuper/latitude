@@ -1,7 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use fff_search::{FFFMode, FilePicker, FilePickerOptions, SharedFilePicker, SharedFrecency};
@@ -9,13 +13,13 @@ use hmac::{Hmac, Mac};
 use rand::random;
 use reqwest::Client;
 use sha2::Sha256;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, RwLock};
 
 use crate::{
     config::{BootConfig, ConfigError},
     desktop::ManagedDesktopManager,
     device::current_hostname,
-    server::{GitDiffReport, GitStatusSummary},
+    server::GitStatusSummary,
     storage::CatalogStore,
     terminal::TerminalSessionManager,
 };
@@ -25,6 +29,17 @@ type HmacSha256 = Hmac<Sha256>;
 #[derive(Clone)]
 pub struct AppState {
     inner: Arc<AppStateInner>,
+}
+
+pub enum GitRefreshAccess {
+    Leader(GitRefreshPermit),
+    Reused,
+}
+
+pub struct GitRefreshPermit {
+    state: AppState,
+    fetch_remote: bool,
+    _guard: OwnedMutexGuard<()>,
 }
 
 struct AppStateInner {
@@ -38,8 +53,11 @@ struct AppStateInner {
     terminal_sessions: Arc<TerminalSessionManager>,
     file_search_pickers: Mutex<HashMap<PathBuf, SharedFilePicker>>,
     project_git_statuses: RwLock<HashMap<String, GitStatusSummary>>,
-    project_git_diffs: RwLock<HashMap<String, Arc<GitDiffReport>>>,
-    project_git_diff_refreshes: Mutex<HashSet<String>>,
+    git_refresh_lock: Arc<AsyncMutex<()>>,
+    git_refresh_generation: AtomicU64,
+    git_remote_fetch_generation: AtomicU64,
+    git_refresh_completed_at: Mutex<Option<Instant>>,
+    git_remote_fetch_completed_at: Mutex<Option<Instant>>,
 }
 
 impl AppState {
@@ -61,8 +79,11 @@ impl AppState {
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
                 file_search_pickers: Mutex::new(HashMap::new()),
                 project_git_statuses: RwLock::new(HashMap::new()),
-                project_git_diffs: RwLock::new(HashMap::new()),
-                project_git_diff_refreshes: Mutex::new(HashSet::new()),
+                git_refresh_lock: Arc::new(AsyncMutex::new(())),
+                git_refresh_generation: AtomicU64::new(0),
+                git_remote_fetch_generation: AtomicU64::new(0),
+                git_refresh_completed_at: Mutex::new(None),
+                git_remote_fetch_completed_at: Mutex::new(None),
             }),
         }
     }
@@ -144,34 +165,34 @@ impl AppState {
             .insert(project, status);
     }
 
-    pub async fn project_git_diff(&self, project: &str) -> Option<Arc<GitDiffReport>> {
-        self.inner
-            .project_git_diffs
-            .read()
-            .await
-            .get(project)
-            .cloned()
-    }
-
-    pub async fn set_project_git_diff(&self, project: String, diff: GitDiffReport) {
-        self.inner
-            .project_git_diffs
-            .write()
-            .await
-            .insert(project, Arc::new(diff));
-    }
-
-    pub fn try_begin_project_git_diff_refresh(&self, project: &str) -> bool {
-        self.inner
-            .project_git_diff_refreshes
-            .lock()
-            .is_ok_and(|mut refreshes| refreshes.insert(project.to_string()))
-    }
-
-    pub fn finish_project_git_diff_refresh(&self, project: &str) {
-        if let Ok(mut refreshes) = self.inner.project_git_diff_refreshes.lock() {
-            refreshes.remove(project);
+    pub async fn acquire_git_refresh(
+        &self,
+        fetch_remote: bool,
+        max_snapshot_age: Duration,
+    ) -> GitRefreshAccess {
+        let observed_generation = self.inner.git_refresh_generation.load(Ordering::Acquire);
+        let guard = self.inner.git_refresh_lock.clone().lock_owned().await;
+        let completed_generation = self.inner.git_refresh_generation.load(Ordering::Acquire);
+        let remote_fetch_generation = self
+            .inner
+            .git_remote_fetch_generation
+            .load(Ordering::Acquire);
+        let local_snapshot_is_recent =
+            completed_recently(&self.inner.git_refresh_completed_at, max_snapshot_age);
+        let remote_fetch_is_recent =
+            completed_recently(&self.inner.git_remote_fetch_completed_at, max_snapshot_age);
+        if (completed_generation > observed_generation || local_snapshot_is_recent)
+            && (!fetch_remote
+                || remote_fetch_generation > observed_generation
+                || remote_fetch_is_recent)
+        {
+            return GitRefreshAccess::Reused;
         }
+        GitRefreshAccess::Leader(GitRefreshPermit {
+            state: self.clone(),
+            fetch_remote,
+            _guard: guard,
+        })
     }
 
     pub async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {
@@ -180,6 +201,35 @@ impl AppState {
         *self.inner.config.write().await = config;
         Ok(())
     }
+}
+
+impl GitRefreshPermit {
+    pub fn complete(self) {
+        if let Ok(mut completed_at) = self.state.inner.git_refresh_completed_at.lock() {
+            *completed_at = Some(Instant::now());
+        }
+        let generation = self
+            .state
+            .inner
+            .git_refresh_generation
+            .fetch_add(1, Ordering::AcqRel)
+            + 1;
+        if self.fetch_remote {
+            if let Ok(mut completed_at) = self.state.inner.git_remote_fetch_completed_at.lock() {
+                *completed_at = Some(Instant::now());
+            }
+            self.state
+                .inner
+                .git_remote_fetch_generation
+                .store(generation, Ordering::Release);
+        }
+    }
+}
+
+fn completed_recently(completed_at: &Mutex<Option<Instant>>, max_age: Duration) -> bool {
+    completed_at.lock().is_ok_and(|completed_at| {
+        completed_at.is_some_and(|completed| completed.elapsed() <= max_age)
+    })
 }
 
 fn public_auth_tag(secret: &[u8], password: &str) -> impl AsRef<[u8]> {

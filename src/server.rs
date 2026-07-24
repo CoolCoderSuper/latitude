@@ -27,7 +27,7 @@ use tracing::info;
 
 use crate::state::AppState;
 
-pub(crate) use git::{GitDiffReport, GitStatusSummary};
+pub(crate) use git::GitStatusSummary;
 
 use assets::{ASSET_BASE_PATH, public_asset};
 use auth::open_t3code_embed;

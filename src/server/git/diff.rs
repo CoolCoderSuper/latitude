@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use tokio::fs;
+use tokio::{
+    fs,
+    io::{AsyncReadExt, BufReader},
+};
 
 use super::{
     command::{
@@ -198,76 +201,103 @@ pub(in crate::server) async fn file_baseline(project_dir: &Path, file: &Path) ->
 }
 
 pub(in crate::server) async fn collect_project_git_status(project_dir: &Path) -> GitStatusSummary {
-    let Ok(repo_dir) = git_worktree_root(project_dir).await else {
-        return GitStatusSummary::default();
-    };
+    // Catalog project directories are normalized to worktree roots during discovery, so status
+    // refreshes can run there directly without a separate `git rev-parse` process per project.
+    let repo_dir = project_dir;
     let mut summary = GitStatusSummary::default();
 
-    summary.dirty = run_git_command(
-        &repo_dir,
-        &["status", "--porcelain=v1", "--untracked-files=normal"],
+    let status_future = run_git_command(
+        repo_dir,
+        &[
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "-z",
+            "--untracked-files=normal",
+        ],
         &[0],
-    )
-    .await
-    .is_ok_and(|output| !output.stdout.is_empty());
-
-    match run_git_command(
-        &repo_dir,
+    );
+    let diff_future = run_git_command(
+        repo_dir,
         &["diff", "HEAD", "--numstat", "--no-renames"],
         &[0],
-    )
-    .await
-    {
+    );
+    let (status, diff) = tokio::join!(status_future, diff_future);
+
+    match diff {
         Ok(output) => add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout)),
         Err(_) => {
-            for args in [
-                ["diff", "--cached", "--numstat", "--no-renames"],
-                ["diff", "--numstat", "--no-renames", "--"],
-            ] {
-                if let Ok(output) = run_git_command(&repo_dir, &args, &[0]).await {
-                    add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));
-                }
-            }
-        }
-    }
-
-    if let Ok(output) = run_git_command(
-        &repo_dir,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-        &[0],
-    )
-    .await
-    {
-        for path in parse_nul_separated_paths(&output.stdout) {
-            let args = vec![
-                "diff".to_string(),
-                "--no-index".to_string(),
-                "--numstat".to_string(),
-                "--".to_string(),
-                "/dev/null".to_string(),
-                path,
-            ];
-            if let Ok(output) = run_git_command_owned(&repo_dir, &args, &[0, 1]).await {
+            let (cached, unstaged) = tokio::join!(
+                run_git_command(
+                    repo_dir,
+                    &["diff", "--cached", "--numstat", "--no-renames"],
+                    &[0],
+                ),
+                run_git_command(repo_dir, &["diff", "--numstat", "--no-renames", "--"], &[0],)
+            );
+            for output in [cached, unstaged].into_iter().flatten() {
                 add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));
             }
         }
     }
 
-    if let Ok(output) = run_git_command(
-        &repo_dir,
-        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
-        &[0],
-    )
-    .await
-    {
-        let counts = String::from_utf8_lossy(&output.stdout);
-        let mut values = counts
-            .split_whitespace()
-            .filter_map(|value| value.parse().ok());
-        summary.ahead = values.next().unwrap_or(0);
-        summary.behind = values.next().unwrap_or(0);
+    if let Ok(output) = status {
+        for path in apply_porcelain_v2_status(&mut summary, &output.stdout) {
+            summary.additions += untracked_text_line_count(&repo_dir.join(path)).await;
+        }
     }
     summary
+}
+
+fn apply_porcelain_v2_status(summary: &mut GitStatusSummary, output: &[u8]) -> Vec<String> {
+    let mut untracked = Vec::new();
+    for entry in output.split(|byte| *byte == 0) {
+        if let Some(counts) = entry.strip_prefix(b"# branch.ab ") {
+            let counts = String::from_utf8_lossy(counts);
+            for value in counts.split_whitespace() {
+                if let Some(ahead) = value.strip_prefix('+') {
+                    summary.ahead = ahead.parse().unwrap_or(0);
+                } else if let Some(behind) = value.strip_prefix('-') {
+                    summary.behind = behind.parse().unwrap_or(0);
+                }
+            }
+        } else if let Some(path) = entry.strip_prefix(b"? ") {
+            summary.dirty = true;
+            untracked.push(String::from_utf8_lossy(path).into_owned());
+        } else if matches!(entry.first(), Some(b'1' | b'2' | b'u')) {
+            summary.dirty = true;
+        }
+    }
+    untracked
+}
+
+async fn untracked_text_line_count(path: &Path) -> usize {
+    let Ok(file) = fs::File::open(path).await else {
+        return 0;
+    };
+    let mut reader = BufReader::new(file);
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut lines = 0;
+    let mut saw_bytes = false;
+    let mut ended_with_newline = false;
+
+    loop {
+        let Ok(read) = reader.read(&mut buffer).await else {
+            return 0;
+        };
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        if chunk.contains(&0) {
+            return 0;
+        }
+        saw_bytes = true;
+        lines += chunk.iter().filter(|byte| **byte == b'\n').count();
+        ended_with_newline = chunk.last() == Some(&b'\n');
+    }
+
+    lines + usize::from(saw_bytes && !ended_with_newline)
 }
 
 fn add_numstat(summary: &mut GitStatusSummary, output: &str) {
@@ -605,8 +635,9 @@ mod tests {
     use std::{fs as std_fs, process::Command, time::SystemTime};
 
     use super::{
-        Path, collect_project_file_diff, collect_project_git_commit, collect_project_git_history,
-        collect_project_git_status, file_baseline,
+        GitStatusSummary, Path, apply_porcelain_v2_status, collect_project_file_diff,
+        collect_project_git_commit, collect_project_git_history, collect_project_git_status,
+        file_baseline,
     };
 
     fn git(directory: &Path, args: &[&str]) {
@@ -616,6 +647,32 @@ mod tests {
             .status()
             .expect("git should run");
         assert!(status.success(), "git {args:?} should succeed");
+    }
+
+    #[test]
+    fn parses_porcelain_v2_status_and_branch_counts() {
+        let mut summary = GitStatusSummary::default();
+        let untracked = apply_porcelain_v2_status(
+            &mut summary,
+            b"# branch.oid abc\0# branch.ab +3 -2\01 .M N... tracked.txt\0? new.txt\0",
+        );
+
+        assert!(summary.dirty);
+        assert_eq!(summary.ahead, 3);
+        assert_eq!(summary.behind, 2);
+        assert_eq!(untracked, ["new.txt"]);
+    }
+
+    #[test]
+    fn porcelain_v2_branch_headers_alone_are_clean() {
+        let mut summary = GitStatusSummary::default();
+        let untracked = apply_porcelain_v2_status(
+            &mut summary,
+            b"# branch.oid abc\0# branch.head master\0# branch.ab +0 -0\0",
+        );
+
+        assert!(!summary.dirty);
+        assert!(untracked.is_empty());
     }
 
     #[tokio::test]

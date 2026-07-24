@@ -116,8 +116,8 @@ pub(in crate::server) fn render_server_home(
                 ul
                     id="project-list"
                     data-project-list
-                    hx-get="/"
-                    hx-trigger="every 1s, worktreeArchived from:body"
+                    hx-get="/?refresh=auto"
+                    hx-trigger="every 5s, worktreeArchived from:body"
                     hx-select="[data-project-list]"
                     hx-target="#project-list"
                     hx-sync="this:drop"

@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use tokio::{process::Command, time::timeout};
+use tokio::{process::Command, sync::Semaphore, time::timeout};
 
 use super::{super::constants::GIT_COMMAND_TIMEOUT, types::GitCommandOutput};
+
+static GIT_COMMAND_CONCURRENCY: Semaphore = Semaphore::const_new(4);
 
 pub(super) async fn git_worktree_root(project_dir: &Path) -> Result<PathBuf, String> {
     let output = run_git_command(project_dir, &["rev-parse", "--show-toplevel"], &[0]).await?;
@@ -54,6 +56,10 @@ pub(super) async fn run_git_command_owned(
     args: &[String],
     success_codes: &[i32],
 ) -> Result<GitCommandOutput, String> {
+    let _permit = GIT_COMMAND_CONCURRENCY
+        .acquire()
+        .await
+        .map_err(|_| "Git command concurrency limiter closed".to_string())?;
     let mut command = Command::new("git");
     command.args(args).current_dir(project_dir);
 

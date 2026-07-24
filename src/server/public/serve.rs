@@ -20,8 +20,6 @@ use crate::{
     storage::PageContent,
 };
 
-use super::api::schedule_project_list_refresh;
-
 use super::super::{
     auth::{
         clean_next_path, header_cookie_value, parse_public_login_form, public_auth_challenge,
@@ -35,8 +33,8 @@ use super::super::{
     },
     desktop_api::execute_desktop_action_request,
     git::{
-        collect_project_file_diff, collect_project_git_commit, collect_project_git_history,
-        discover_worktrees, handle_git_action_request, schedule_worktree_discovery,
+        collect_project_diff, collect_project_file_diff, collect_project_git_commit,
+        collect_project_git_history, handle_git_action_request,
     },
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
@@ -125,8 +123,7 @@ pub(in crate::server) async fn public_entry(
     };
 
     if app_mount == DIFF_ROUTE_SEGMENT {
-        return serve_project_diff(req, &state, &project, remainder.as_str(), &device_hostname)
-            .await;
+        return serve_project_diff(req, &project, remainder.as_str(), &device_hostname).await;
     }
     if app_mount == FILES_ROUTE_SEGMENT {
         if remainder.as_str() != "/" {
@@ -781,12 +778,12 @@ async fn serve_project_home(
         );
     }
 
+    super::refresh_git_snapshot(state, false, super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE).await;
     let git_status = state
         .project_git_statuses()
         .await
         .remove(&project.name)
         .unwrap_or_default();
-    schedule_project_list_refresh(state.clone(), false);
     html_response(
         req.method(),
         render_project_home(project, &git_status, t3code_enabled, device_hostname),
@@ -795,7 +792,6 @@ async fn serve_project_home(
 
 async fn serve_project_diff(
     req: Request<Body>,
-    state: &AppState,
     project: &ProjectConfig,
     remainder: &str,
     device_hostname: &str,
@@ -859,8 +855,7 @@ async fn serve_project_diff(
         );
     }
 
-    let report = super::project_diff_snapshot(state, project).await;
-    super::schedule_project_diff_refresh(state.clone(), project.clone());
+    let report = collect_project_diff(&project.project_dir).await;
     if is_htmx_request && method == Method::GET {
         return html_response(
             &method,
@@ -1047,17 +1042,17 @@ async fn serve_server_home(
         );
     }
 
+    let git_snapshot_max_age = if auto_refresh_requested(&req) {
+        super::AUTO_REFRESH_GIT_SNAPSHOT_MAX_AGE
+    } else {
+        super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE
+    };
+    super::refresh_git_snapshot(state, false, git_snapshot_max_age).await;
     let is_htmx_refresh = req
         .headers()
         .get("HX-Request")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-    if is_htmx_refresh {
-        schedule_worktree_discovery(state.clone());
-    } else {
-        discover_worktrees(state).await;
-        schedule_project_list_refresh(state.clone(), false);
-    }
     let mut projects = match state.catalog().list_projects().await {
         Ok(projects) => projects,
         Err(error) => {
@@ -1093,6 +1088,13 @@ async fn serve_server_home(
             device_hostname,
         ),
     )
+}
+
+fn auto_refresh_requested(req: &Request<Body>) -> bool {
+    req.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(name, value)| name == "refresh" && value == "auto")
+    })
 }
 
 async fn load_enabled_project(
