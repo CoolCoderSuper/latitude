@@ -549,6 +549,16 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
 }
 
 #[test]
+fn project_git_polling_marks_only_periodic_requests_as_auto_refresh() {
+    let script = include_str!("assets/project-home.js");
+
+    assert!(script.contains("refreshGitStatuses(false, true)"));
+    assert!(script.contains("refreshGitStatuses(true, true)"));
+    assert!(script.contains("void refreshGitStatuses(true);"));
+    assert!(script.contains("params.set('refresh', 'auto')"));
+}
+
+#[test]
 fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
     let bootstrap = include_str!("assets/theme-bootstrap.js");
     let theme_toggle = include_str!("assets/theme-toggle.js");
@@ -947,7 +957,7 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("data-share-dialog"));
     assert!(rendered.contains("hx-get=\"/__latitude/ui/shares/demo/website\""));
     assert!(rendered.contains("hx-target=\"[data-share-dialog-shell]\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/project-home.js?v=2\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/project-home.js?v=3\""));
     assert!(!rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
     assert!(!rendered.contains("data-deployment=\"draft\""));

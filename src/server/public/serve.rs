@@ -33,8 +33,8 @@ use super::super::{
     },
     desktop_api::execute_desktop_action_request,
     git::{
-        collect_project_diff, collect_project_file_diff, collect_project_git_commit,
-        collect_project_git_history, handle_git_action_request,
+        GitCommandExecution, collect_project_diff, collect_project_file_diff,
+        collect_project_git_commit, collect_project_git_history, handle_git_action_request,
     },
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
@@ -778,7 +778,13 @@ async fn serve_project_home(
         );
     }
 
-    super::refresh_git_snapshot(state, false, super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE).await;
+    super::refresh_project_git_snapshot(
+        state,
+        &project.name,
+        false,
+        GitCommandExecution::Interactive,
+    )
+    .await;
     let git_status = state
         .project_git_statuses()
         .await
@@ -1042,12 +1048,13 @@ async fn serve_server_home(
         );
     }
 
-    let git_snapshot_max_age = if auto_refresh_requested(&req) {
+    let git_execution = super::git_command_execution(req.uri().query());
+    let git_snapshot_max_age = if git_execution == GitCommandExecution::AutoRefresh {
         super::AUTO_REFRESH_GIT_SNAPSHOT_MAX_AGE
     } else {
         super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE
     };
-    super::refresh_git_snapshot(state, false, git_snapshot_max_age).await;
+    super::refresh_git_snapshot(state, false, git_snapshot_max_age, git_execution).await;
     let is_htmx_refresh = req
         .headers()
         .get("HX-Request")
@@ -1088,13 +1095,6 @@ async fn serve_server_home(
             device_hostname,
         ),
     )
-}
-
-fn auto_refresh_requested(req: &Request<Body>) -> bool {
-    req.uri().query().is_some_and(|query| {
-        url::form_urlencoded::parse(query.as_bytes())
-            .any(|(name, value)| name == "refresh" && value == "auto")
-    })
 }
 
 async fn load_enabled_project(

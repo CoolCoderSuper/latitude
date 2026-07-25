@@ -20,7 +20,7 @@ pub(super) const THEME_TOGGLE_SCRIPT_SRC: &str = asset_href!("theme-toggle.js");
 pub(super) const HTMX_SCRIPT_SRC: &str = asset_href!("htmx.min.js");
 pub(super) const AUTH_PAGE_STYLE_HREF: &str = asset_href!("auth.css");
 pub(super) const PROJECT_HOME_STYLE_HREF: &str = asset_href!("project-home.css");
-pub(super) const PROJECT_HOME_SCRIPT_SRC: &str = asset_href!("project-home.js");
+pub(super) const PROJECT_HOME_SCRIPT_SRC: &str = "/__latitude/assets/project-home.js?v=3";
 pub(super) const DIFF_VIEWER_STYLE_HREF: &str = asset_href!("diff-viewer.css");
 pub(super) const DIFF_VIEWER_SCRIPT_SRC: &str = asset_href!("diff-viewer.js");
 pub(super) const FILE_VIEWER_STYLE_HREF: &str = asset_href!("file-viewer.css");

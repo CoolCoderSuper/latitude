@@ -35,14 +35,18 @@
   let gitRefreshPending = false;
   const projectName = shell.dataset.project;
 
-  async function refreshGitStatuses(fetchRemote = false) {
+  async function refreshGitStatuses(fetchRemote = false, autoRefresh = false) {
     if (gitRefreshPending || document.hidden) return;
     gitRefreshPending = true;
     const endpoint = projectName
       ? `/__latitude/api/projects/${encodeURIComponent(projectName)}`
       : '/__latitude/api/projects';
+    const params = new URLSearchParams();
+    if (fetchRemote) params.set('fetch', '1');
+    if (autoRefresh) params.set('refresh', 'auto');
+    const query = params.toString();
     try {
-      const response = await fetch(`${endpoint}${fetchRemote ? '?fetch=1' : ''}`, {
+      const response = await fetch(`${endpoint}${query ? `?${query}` : ''}`, {
         credentials: 'same-origin',
       });
       if (!response.ok) return;
@@ -108,8 +112,8 @@
     return `${count} ${count === 1 ? 'commit' : 'commits'} to ${action}`;
   }
 
-  window.setInterval(() => void refreshGitStatuses(false), 2000);
-  window.setInterval(() => void refreshGitStatuses(true), 30000);
+  window.setInterval(() => void refreshGitStatuses(false, true), 2000);
+  window.setInterval(() => void refreshGitStatuses(true, true), 30000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) void refreshGitStatuses(true);
   });

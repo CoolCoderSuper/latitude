@@ -29,9 +29,10 @@ use super::{
             MAX_TERMINAL_COMMAND_BYTES, PUBLIC_API_PROJECTS_PATH,
         },
         git::{
-            GitAction, PublicGitActionResponse, collect_project_diff, collect_project_git_commit,
-            collect_project_git_history, execute_git_action, parse_public_git_action_payload,
-            public_commit_response, public_diff_response, public_history_response,
+            GitAction, GitCommandExecution, PublicGitActionResponse, collect_project_diff,
+            collect_project_git_commit, collect_project_git_history, execute_git_action,
+            parse_public_git_action_payload, public_commit_response, public_diff_response,
+            public_history_response,
         },
         render::render_share_dialog_shell,
         response::{ApiError, json_error, plain_response},
@@ -379,6 +380,7 @@ pub(in crate::server) async fn public_api_list_projects(
         &state,
         request_fetches_remote(&req),
         super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE,
+        super::git_command_execution(req.uri().query()),
     )
     .await;
     let catalog_projects = match list_catalog_projects_or_response(&state).await {
@@ -465,7 +467,12 @@ pub(in crate::server) async fn public_api_patch_project_archive(
     }
 }
 
-pub(super) async fn refresh_project_list(state: &AppState, fetch_remote: bool) {
+pub(super) async fn refresh_project_list(
+    state: &AppState,
+    fetch_remote: bool,
+    project_name: Option<&str>,
+    execution: GitCommandExecution,
+) {
     let Ok(projects) = state.catalog().list_projects().await else {
         error!("project list could not be loaded for Git refresh");
         return;
@@ -478,13 +485,14 @@ pub(super) async fn refresh_project_list(state: &AppState, fetch_remote: bool) {
     let status_projects = projects
         .into_iter()
         .filter(|project| {
-            project.enabled && project_needs_git_status(&project.name, &worktrees_by_project)
+            project.enabled
+                && project_is_in_refresh_scope(&project.name, project_name)
+                && project_needs_git_status(&project.name, &worktrees_by_project)
         })
         .collect::<Vec<_>>();
 
     let mut fetches = tokio::task::JoinSet::new();
     if fetch_remote {
-        let concurrency = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
         let mut repositories = HashSet::new();
         for project in &status_projects {
             let repository = worktrees_by_project
@@ -498,11 +506,7 @@ pub(super) async fn refresh_project_list(state: &AppState, fetch_remote: bool) {
                 .unwrap_or_else(|| project.project_dir.to_string_lossy().to_ascii_lowercase());
             if repositories.insert(repository) {
                 let project_dir = project.project_dir.clone();
-                let concurrency = concurrency.clone();
                 fetches.spawn(async move {
-                    let Ok(_permit) = concurrency.acquire_owned().await else {
-                        return;
-                    };
                     let _ = execute_git_action(&project_dir, GitAction::Fetch).await;
                 });
             }
@@ -510,7 +514,7 @@ pub(super) async fn refresh_project_list(state: &AppState, fetch_remote: bool) {
     }
 
     while fetches.join_next().await.is_some() {}
-    super::refresh_project_git_statuses(state, &status_projects).await;
+    super::refresh_project_git_statuses(state, &status_projects, execution).await;
 }
 
 pub(in crate::server) async fn public_ui_archive_project(
@@ -552,10 +556,11 @@ pub(in crate::server) async fn public_api_get_project(
         return public_api_auth_challenge();
     }
 
-    super::refresh_git_snapshot(
+    super::refresh_project_git_snapshot(
         &state,
+        &project,
         request_fetches_remote(&req),
-        super::INTERACTIVE_GIT_SNAPSHOT_MAX_AGE,
+        super::git_command_execution(req.uri().query()),
     )
     .await;
     let project_config = match enabled_project_or_response(&state, &project).await {
@@ -596,6 +601,10 @@ fn project_needs_git_status(
     !worktrees_by_project
         .get(project)
         .is_some_and(|worktree| worktree.archived)
+}
+
+fn project_is_in_refresh_scope(project: &str, requested_project: Option<&str>) -> bool {
+    requested_project.is_none_or(|requested_project| project == requested_project)
 }
 
 pub(in crate::server) async fn public_api_get_project_diff(
@@ -1091,7 +1100,15 @@ mod tests {
 
     use crate::storage::WorktreeRecord;
 
-    use super::project_needs_git_status;
+    use super::{project_is_in_refresh_scope, project_needs_git_status};
+
+    #[test]
+    fn limits_project_refresh_to_the_requested_project() {
+        assert!(project_is_in_refresh_scope("requested", None));
+        assert!(project_is_in_refresh_scope("unrelated", None));
+        assert!(project_is_in_refresh_scope("requested", Some("requested")));
+        assert!(!project_is_in_refresh_scope("unrelated", Some("requested")));
+    }
 
     #[test]
     fn skips_git_status_for_archived_worktrees() {

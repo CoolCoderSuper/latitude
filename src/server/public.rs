@@ -8,23 +8,40 @@ use crate::{
 };
 use tracing::{debug, warn};
 
-use super::git::{collect_project_git_status, discover_worktrees};
+use super::git::{
+    GitCommandExecution, collect_project_git_status_with_execution, discover_worktrees,
+};
 
 const INTERACTIVE_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(500);
 const AUTO_REFRESH_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
 
-async fn refresh_project_git_statuses(state: &AppState, projects: &[ProjectConfig]) {
-    let concurrency = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+async fn refresh_project_git_statuses(
+    state: &AppState,
+    projects: &[ProjectConfig],
+    execution: GitCommandExecution,
+) {
+    let concurrency = execution
+        .uses_concurrency_pool()
+        .then(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)));
     let mut checks = tokio::task::JoinSet::new();
     for project in projects.iter().filter(|project| project.enabled) {
         let name = project.name.clone();
         let project_dir = project.project_dir.clone();
         let concurrency = concurrency.clone();
         checks.spawn(async move {
-            let Ok(_permit) = concurrency.acquire_owned().await else {
-                return None;
+            let _permit = match concurrency {
+                Some(concurrency) => {
+                    let Ok(permit) = concurrency.acquire_owned().await else {
+                        return None;
+                    };
+                    Some(permit)
+                }
+                None => None,
             };
-            Some((name, collect_project_git_status(&project_dir).await))
+            Some((
+                name,
+                collect_project_git_status_with_execution(&project_dir, execution).await,
+            ))
         });
     }
 
@@ -41,21 +58,79 @@ async fn refresh_git_snapshot(
     state: &AppState,
     fetch_remote: bool,
     max_snapshot_age: std::time::Duration,
+    execution: GitCommandExecution,
 ) {
-    let GitRefreshAccess::Leader(permit) = state
-        .acquire_git_refresh(fetch_remote, max_snapshot_age)
-        .await
-    else {
-        return;
+    let permit = if execution.uses_concurrency_pool() {
+        let GitRefreshAccess::Leader(permit) = state
+            .acquire_git_refresh(fetch_remote, max_snapshot_age)
+            .await
+        else {
+            return;
+        };
+        Some(permit)
+    } else {
+        None
     };
     let started = std::time::Instant::now();
-    discover_worktrees(state).await;
-    api::refresh_project_list(state, fetch_remote).await;
-    permit.complete();
+    discover_worktrees(state, execution).await;
+    api::refresh_project_list(state, fetch_remote, None, execution).await;
+    if let Some(permit) = permit {
+        permit.complete();
+    }
     debug!(
         elapsed_ms = started.elapsed().as_millis(),
         fetch_remote, "request-time Git snapshot refreshed"
     );
+}
+
+async fn refresh_project_git_snapshot(
+    state: &AppState,
+    project_name: &str,
+    fetch_remote: bool,
+    execution: GitCommandExecution,
+) {
+    let started = std::time::Instant::now();
+    discover_worktrees(state, execution).await;
+    api::refresh_project_list(state, fetch_remote, Some(project_name), execution).await;
+    debug!(
+        elapsed_ms = started.elapsed().as_millis(),
+        fetch_remote,
+        project = project_name,
+        "request-time project Git snapshot refreshed"
+    );
+}
+
+fn git_command_execution(query: Option<&str>) -> GitCommandExecution {
+    let auto_refresh = query.is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(name, value)| name == "refresh" && value == "auto")
+    });
+    if auto_refresh {
+        GitCommandExecution::AutoRefresh
+    } else {
+        GitCommandExecution::Interactive
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{GitCommandExecution, git_command_execution};
+
+    #[test]
+    fn only_explicit_auto_refresh_queries_use_the_git_pool() {
+        assert_eq!(
+            git_command_execution(None),
+            GitCommandExecution::Interactive
+        );
+        assert_eq!(
+            git_command_execution(Some("fetch=1")),
+            GitCommandExecution::Interactive
+        );
+        assert_eq!(
+            git_command_execution(Some("fetch=1&refresh=auto")),
+            GitCommandExecution::AutoRefresh
+        );
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,18 @@ use super::{super::constants::GIT_COMMAND_TIMEOUT, types::GitCommandOutput};
 
 static GIT_COMMAND_CONCURRENCY: Semaphore = Semaphore::const_new(4);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::server) enum GitCommandExecution {
+    Interactive,
+    AutoRefresh,
+}
+
+impl GitCommandExecution {
+    pub(in crate::server) fn uses_concurrency_pool(self) -> bool {
+        matches!(self, Self::AutoRefresh)
+    }
+}
+
 pub(super) async fn git_worktree_root(project_dir: &Path) -> Result<PathBuf, String> {
     let output = run_git_command(project_dir, &["rev-parse", "--show-toplevel"], &[0]).await?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -44,11 +56,26 @@ pub(super) async fn run_git_command(
     args: &[&str],
     success_codes: &[i32],
 ) -> Result<GitCommandOutput, String> {
+    run_git_command_with_execution(
+        project_dir,
+        args,
+        success_codes,
+        GitCommandExecution::Interactive,
+    )
+    .await
+}
+
+pub(super) async fn run_git_command_with_execution(
+    project_dir: &Path,
+    args: &[&str],
+    success_codes: &[i32],
+    execution: GitCommandExecution,
+) -> Result<GitCommandOutput, String> {
     let owned_args = args
         .iter()
         .map(|arg| (*arg).to_string())
         .collect::<Vec<_>>();
-    run_git_command_owned(project_dir, &owned_args, success_codes).await
+    run_git_command_owned_with_execution(project_dir, &owned_args, success_codes, execution).await
 }
 
 pub(super) async fn run_git_command_owned(
@@ -56,10 +83,31 @@ pub(super) async fn run_git_command_owned(
     args: &[String],
     success_codes: &[i32],
 ) -> Result<GitCommandOutput, String> {
-    let _permit = GIT_COMMAND_CONCURRENCY
-        .acquire()
-        .await
-        .map_err(|_| "Git command concurrency limiter closed".to_string())?;
+    run_git_command_owned_with_execution(
+        project_dir,
+        args,
+        success_codes,
+        GitCommandExecution::Interactive,
+    )
+    .await
+}
+
+async fn run_git_command_owned_with_execution(
+    project_dir: &Path,
+    args: &[String],
+    success_codes: &[i32],
+    execution: GitCommandExecution,
+) -> Result<GitCommandOutput, String> {
+    let _permit = if execution.uses_concurrency_pool() {
+        Some(
+            GIT_COMMAND_CONCURRENCY
+                .acquire()
+                .await
+                .map_err(|_| "Git command concurrency limiter closed".to_string())?,
+        )
+    } else {
+        None
+    };
     let mut command = Command::new("git");
     command.args(args).current_dir(project_dir);
 
@@ -137,4 +185,15 @@ fn git_command_label_owned(args: &[String]) -> String {
         label.push_str(arg);
     }
     label
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GitCommandExecution;
+
+    #[test]
+    fn only_auto_refresh_commands_use_the_concurrency_pool() {
+        assert!(!GitCommandExecution::Interactive.uses_concurrency_pool());
+        assert!(GitCommandExecution::AutoRefresh.uses_concurrency_pool());
+    }
 }
