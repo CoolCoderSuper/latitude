@@ -168,7 +168,7 @@ export function desktopDocument(
     let hasUserSelectedScreen = false;
     let lastAppliedViewport = '';
     let layoutRetryTimers = [];
-    let fullRefreshTimers = [];
+    let fullRefreshTimer = null;
     let pointerMode = 'touchpad';
     let activeMouseButton = 0x1;
     let dragLocked = false;
@@ -492,20 +492,19 @@ export function desktopDocument(
       } catch (_) {}
     };
 
-    const clearFullRefreshTimers = () => {
-      for (const timer of fullRefreshTimers) {
-        window.clearTimeout(timer);
+    const clearFullRefreshTimer = () => {
+      if (fullRefreshTimer !== null) {
+        window.clearTimeout(fullRefreshTimer);
+        fullRefreshTimer = null;
       }
-      fullRefreshTimers = [];
     };
 
     const scheduleFullFramebufferRefresh = () => {
-      clearFullRefreshTimers();
-      requestFullFramebufferUpdate();
-
-      for (const delay of [120, 300, 700, 1400, 2400]) {
-        fullRefreshTimers.push(window.setTimeout(requestFullFramebufferUpdate, delay));
-      }
+      clearFullRefreshTimer();
+      fullRefreshTimer = window.setTimeout(() => {
+        fullRefreshTimer = null;
+        requestFullFramebufferUpdate();
+      }, 150);
     };
 
     const canvasFor = (currentRfb) => currentRfb && currentRfb._canvas ? currentRfb._canvas : null;
@@ -1386,7 +1385,7 @@ export function desktopDocument(
 
     const stopScreenRefresh = () => {
       clearLayoutRetries();
-      clearFullRefreshTimers();
+      clearFullRefreshTimer();
       if (screenRefreshTimer) {
         window.clearInterval(screenRefreshTimer);
         screenRefreshTimer = null;
@@ -1528,7 +1527,7 @@ export function desktopDocument(
       nextRfb.dragViewport = false;
       nextRfb.focusOnClick = !viewOnly;
       nextRfb.showDotCursor = pointerMode === 'direct';
-      nextRfb.qualityLevel = 6;
+      nextRfb.qualityLevel = 4;
       nextRfb.compressionLevel = 2;
       updatePointerMode();
 
@@ -1540,7 +1539,6 @@ export function desktopDocument(
         applyViewerBackground(nextRfb);
         setStatus('Connected');
         startScreenRefresh();
-        scheduleFullFramebufferRefresh();
         window.setTimeout(() => {
           if (rfb === nextRfb) {
             setStatus('');

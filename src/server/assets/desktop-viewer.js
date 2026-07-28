@@ -25,7 +25,7 @@ if (workspace) {
   let autoScale = true;
   let lastAppliedViewport = '';
   let layoutRetryTimers = [];
-  let fullRefreshTimers = [];
+  let fullRefreshTimer = null;
   let configuredScreens = [];
   let resolutionOptions = [];
   let resolutionChanging = false;
@@ -207,20 +207,19 @@ if (workspace) {
     } catch (_) {}
   };
 
-  const clearFullRefreshTimers = () => {
-    for (const timer of fullRefreshTimers) {
-      window.clearTimeout(timer);
+  const clearFullRefreshTimer = () => {
+    if (fullRefreshTimer !== null) {
+      window.clearTimeout(fullRefreshTimer);
+      fullRefreshTimer = null;
     }
-    fullRefreshTimers = [];
   };
 
   const scheduleFullFramebufferRefresh = () => {
-    clearFullRefreshTimers();
-    requestFullFramebufferUpdate();
-
-    for (const delay of [120, 300, 700, 1400, 2400]) {
-      fullRefreshTimers.push(window.setTimeout(requestFullFramebufferUpdate, delay));
-    }
+    clearFullRefreshTimer();
+    fullRefreshTimer = window.setTimeout(() => {
+      fullRefreshTimer = null;
+      requestFullFramebufferUpdate();
+    }, 150);
   };
 
   const expectedScaleFor = (screen, width, height) => {
@@ -678,7 +677,7 @@ if (workspace) {
 
   const stopScreenRefresh = () => {
     clearLayoutRetries();
-    clearFullRefreshTimers();
+    clearFullRefreshTimer();
     if (screenRefreshTimer) {
       window.clearInterval(screenRefreshTimer);
       screenRefreshTimer = null;
@@ -896,7 +895,6 @@ if (workspace) {
       hideCredentials();
       setStatus('Connected');
       startScreenRefresh();
-      scheduleFullFramebufferRefresh();
       syncLocalClipboardToRemote();
       window.setTimeout(() => {
         if (rfb === nextRfb) {
