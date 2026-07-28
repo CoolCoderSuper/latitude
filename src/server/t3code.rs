@@ -2,7 +2,7 @@ use std::{ffi::OsString, net::SocketAddr, path::Path, process::Stdio, time::Dura
 
 use axum::{
     Router,
-    body::{Body, to_bytes},
+    body::Body,
     extract::{Path as AxumPath, State, WebSocketUpgrade, ws::Message as AxumMessage},
     http::{HeaderMap, Request, Response, StatusCode, Uri, header, uri::Authority},
     routing::get,
@@ -379,15 +379,6 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
         }
     };
     let (parts, body) = req.into_parts();
-    let body = match to_bytes(body, usize::MAX).await {
-        Ok(body) => body,
-        Err(error) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                format!("T3 Code request body could not be read: {error}"),
-            );
-        }
-    };
 
     let mut request = state.client().request(parts.method, target_url);
     for (name, value) in &parts.headers {
@@ -405,7 +396,7 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
 
     let upstream = match request
         .timeout(Duration::from_secs(60))
-        .body(body)
+        .body(streaming_request_body(body))
         .send()
         .await
     {
@@ -417,6 +408,14 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
             );
         }
     };
+    streaming_http_response(upstream)
+}
+
+fn streaming_request_body(body: Body) -> reqwest::Body {
+    reqwest::Body::wrap_stream(body.into_data_stream())
+}
+
+fn streaming_http_response(upstream: reqwest::Response) -> Response<Body> {
     let status = upstream.status();
     let mut response = Response::builder().status(status);
     for (name, value) in upstream.headers() {
@@ -424,15 +423,9 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
             response = response.header(name, value);
         }
     }
-    match upstream.bytes().await {
-        Ok(body) => response
-            .body(Body::from(body))
-            .unwrap_or_else(internal_response),
-        Err(error) => json_error(
-            StatusCode::BAD_GATEWAY,
-            format!("T3 Code upstream response could not be read: {error}"),
-        ),
-    }
+    response
+        .body(Body::from_stream(upstream.bytes_stream()))
+        .unwrap_or_else(internal_response)
 }
 
 async fn t3code_gateway_websocket(
@@ -514,44 +507,52 @@ async fn proxy_websocket(
 ) {
     let (mut client_tx, mut client_rx) = client.split();
     let (mut upstream_tx, mut upstream_rx) = upstream.split();
-    loop {
-        tokio::select! {
-            message = client_rx.next() => match message {
-                Some(Ok(message)) => {
+
+    let browser_to_upstream = async {
+        while let Some(message) = client_rx.next().await {
+            match message {
+                Ok(message) => {
                     let close = matches!(message, AxumMessage::Close(_));
                     if let Err(error) = upstream_tx.send(to_upstream_message(message)).await {
                         warn!(%error, "T3 Code gateway could not forward browser message");
-                        break;
+                        return;
                     }
                     if close {
-                        break;
+                        return;
                     }
                 }
-                Some(Err(error)) => {
+                Err(error) => {
                     warn!(%error, "T3 Code gateway browser websocket failed");
-                    break;
+                    return;
                 }
-                None => break,
-            },
-            message = upstream_rx.next() => match message {
-                Some(Ok(TungsteniteMessage::Frame(_))) => {}
-                Some(Ok(message)) => {
+            }
+        }
+    };
+    let upstream_to_browser = async {
+        while let Some(message) = upstream_rx.next().await {
+            match message {
+                Ok(TungsteniteMessage::Frame(_)) => {}
+                Ok(message) => {
                     let close = matches!(message, TungsteniteMessage::Close(_));
                     if let Err(error) = client_tx.send(to_client_message(message)).await {
                         warn!(%error, "T3 Code gateway could not forward upstream message");
-                        break;
+                        return;
                     }
                     if close {
-                        break;
+                        return;
                     }
                 }
-                Some(Err(error)) => {
+                Err(error) => {
                     warn!(%error, "T3 Code gateway upstream websocket failed");
-                    break;
+                    return;
                 }
-                None => break,
-            },
+            }
         }
+    };
+
+    tokio::select! {
+        _ = browser_to_upstream => {}
+        _ = upstream_to_browser => {}
     }
 }
 
@@ -699,6 +700,17 @@ fn cli_command(config: &T3CodeConfig) -> Command {
 
 #[cfg(test)]
 mod tests {
+    use std::{convert::Infallible, time::Duration};
+
+    use axum::body::Bytes;
+    use futures_util::stream;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+        time::timeout,
+    };
+
     use super::*;
 
     #[test]
@@ -768,6 +780,107 @@ mod tests {
                 .and_then(|value| value.to_str().ok()),
             Some("text/css; charset=utf-8")
         );
+    }
+
+    #[tokio::test]
+    async fn gateway_streams_upstream_response_chunks_without_buffering_the_whole_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release_tail_tx, release_tail_rx) = oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = vec![0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      content-type: text/plain\r\n\
+                      transfer-encoding: chunked\r\n\
+                      \r\n\
+                      5\r\nfirst\r\n",
+                )
+                .await
+                .unwrap();
+            release_tail_rx.await.unwrap();
+            socket.write_all(b"6\r\nsecond\r\n0\r\n\r\n").await.unwrap();
+        });
+
+        let upstream_response = reqwest::get(format!("http://{address}/")).await.unwrap();
+        let response = streaming_http_response(upstream_response);
+        let mut body = response.into_body().into_data_stream();
+        let first = timeout(Duration::from_secs(1), body.next())
+            .await
+            .expect("the first chunk should not wait for the complete upstream response")
+            .expect("the response should contain a first chunk")
+            .expect("the first chunk should be readable");
+
+        assert_eq!(first.as_ref(), b"first");
+        release_tail_tx.send(()).unwrap();
+        let second = timeout(Duration::from_secs(1), body.next())
+            .await
+            .expect("the released tail should arrive")
+            .expect("the response should contain a second chunk")
+            .expect("the second chunk should be readable");
+        assert_eq!(second.as_ref(), b"second");
+        upstream.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_streams_request_chunks_without_buffering_the_whole_body() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (first_chunk_seen_tx, first_chunk_seen_rx) = oneshot::channel();
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 1024];
+            let mut first_chunk_seen_tx = Some(first_chunk_seen_tx);
+            loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0, "request ended before both chunks arrived");
+                request.extend_from_slice(&buffer[..read]);
+                if request
+                    .windows(b"first".len())
+                    .any(|window| window == b"first")
+                    && let Some(sender) = first_chunk_seen_tx.take()
+                {
+                    sender.send(()).unwrap();
+                }
+                if request
+                    .windows(b"second".len())
+                    .any(|window| window == b"second")
+                {
+                    break;
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let (release_tail_tx, release_tail_rx) = oneshot::channel();
+        let chunks = stream::once(async { Ok::<_, Infallible>(Bytes::from_static(b"first")) })
+            .chain(stream::once(async move {
+                release_tail_rx.await.unwrap();
+                Ok::<_, Infallible>(Bytes::from_static(b"second"))
+            }));
+        let request = tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(format!("http://{address}/"))
+                .body(streaming_request_body(Body::from_stream(chunks)))
+                .send()
+                .await
+                .unwrap()
+        });
+
+        timeout(Duration::from_secs(1), first_chunk_seen_rx)
+            .await
+            .expect("the first request chunk should arrive before the complete body")
+            .unwrap();
+        release_tail_tx.send(()).unwrap();
+        assert_eq!(request.await.unwrap().status(), StatusCode::NO_CONTENT);
+        upstream.await.unwrap();
     }
 
     #[test]
