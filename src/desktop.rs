@@ -21,6 +21,7 @@ use crate::config::{DesktopConfig, DesktopMode, ManagedDesktopProvider};
 
 const DESKTOP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANAGED_DESKTOP_START_TIMEOUT: Duration = Duration::from_secs(8);
+const DESKTOP_BRIDGE_BUFFER_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DesktopInfoResponse {
@@ -345,10 +346,13 @@ pub async fn desktop_websocket_session(mut socket: WebSocket, target: DesktopTar
             return;
         }
     };
+    if let Err(error) = stream.set_nodelay(true) {
+        warn!(%address, %error, "desktop VNC bridge could not disable TCP buffering");
+    }
 
     debug!(%address, "desktop VNC bridge connected");
     let (mut tcp_reader, mut tcp_writer) = stream.into_split();
-    let mut buffer = [0_u8; 16 * 1024];
+    let mut buffer = vec![0_u8; DESKTOP_BRIDGE_BUFFER_SIZE];
 
     loop {
         tokio::select! {
@@ -464,6 +468,7 @@ MaxViewers=128\n\
 IdleTimeout=0\n\
 IdleInputTimeout=0\n\
 KeepAliveInterval=5\n\
+sendbuffer=8192\n\
 LockSetting=0\n\
 AllowShutdown=0\n\
 AllowProperties=0\n\
@@ -476,6 +481,8 @@ PollForeground=1\n\
 PollUnderCursor=1\n\
 OnlyPollConsole=0\n\
 OnlyPollOnEvent=0\n\
+MaxCpu2=100\n\
+MaxFPS=60\n\
 EnableHook=1\n\
 EnableDriver=0\n\
 EnableVirtual=0\n\
