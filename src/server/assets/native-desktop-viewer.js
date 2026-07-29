@@ -1,3 +1,10 @@
+import {
+  isExtendedKey,
+  pointerButtonMask,
+  virtualKeyFor,
+} from './native-desktop-input.js?v=1';
+import { NativeDesktopPeer } from './native-desktop-peer.js?v=1';
+
 const workspace = document.querySelector('[data-desktop-workspace]');
 
 if (workspace) {
@@ -15,9 +22,7 @@ if (workspace) {
   const context = canvas.getContext('2d', { alpha: false });
   const video = document.createElement('video');
   let socket = null;
-  let peerConnection = null;
-  let controlChannel = null;
-  let pointerChannel = null;
+  let peerSession = null;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
   let reconnectEnabled = true;
@@ -190,7 +195,7 @@ if (workspace) {
   }
 
   function scheduleVideoFrame() {
-    if (!peerConnection || videoFrameCallback !== null) {
+    if (!peerSession || videoFrameCallback !== null) {
       return;
     }
     const render = () => {
@@ -204,11 +209,7 @@ if (workspace) {
   }
 
   function send(command) {
-    if (!controlChannel || controlChannel.readyState !== 'open') {
-      return false;
-    }
-    controlChannel.send(JSON.stringify(command));
-    return true;
+    return peerSession?.sendControl(command) || false;
   }
 
   function sendSignal(message) {
@@ -251,104 +252,7 @@ if (workspace) {
     if (!point) {
       return;
     }
-    const command = JSON.stringify({ type: 'pointer_move', x: point.x, y: point.y });
-    if (pointerChannel && pointerChannel.readyState === 'open') {
-      if (pointerChannel.bufferedAmount < 4096) {
-        pointerChannel.send(command);
-      }
-      return;
-    }
-    send({ type: 'pointer_move', x: point.x, y: point.y });
-  }
-
-  function eventButtonMask(button) {
-    if (button === 0) return 0x01;
-    if (button === 1) return 0x02;
-    if (button === 2) return 0x04;
-    return 0;
-  }
-
-  function virtualKeyFor(event) {
-    const code = event.code || '';
-    if (/^Key[A-Z]$/.test(code)) return code.charCodeAt(3);
-    if (/^Digit[0-9]$/.test(code)) return code.charCodeAt(5);
-    if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return 111 + Number(code.slice(1));
-    const keys = {
-      Backspace: 8,
-      Tab: 9,
-      Enter: 13,
-      NumpadEnter: 13,
-      ShiftLeft: 16,
-      ShiftRight: 16,
-      ControlLeft: 17,
-      ControlRight: 17,
-      AltLeft: 18,
-      AltRight: 18,
-      Pause: 19,
-      CapsLock: 20,
-      Escape: 27,
-      Space: 32,
-      PageUp: 33,
-      PageDown: 34,
-      End: 35,
-      Home: 36,
-      ArrowLeft: 37,
-      ArrowUp: 38,
-      ArrowRight: 39,
-      ArrowDown: 40,
-      PrintScreen: 44,
-      Insert: 45,
-      Delete: 46,
-      MetaLeft: 91,
-      MetaRight: 92,
-      ContextMenu: 93,
-      Numpad0: 96,
-      Numpad1: 97,
-      Numpad2: 98,
-      Numpad3: 99,
-      Numpad4: 100,
-      Numpad5: 101,
-      Numpad6: 102,
-      Numpad7: 103,
-      Numpad8: 104,
-      Numpad9: 105,
-      NumpadMultiply: 106,
-      NumpadAdd: 107,
-      NumpadSubtract: 109,
-      NumpadDecimal: 110,
-      NumpadDivide: 111,
-      NumLock: 144,
-      ScrollLock: 145,
-      Semicolon: 186,
-      Equal: 187,
-      Comma: 188,
-      Minus: 189,
-      Period: 190,
-      Slash: 191,
-      Backquote: 192,
-      BracketLeft: 219,
-      Backslash: 220,
-      BracketRight: 221,
-      Quote: 222,
-    };
-    return keys[code] || 0;
-  }
-
-  function isExtendedKey(code) {
-    return (
-      code === 'ControlRight' ||
-      code === 'AltRight' ||
-      code === 'NumpadEnter' ||
-      code === 'NumpadDivide' ||
-      code === 'Insert' ||
-      code === 'Delete' ||
-      code === 'Home' ||
-      code === 'End' ||
-      code === 'PageUp' ||
-      code === 'PageDown' ||
-      code.startsWith('Arrow') ||
-      code.startsWith('Meta')
-    );
+    peerSession?.sendPointer({ type: 'pointer_move', x: point.x, y: point.y });
   }
 
   function clearReconnectTimer() {
@@ -406,10 +310,8 @@ if (workspace) {
   }
 
   function closePeerConnection() {
-    const currentPeer = peerConnection;
-    peerConnection = null;
-    controlChannel = null;
-    pointerChannel = null;
+    const currentPeer = peerSession;
+    peerSession = null;
     if (videoFrameCallback !== null) {
       if (typeof video.cancelVideoFrameCallback === 'function') {
         video.cancelVideoFrameCallback(videoFrameCallback);
@@ -422,103 +324,44 @@ if (workspace) {
     currentPeer?.close();
   }
 
-  function waitForIceGatheringComplete(peer) {
-    if (peer.iceGatheringState === 'complete') {
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      const timeout = window.setTimeout(finish, 10000);
-      function finish() {
-        window.clearTimeout(timeout);
-        peer.removeEventListener('icegatheringstatechange', handleStateChange);
-        resolve();
-      }
-      const handleStateChange = () => {
-        if (peer.iceGatheringState === 'complete') {
-          finish();
-        }
-      };
-      peer.addEventListener('icegatheringstatechange', handleStateChange);
-    });
-  }
-
   async function startPeerConnection(iceServers) {
-    if (peerConnection) {
+    if (peerSession) {
       return;
     }
-    if (typeof RTCPeerConnection !== 'function') {
-      throw new Error('This browser does not support WebRTC');
-    }
-
-    const peer = new RTCPeerConnection({
-      iceServers: Array.isArray(iceServers) ? iceServers : [],
-    });
-    peerConnection = peer;
-    const channel = peer.createDataChannel('latitude-control', { ordered: true });
-    controlChannel = channel;
-    const pointer = peer.createDataChannel('latitude-pointer', {
-      ordered: false,
-      maxRetransmits: 0,
-    });
-    pointerChannel = pointer;
-    pointer.addEventListener('close', () => {
-      if (pointerChannel === pointer) {
-        pointerChannel = null;
-      }
-    });
-    channel.addEventListener('open', () => {
-      if (controlChannel !== channel) return;
-      setStatus('Connected');
-      canvas.focus({ preventScroll: true });
-    });
-    channel.addEventListener('message', handleControlMessage);
-    channel.addEventListener('close', () => {
-      if (controlChannel === channel) {
-        controlChannel = null;
-      }
-    });
-    channel.addEventListener('error', () => {
-      setStatus('Desktop control channel failed', true);
-    });
-
-    peer.addEventListener('track', (event) => {
-      if (peerConnection !== peer || event.track.kind !== 'video') return;
-      try {
-        if ('playoutDelayHint' in event.receiver) {
-          event.receiver.playoutDelayHint = 0;
-        }
-        if ('jitterBufferTarget' in event.receiver) {
-          event.receiver.jitterBufferTarget = 0;
-        }
-      } catch (_) {
-        // These low-latency hints are optional and browser-specific.
-      }
-      video.srcObject = event.streams[0] || new MediaStream([event.track]);
-      void video.play().then(scheduleVideoFrame).catch((error) => {
-        setStatus(error?.message || 'Desktop video could not start', true);
-      });
-    });
-    peer.addEventListener('connectionstatechange', () => {
-      if (peerConnection !== peer) return;
-      if (peer.connectionState === 'connected') {
-        reconnectDelay = 1000;
+    const peer = new NativeDesktopPeer({
+      onControlOpen: () => {
         setStatus('Connected');
-      } else if (peer.connectionState === 'connecting') {
-        setStatus('Connecting media');
-      } else if (peer.connectionState === 'failed') {
-        setStatus('WebRTC connection failed', true);
-        socket?.close();
-      }
+        canvas.focus({ preventScroll: true });
+      },
+      onControlMessage: handleControlMessage,
+      onControlError: () => {
+        setStatus('Desktop control channel failed', true);
+      },
+      onTrack: (event) => {
+        video.srcObject = event.streams[0] || new MediaStream([event.track]);
+        void video.play().then(scheduleVideoFrame).catch((error) => {
+          setStatus(error?.message || 'Desktop video could not start', true);
+        });
+      },
+      onConnectionState: (state) => {
+        if (state === 'connected') {
+          reconnectDelay = 1000;
+          setStatus('Connected');
+        } else if (state === 'connecting') {
+          setStatus('Connecting media');
+        } else if (state === 'failed') {
+          setStatus('WebRTC connection failed', true);
+          socket?.close();
+        }
+      },
     });
-
-    peer.addTransceiver('video', { direction: 'recvonly' });
-    await peer.setLocalDescription(await peer.createOffer());
-    await waitForIceGatheringComplete(peer);
-    if (peerConnection !== peer || !peer.localDescription) {
+    peerSession = peer;
+    const offer = await peer.start(iceServers);
+    if (peerSession !== peer || !offer) {
       return;
     }
     setStatus('Negotiating');
-    sendSignal({ type: 'offer', sdp: peer.localDescription.sdp });
+    sendSignal({ type: 'offer', sdp: offer });
   }
 
   function connect() {
@@ -553,9 +396,9 @@ if (workspace) {
           nextSocket.close();
         }
       } else if (message.type === 'answer') {
-        if (!peerConnection) return;
+        if (!peerSession) return;
         try {
-          await peerConnection.setRemoteDescription({ type: 'answer', sdp: message.sdp });
+          await peerSession.acceptAnswer(message.sdp);
           setStatus('Connecting media');
         } catch (error) {
           setStatus(error?.message || 'WebRTC answer was rejected', true);
@@ -583,7 +426,7 @@ if (workspace) {
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     canvas.setPointerCapture?.(event.pointerId);
-    pointerButtons |= eventButtonMask(event.button);
+    pointerButtons |= pointerButtonMask(event.button);
     sendPointer(event);
   });
   canvas.addEventListener('pointermove', (event) => {
@@ -594,7 +437,7 @@ if (workspace) {
   const releasePointer = (event) => {
     if (viewOnly) return;
     event.preventDefault();
-    pointerButtons &= ~eventButtonMask(event.button);
+    pointerButtons &= ~pointerButtonMask(event.button);
     sendPointer(event);
   };
   canvas.addEventListener('pointerup', releasePointer);
