@@ -156,6 +156,29 @@ pub(crate) fn apply_native_desktop_command(
             send(&inputs)?;
             state.keys.clear();
         }
+        NativeDesktopCommand::ReleaseInput => {
+            let mut first_error = None;
+            if state.buttons != 0 {
+                let command = NativeDesktopCommand::Pointer {
+                    x: state.x,
+                    y: state.y,
+                    buttons: 0,
+                };
+                if let Err(error) = apply_native_desktop_command(command, state) {
+                    first_error = Some(error);
+                }
+            }
+            if !state.keys.is_empty()
+                && let Err(error) =
+                    apply_native_desktop_command(NativeDesktopCommand::ReleaseKeys, state)
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+            if let Some(error) = first_error {
+                return Err(error);
+            }
+        }
         NativeDesktopCommand::Text { text } => {
             let mut inputs = Vec::new();
             for unit in text.encode_utf16().take(MAX_TEXT_UNITS) {

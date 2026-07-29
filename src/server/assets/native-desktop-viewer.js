@@ -2,8 +2,8 @@ import {
   isExtendedKey,
   pointerButtonMask,
   virtualKeyFor,
-} from './native-desktop-input.js?v=1';
-import { NativeDesktopPeer } from './native-desktop-peer.js?v=2';
+} from './native-desktop-input.js?v=2';
+import { NativeDesktopPeer } from './native-desktop-peer.js?v=3';
 
 const workspace = document.querySelector('[data-desktop-workspace]');
 
@@ -355,7 +355,7 @@ if (workspace) {
     currentPeer?.close();
   }
 
-  async function startPeerConnection(iceServers) {
+  async function startPeerConnection(iceServers, h264ProfileLevelId) {
     if (peerSession) {
       return;
     }
@@ -389,7 +389,7 @@ if (workspace) {
       },
     });
     peerSession = peer;
-    const offer = await peer.start(iceServers);
+    const offer = await peer.start(iceServers, h264ProfileLevelId);
     if (peerSession !== peer || !offer) {
       return;
     }
@@ -425,7 +425,7 @@ if (workspace) {
       if (message.type === 'hello') {
         updateGeometry(message);
         try {
-          await startPeerConnection(message.ice_servers);
+          await startPeerConnection(message.ice_servers, message.h264_profile_level_id);
         } catch (error) {
           setStatus(error?.message || 'WebRTC could not be started', true);
           nextSocket.close();
@@ -485,7 +485,11 @@ if (workspace) {
     sendPointer(event);
   };
   canvas.addEventListener('pointerup', releasePointer);
-  canvas.addEventListener('pointercancel', releasePointer);
+  canvas.addEventListener('pointercancel', (event) => {
+    if (!hasControl()) return;
+    event.preventDefault();
+    releaseAllInput();
+  });
   canvas.addEventListener('contextmenu', (event) => event.preventDefault());
   canvas.addEventListener(
     'wheel',
@@ -519,14 +523,15 @@ if (workspace) {
     pressedKeys.delete(event.code || `${vk}:${extended}`);
     send({ type: 'key', vk, down: false, extended });
   });
-  const releasePressedKeys = () => {
+  const releaseAllInput = () => {
     const shouldRelease = hasControl();
+    pointerButtons = 0;
     pressedKeys.clear();
     if (shouldRelease) {
-      send({ type: 'release_keys' });
+      send({ type: 'release_input' });
     }
   };
-  canvas.addEventListener('blur', releasePressedKeys);
+  canvas.addEventListener('blur', releaseAllInput);
   canvas.addEventListener('paste', (event) => {
     if (!hasControl()) return;
     const text = event.clipboardData?.getData('text/plain');
@@ -577,10 +582,6 @@ if (workspace) {
       if (!response.ok) {
         throw new Error(payload.error || `Resolution change failed (${response.status})`);
       }
-      if (Array.isArray(payload.screens)) {
-        configuredScreens = payload.screens;
-        workspace.dataset.screenLayout = JSON.stringify(configuredScreens);
-      }
       if (Array.isArray(payload.resolutions)) {
         resolutionOptions = payload.resolutions;
         workspace.dataset.resolutionOptions = JSON.stringify(resolutionOptions);
@@ -601,7 +602,7 @@ if (workspace) {
   window.addEventListener('focus', () => {
     if (!socket) connect();
   });
-  window.addEventListener('blur', releasePressedKeys);
+  window.addEventListener('blur', releaseAllInput);
   window.addEventListener('online', () => {
     if (socket) {
       const current = socket;
@@ -614,13 +615,13 @@ if (workspace) {
   window.addEventListener('beforeunload', () => {
     reconnectEnabled = false;
     clearReconnectTimer();
-    releasePressedKeys();
+    releaseAllInput();
     socket?.close();
     closePeerConnection();
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      releasePressedKeys();
+      releaseAllInput();
     }
   });
 

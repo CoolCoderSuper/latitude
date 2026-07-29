@@ -1,3 +1,7 @@
+#[cfg(windows)]
+#[path = "gpu.rs"]
+mod gpu;
+
 use std::{
     collections::HashMap,
     sync::{
@@ -12,7 +16,7 @@ use bytes::Bytes;
 use openh264::{
     OpenH264API,
     encoder::{
-        BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Profile,
+        BitRate, Complexity, Encoder, EncoderConfig, FrameRate, IntraFramePeriod, Level, Profile,
         RateControlMode, UsageType, VuiConfig,
     },
     formats::YUVSource,
@@ -37,6 +41,7 @@ use crate::desktop::{
 };
 
 struct EncodedDesktopFrame {
+    source_geometry: NativeDesktopGeometry,
     geometry: NativeDesktopGeometry,
     cursor: NativeDesktopCursor,
     captured_at: Instant,
@@ -54,14 +59,58 @@ enum EncodedDesktopEvent {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-struct NativeVideoSettings {
+pub(super) struct NativeVideoSettings {
     fps: u16,
     bitrate_kbps: u32,
+    max_width: u32,
+    max_height: u32,
 }
 
 impl NativeVideoSettings {
-    const fn new(fps: u16, bitrate_kbps: u32) -> Self {
-        Self { fps, bitrate_kbps }
+    pub(super) const fn new(fps: u16, bitrate_kbps: u32, max_width: u32, max_height: u32) -> Self {
+        Self {
+            fps,
+            bitrate_kbps,
+            max_width,
+            max_height,
+        }
+    }
+}
+
+fn h264_level(width: u32, height: u32, fps: u16, bitrate_kbps: u32) -> Level {
+    let frame_macroblocks = u64::from(width.div_ceil(16)) * u64::from(height.div_ceil(16));
+    let macroblocks_per_second = frame_macroblocks * u64::from(fps);
+    for (level, max_frame_macroblocks, max_macroblocks_per_second, max_bitrate_kbps) in [
+        (Level::Level_3_1, 3_600, 108_000, 14_000),
+        (Level::Level_3_2, 5_120, 216_000, 20_000),
+        (Level::Level_4_0, 8_192, 245_760, 20_000),
+        (Level::Level_4_1, 8_192, 245_760, 50_000),
+        (Level::Level_4_2, 8_704, 522_240, 50_000),
+    ] {
+        if frame_macroblocks <= max_frame_macroblocks
+            && macroblocks_per_second <= max_macroblocks_per_second
+            && bitrate_kbps <= max_bitrate_kbps
+        {
+            return level;
+        }
+    }
+
+    Level::Level_4_2
+}
+
+pub(super) fn h264_profile_level_id(
+    width: u32,
+    height: u32,
+    fps: u16,
+    bitrate_kbps: u32,
+) -> &'static str {
+    match h264_level(width, height, fps, bitrate_kbps) {
+        Level::Level_3_1 => "42001f",
+        Level::Level_3_2 => "420020",
+        Level::Level_4_0 => "420028",
+        Level::Level_4_1 => "420029",
+        Level::Level_4_2 => "42002a",
+        _ => unreachable!("native desktop stream caps require at most H.264 level 4.2"),
     }
 }
 
@@ -141,32 +190,42 @@ struct SharedVideoProducer {
     force_keyframe: Arc<AtomicBool>,
     frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
     stop_tx: watch::Sender<bool>,
-    capture: JoinHandle<()>,
-    encoder: JoinHandle<()>,
+    worker: JoinHandle<()>,
 }
 
 impl SharedVideoProducer {
     fn start(settings: NativeVideoSettings, generation: u64) -> Self {
-        let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
         let (frame_tx, _) = watch::channel::<Option<Arc<EncodedDesktopEvent>>>(None);
         let (stop_tx, stop_rx) = watch::channel(false);
-        let capture_stop_rx = stop_rx.clone();
-        let capture = tokio::task::spawn_blocking(move || {
-            capture_desktop_frames(capture_tx, capture_stop_rx, settings.fps);
-        });
         let force_keyframe = Arc::new(AtomicBool::new(false));
-        let force_keyframe_for_encoder = Arc::clone(&force_keyframe);
-        let frame_tx_for_encoder = frame_tx.clone();
+        let force_keyframe_for_worker = Arc::clone(&force_keyframe);
+        let frame_tx_for_worker = frame_tx.clone();
         let runtime = tokio::runtime::Handle::current();
-        let encoder = tokio::task::spawn_blocking(move || {
-            encode_desktop_frames(
+        let worker = tokio::task::spawn_blocking(move || {
+            #[cfg(windows)]
+            {
+                match gpu::run_gpu_video_pipeline(
+                    frame_tx_for_worker.clone(),
+                    stop_rx.clone(),
+                    settings,
+                    Arc::clone(&force_keyframe_for_worker),
+                ) {
+                    Ok(()) => return,
+                    Err(_) if *stop_rx.borrow() => return,
+                    Err(error) => {
+                        warn!(
+                            %error,
+                            "native desktop GPU pipeline unavailable; using software fallback"
+                        );
+                    }
+                }
+            }
+            run_software_video_pipeline(
                 runtime,
-                capture_rx,
-                frame_tx_for_encoder,
+                frame_tx_for_worker,
                 stop_rx,
-                settings.fps,
-                settings.bitrate_kbps,
-                force_keyframe_for_encoder,
+                settings,
+                force_keyframe_for_worker,
             );
         });
 
@@ -181,21 +240,52 @@ impl SharedVideoProducer {
             force_keyframe,
             frame_tx,
             stop_tx,
-            capture,
-            encoder,
+            worker,
         }
     }
 
     async fn stop(self, settings: NativeVideoSettings) {
         let _ = self.stop_tx.send(true);
-        let _ = self.capture.await;
-        let _ = self.encoder.await;
+        let _ = self.worker.await;
         debug!(
             fps = settings.fps,
             bitrate_kbps = settings.bitrate_kbps,
             "shared native desktop video producer stopped"
         );
     }
+}
+
+fn run_software_video_pipeline(
+    runtime: tokio::runtime::Handle,
+    frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
+    stop_rx: watch::Receiver<bool>,
+    settings: NativeVideoSettings,
+    force_keyframe: Arc<AtomicBool>,
+) {
+    debug!(
+        fps = settings.fps,
+        bitrate_kbps = settings.bitrate_kbps,
+        max_width = settings.max_width,
+        max_height = settings.max_height,
+        "native desktop GDI/OpenH264 fallback started"
+    );
+    let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
+    let capture_stop_rx = stop_rx.clone();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            capture_desktop_frames(capture_tx, capture_stop_rx, settings);
+        });
+        scope.spawn(move || {
+            encode_desktop_frames(
+                runtime,
+                capture_rx,
+                frame_tx,
+                stop_rx,
+                settings,
+                force_keyframe,
+            );
+        });
+    });
 }
 
 #[derive(Default)]
@@ -293,10 +383,8 @@ fn native_video_hub() -> &'static NativeVideoHub {
     HUB.get_or_init(NativeVideoHub::new)
 }
 
-pub(super) async fn request_video_keyframe(fps: u16, bitrate_kbps: u32) {
-    native_video_hub()
-        .request_keyframe(NativeVideoSettings::new(fps, bitrate_kbps))
-        .await;
+pub(super) async fn request_video_keyframe(settings: NativeVideoSettings) {
+    native_video_hub().request_keyframe(settings).await;
 }
 
 pub(super) struct NativeVideoPipeline {
@@ -363,10 +451,8 @@ impl Drop for NativeVideoPipeline {
 pub(super) async fn start_video_pipeline(
     track: Arc<TrackLocalStaticSample>,
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
-    fps: u16,
-    bitrate_kbps: u32,
+    settings: NativeVideoSettings,
 ) -> Result<NativeVideoPipeline> {
-    let settings = NativeVideoSettings::new(fps, bitrate_kbps);
     let NativeVideoSubscription {
         generation,
         frame_rx,
@@ -423,7 +509,11 @@ async fn write_video_frames(
                         "origin_y": frame.geometry.origin_y,
                         "width": frame.geometry.width,
                         "height": frame.geometry.height,
-                        "screens": crate::desktop::detect_desktop_screens(),
+                        "screens": crate::desktop::scale_native_desktop_screens(
+                            crate::desktop::detect_desktop_screens(),
+                            frame.source_geometry,
+                            frame.geometry,
+                        ),
                     }),
                 )
                 .await;
@@ -488,13 +578,13 @@ async fn write_video_frames(
 fn capture_desktop_frames(
     frame_tx: watch::Sender<Option<Arc<CapturedDesktopEvent>>>,
     stop_rx: watch::Receiver<bool>,
-    fps: u16,
+    settings: NativeVideoSettings,
 ) {
-    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
+    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps.max(1)));
     let mut stats_started = Instant::now();
     let mut captured_frames = 0_u64;
     let mut capture_time = Duration::ZERO;
-    let mut capture = match NativeDesktopCapture::new() {
+    let mut capture = match NativeDesktopCapture::new(settings.max_width, settings.max_height) {
         Ok(capture) => capture,
         Err(error) => {
             frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Error(
@@ -539,16 +629,9 @@ fn capture_desktop_frames(
 }
 
 fn wait_until(deadline: Instant) {
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return;
-        }
-        if remaining > Duration::from_millis(2) {
-            std::thread::sleep(remaining - Duration::from_millis(1));
-        } else {
-            std::hint::spin_loop();
-        }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if !remaining.is_zero() {
+        std::thread::sleep(remaining);
     }
 }
 
@@ -557,17 +640,24 @@ fn encode_desktop_frames(
     mut capture_rx: watch::Receiver<Option<Arc<CapturedDesktopEvent>>>,
     frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
     stop_rx: watch::Receiver<bool>,
-    fps: u16,
-    bitrate_kbps: u32,
+    settings: NativeVideoSettings,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    let fps = fps.max(1);
+    let fps = settings.fps.max(1);
     let encoder_config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(bitrate_kbps.saturating_mul(1_000)))
+        .bitrate(BitRate::from_bps(
+            settings.bitrate_kbps.saturating_mul(1_000),
+        ))
         .max_frame_rate(FrameRate::from_hz(fps as f32))
         .rate_control_mode(RateControlMode::Bitrate)
         .usage_type(UsageType::ScreenContentRealTime)
         .profile(Profile::Baseline)
+        .level(h264_level(
+            settings.max_width,
+            settings.max_height,
+            fps,
+            settings.bitrate_kbps,
+        ))
         .complexity(Complexity::Low)
         .adaptive_quantization(false)
         .background_detection(false)
@@ -587,9 +677,11 @@ fn encode_desktop_frames(
     let mut stats_started = Instant::now();
     let mut attempted_frames = 0_u64;
     let mut encoded_frames = 0_u64;
+    let mut unchanged_frames = 0_u64;
     let mut conversion_time = Duration::ZERO;
     let mut encode_time = Duration::ZERO;
     let mut has_encoded_frame = false;
+    let mut previous_encoded_event: Option<Arc<CapturedDesktopEvent>> = None;
 
     while runtime.block_on(capture_rx.changed()).is_ok() {
         if *stop_rx.borrow() {
@@ -606,6 +698,23 @@ fn encode_desktop_frames(
                 break;
             }
         };
+        let force_requested = force_keyframe.swap(false, Ordering::AcqRel);
+        let unchanged = previous_encoded_event
+            .as_deref()
+            .and_then(|event| match event {
+                CapturedDesktopEvent::Frame(frame) => Some(frame),
+                CapturedDesktopEvent::Error(_) => None,
+            })
+            .is_some_and(|previous| {
+                previous.source_geometry == frame.source_geometry
+                    && previous.geometry == frame.geometry
+                    && previous.cursor == frame.cursor
+                    && *previous.bgra == *frame.bgra
+            });
+        if unchanged && !force_requested {
+            unchanged_frames += 1;
+            continue;
+        }
         let dimensions = (
             frame.geometry.width as usize,
             frame.geometry.height as usize,
@@ -620,7 +729,7 @@ fn encode_desktop_frames(
             break;
         }
         conversion_time += conversion_started.elapsed();
-        if force_keyframe.swap(false, Ordering::AcqRel) && has_encoded_frame {
+        if force_requested && has_encoded_frame {
             encoder.force_intra_frame();
         }
         let encode_started = Instant::now();
@@ -638,9 +747,14 @@ fn encode_desktop_frames(
         attempted_frames += 1;
         encoded_frames += u64::from(!h264.is_empty());
         has_encoded_frame |= !h264.is_empty();
+        if h264.is_empty() && force_requested {
+            force_keyframe.store(true, Ordering::Release);
+        }
         if !h264.is_empty() {
+            previous_encoded_event = Some(Arc::clone(&event));
             frame_tx.send_replace(Some(Arc::new(EncodedDesktopEvent::Frame(
                 EncodedDesktopFrame {
+                    source_geometry: frame.source_geometry,
                     geometry: frame.geometry,
                     cursor: frame.cursor,
                     captured_at: frame.captured_at,
@@ -657,11 +771,13 @@ fn encode_desktop_frames(
                 average_conversion_ms =
                     conversion_time.as_secs_f64() * 1_000.0 / attempted_frames as f64,
                 average_encode_ms = encode_time.as_secs_f64() * 1_000.0 / attempted_frames as f64,
+                unchanged_frames_per_second = unchanged_frames as f64 / stats_elapsed.as_secs_f64(),
                 "native WebRTC desktop producer rate"
             );
             stats_started = Instant::now();
             attempted_frames = 0;
             encoded_frames = 0;
+            unchanged_frames = 0;
             conversion_time = Duration::ZERO;
             encode_time = Duration::ZERO;
         }
@@ -679,6 +795,7 @@ mod tests {
 
     use super::{
         EncodedDesktopEvent, NativeVideoHubState, NativeVideoSettings, SharedVideoProducer,
+        h264_profile_level_id,
     };
 
     fn fake_producer(generation: u64, subscribers: usize) -> SharedVideoProducer {
@@ -690,14 +807,13 @@ mod tests {
             force_keyframe: Arc::new(AtomicBool::new(false)),
             frame_tx,
             stop_tx,
-            capture: tokio::spawn(async {}),
-            encoder: tokio::spawn(async {}),
+            worker: tokio::spawn(async {}),
         }
     }
 
     #[tokio::test]
     async fn shared_producer_stops_only_after_its_last_subscriber_leaves() {
-        let settings = NativeVideoSettings::new(30, 4_000);
+        let settings = NativeVideoSettings::new(30, 4_000, 1_920, 1_080);
         let mut state = NativeVideoHubState::default();
         state.producers.insert(settings, fake_producer(7, 2));
 
@@ -711,7 +827,7 @@ mod tests {
 
     #[tokio::test]
     async fn stale_subscription_cannot_release_a_replacement_producer() {
-        let settings = NativeVideoSettings::new(30, 4_000);
+        let settings = NativeVideoSettings::new(30, 4_000, 1_920, 1_080);
         let mut state = NativeVideoHubState::default();
         state.producers.insert(settings, fake_producer(9, 1));
 
@@ -725,5 +841,13 @@ mod tests {
 
         let producer = state.release(settings, 9).unwrap();
         producer.stop(settings).await;
+    }
+
+    #[test]
+    fn advertises_the_level_required_by_the_stream_cap() {
+        assert_eq!(h264_profile_level_id(1_280, 720, 30, 4_000), "42001f");
+        assert_eq!(h264_profile_level_id(1_920, 1_080, 30, 4_000), "420028");
+        assert_eq!(h264_profile_level_id(1_920, 1_080, 60, 4_000), "42002a");
+        assert_eq!(h264_profile_level_id(1_920, 1_080, 30, 25_000), "420029");
     }
 }

@@ -1,11 +1,14 @@
 use super::{
     NativeDesktopCursor, NativeDesktopError, NativeDesktopFrame, NativeDesktopGeometry,
-    NativeDesktopPixels,
+    NativeDesktopPixels, fit_native_desktop_geometry,
 };
 
 #[cfg(windows)]
 pub(crate) struct NativeDesktopCapture {
+    source_geometry: NativeDesktopGeometry,
     geometry: NativeDesktopGeometry,
+    max_width: u32,
+    max_height: u32,
     screen_dc: windows_sys::Win32::Graphics::Gdi::HDC,
     memory_dc: windows_sys::Win32::Graphics::Gdi::HDC,
     bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
@@ -50,7 +53,7 @@ pub(crate) fn native_desktop_geometry() -> Result<NativeDesktopGeometry, NativeD
 
 #[cfg(windows)]
 impl NativeDesktopCapture {
-    pub(crate) fn new() -> Result<Self, NativeDesktopError> {
+    pub(crate) fn new(max_width: u32, max_height: u32) -> Result<Self, NativeDesktopError> {
         use std::{mem::size_of, ptr::null_mut};
 
         use windows_sys::Win32::Graphics::Gdi::{
@@ -58,7 +61,8 @@ impl NativeDesktopCapture {
             DIB_RGB_COLORS, DeleteDC, GetDC, HGDIOBJ, RGBQUAD, ReleaseDC, SelectObject,
         };
 
-        let geometry = native_desktop_geometry()?;
+        let source_geometry = native_desktop_geometry()?;
+        let geometry = fit_native_desktop_geometry(source_geometry, max_width, max_height);
         let width = geometry.width as i32;
         let height = geometry.height as i32;
         let screen_dc = unsafe { GetDC(null_mut()) };
@@ -113,7 +117,10 @@ impl NativeDesktopCapture {
         let previous = unsafe { SelectObject(memory_dc, bitmap as HGDIOBJ) };
 
         Ok(Self {
+            source_geometry,
             geometry,
+            max_width,
+            max_height,
             screen_dc,
             memory_dc,
             bitmap,
@@ -129,24 +136,47 @@ impl NativeDesktopCapture {
     pub(crate) fn capture(&mut self) -> Result<NativeDesktopFrame, NativeDesktopError> {
         use std::slice;
 
-        use windows_sys::Win32::Graphics::Gdi::{BitBlt, CAPTUREBLT, SRCCOPY};
+        use windows_sys::Win32::Graphics::Gdi::{
+            BitBlt, CAPTUREBLT, COLORONCOLOR, SRCCOPY, SetStretchBltMode, StretchBlt,
+        };
 
-        let geometry = native_desktop_geometry()?;
-        if geometry != self.geometry {
-            *self = Self::new()?;
+        let source_geometry = native_desktop_geometry()?;
+        if source_geometry != self.source_geometry {
+            *self = Self::new(self.max_width, self.max_height)?;
         }
-        let copied = unsafe {
-            BitBlt(
-                self.memory_dc,
-                0,
-                0,
-                self.geometry.width as i32,
-                self.geometry.height as i32,
-                self.screen_dc,
-                self.geometry.origin_x,
-                self.geometry.origin_y,
-                SRCCOPY | CAPTUREBLT,
-            )
+        let copied = if self.geometry.width == self.source_geometry.width
+            && self.geometry.height == self.source_geometry.height
+        {
+            unsafe {
+                BitBlt(
+                    self.memory_dc,
+                    0,
+                    0,
+                    self.geometry.width as i32,
+                    self.geometry.height as i32,
+                    self.screen_dc,
+                    self.source_geometry.origin_x,
+                    self.source_geometry.origin_y,
+                    SRCCOPY | CAPTUREBLT,
+                )
+            }
+        } else {
+            unsafe {
+                SetStretchBltMode(self.memory_dc, COLORONCOLOR);
+                StretchBlt(
+                    self.memory_dc,
+                    0,
+                    0,
+                    self.geometry.width as i32,
+                    self.geometry.height as i32,
+                    self.screen_dc,
+                    self.source_geometry.origin_x,
+                    self.source_geometry.origin_y,
+                    self.source_geometry.width as i32,
+                    self.source_geometry.height as i32,
+                    SRCCOPY | CAPTUREBLT,
+                )
+            }
         };
         if copied == 0 {
             return Err(NativeDesktopError::WindowsApi(
@@ -165,6 +195,7 @@ impl NativeDesktopCapture {
             slice::from_raw_parts(self.bits.cast::<u8>(), self.byte_len)
         });
         Ok(NativeDesktopFrame {
+            source_geometry: self.source_geometry,
             geometry: self.geometry,
             cursor: native_cursor_style(),
             captured_at: std::time::Instant::now(),
@@ -194,7 +225,7 @@ impl Drop for NativeDesktopCapture {
 }
 
 #[cfg(windows)]
-fn native_cursor_style() -> NativeDesktopCursor {
+pub(crate) fn native_cursor_style() -> NativeDesktopCursor {
     use std::{mem::size_of, ptr::null_mut};
 
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -241,7 +272,7 @@ fn native_cursor_style() -> NativeDesktopCursor {
 
 #[cfg(not(windows))]
 impl NativeDesktopCapture {
-    pub(crate) fn new() -> Result<Self, NativeDesktopError> {
+    pub(crate) fn new(_max_width: u32, _max_height: u32) -> Result<Self, NativeDesktopError> {
         Err(NativeDesktopError::UnsupportedPlatform)
     }
 

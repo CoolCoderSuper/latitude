@@ -25,7 +25,7 @@ export class NativeDesktopPeer {
     this.pendingRemoteCandidates = [];
   }
 
-  async start(iceServers) {
+  async start(iceServers, h264ProfileLevelId) {
     if (this.peer) {
       return null;
     }
@@ -60,7 +60,11 @@ export class NativeDesktopPeer {
     });
 
     peer.addTransceiver('video', { direction: 'recvonly' });
-    await peer.setLocalDescription(await peer.createOffer());
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription({
+      type: offer.type,
+      sdp: advertiseH264ReceiveLevel(offer.sdp || '', h264ProfileLevelId),
+    });
     return peer.localDescription?.sdp || '';
   }
 
@@ -151,6 +155,33 @@ export class NativeDesktopPeer {
       }
     });
   }
+}
+
+function advertiseH264ReceiveLevel(sdp, profileLevelId) {
+  const requested = String(profileLevelId || '').toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(requested)) return sdp;
+  const requestedLevel = Number.parseInt(requested.slice(4), 16);
+  const lines = sdp.split(/\r?\n/);
+  const h264PayloadTypes = new Set(
+    lines
+      .map((line) => line.match(/^a=rtpmap:(\d+)\s+H264\/90000/i)?.[1])
+      .filter(Boolean),
+  );
+  const updated = lines.map((line) => {
+    const match = line.match(/^a=fmtp:(\d+)\s+(.+)$/i);
+    if (!match || !h264PayloadTypes.has(match[1])) return line;
+    const profile = match[2].match(/(?:^|;)\s*profile-level-id=([0-9a-f]{6})/i)?.[1];
+    if (!profile || Number.parseInt(profile.slice(4), 16) >= requestedLevel) return line;
+    const maxReceiveLevel = `${profile.slice(2, 4)}${requested.slice(4)}`;
+    if (/(?:^|;)\s*max-recv-level=[0-9a-f]+/i.test(match[2])) {
+      return line.replace(
+        /max-recv-level=[0-9a-f]+/i,
+        `max-recv-level=${maxReceiveLevel}`,
+      );
+    }
+    return `${line};max-recv-level=${maxReceiveLevel}`;
+  });
+  return updated.join('\r\n');
 }
 
 function applyLowLatencyHints(receiver) {

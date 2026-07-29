@@ -34,7 +34,7 @@ use crate::desktop::{
     native_input_controller,
 };
 
-use super::video::request_video_keyframe;
+use super::video::{NativeVideoSettings, h264_profile_level_id, request_video_keyframe};
 
 const CONTROL_CHANNEL_LABEL: &str = "latitude-control";
 const POINTER_CHANNEL_LABEL: &str = "latitude-pointer";
@@ -86,12 +86,25 @@ pub(super) async fn create_session(
         .context("WebRTC peer connection could not be created")?,
     );
 
+    let video_profile_level_id = h264_profile_level_id(
+        target.native_max_width,
+        target.native_max_height,
+        target.native_max_fps,
+        target.native_bitrate_kbps,
+    );
+    let video_settings = NativeVideoSettings::new(
+        target.native_max_fps,
+        target.native_bitrate_kbps,
+        target.native_max_width,
+        target.native_max_height,
+    );
     let track = Arc::new(TrackLocalStaticSample::new(
         RTCRtpCodecCapability {
             mime_type: webrtc::api::media_engine::MIME_TYPE_H264.to_owned(),
             clock_rate: 90_000,
-            sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
-                .to_owned(),
+            sdp_fmtp_line: format!(
+                "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id={video_profile_level_id}"
+            ),
             ..Default::default()
         },
         "desktop-video".to_owned(),
@@ -101,15 +114,13 @@ pub(super) async fn create_session(
         .add_track(Arc::clone(&track) as Arc<dyn TrackLocal + Send + Sync>)
         .await
         .context("WebRTC desktop video track could not be added")?;
-    let video_fps = target.native_max_fps;
-    let video_bitrate_kbps = target.native_bitrate_kbps;
     tokio::spawn(async move {
         while let Ok((packets, _)) = sender.read_rtcp().await {
             if packets
                 .iter()
                 .any(|packet| requests_keyframe(packet.as_ref()))
             {
-                request_video_keyframe(video_fps, video_bitrate_kbps).await;
+                request_video_keyframe(video_settings).await;
                 debug!("native WebRTC keyframe requested by RTCP feedback");
             }
         }
@@ -124,8 +135,7 @@ pub(super) async fn create_session(
         Arc::clone(&control_channel),
         session_id,
         view_only,
-        video_fps,
-        video_bitrate_kbps,
+        video_settings,
     );
 
     let (state_tx, state_rx) = mpsc::unbounded_channel();
@@ -190,8 +200,7 @@ fn install_data_channel_handler(
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     session_id: u64,
     view_only: bool,
-    video_fps: u16,
-    video_bitrate_kbps: u32,
+    video_settings: NativeVideoSettings,
 ) {
     peer.on_data_channel(Box::new(move |channel| {
         let is_control = channel.label() == CONTROL_CHANNEL_LABEL;
@@ -234,7 +243,7 @@ fn install_data_channel_handler(
                     return;
                 }
                 if matches!(&command, NativeDesktopCommand::Refresh) {
-                    request_video_keyframe(video_fps, video_bitrate_kbps).await;
+                    request_video_keyframe(video_settings).await;
                     return;
                 }
                 if view_only {

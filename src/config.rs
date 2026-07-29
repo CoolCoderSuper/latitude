@@ -87,6 +87,10 @@ pub struct DesktopConfig {
     pub native_max_fps: u16,
     #[serde(default = "default_desktop_native_bitrate_kbps")]
     pub native_bitrate_kbps: u32,
+    #[serde(default = "default_desktop_native_max_width")]
+    pub native_max_width: u32,
+    #[serde(default = "default_desktop_native_max_height")]
+    pub native_max_height: u32,
     #[serde(default)]
     pub native_ice_servers: Vec<DesktopIceServerConfig>,
     #[serde(default = "default_true")]
@@ -384,6 +388,8 @@ impl Default for DesktopConfig {
             vnc_port: default_desktop_vnc_port(),
             native_max_fps: default_desktop_native_max_fps(),
             native_bitrate_kbps: default_desktop_native_bitrate_kbps(),
+            native_max_width: default_desktop_native_max_width(),
+            native_max_height: default_desktop_native_max_height(),
             native_ice_servers: Vec::new(),
             view_only: true,
             allow_non_loopback: false,
@@ -561,6 +567,22 @@ impl DesktopConfig {
             if !(250..=25_000).contains(&self.native_bitrate_kbps) {
                 return Err(ConfigError::Invalid(
                     "desktop native_bitrate_kbps must be between 250 and 25000".to_string(),
+                ));
+            }
+            if !(640..=1920).contains(&self.native_max_width)
+                || !self.native_max_width.is_multiple_of(2)
+            {
+                return Err(ConfigError::Invalid(
+                    "desktop native_max_width must be an even number between 640 and 1920"
+                        .to_string(),
+                ));
+            }
+            if !(360..=1080).contains(&self.native_max_height)
+                || !self.native_max_height.is_multiple_of(2)
+            {
+                return Err(ConfigError::Invalid(
+                    "desktop native_max_height must be an even number between 360 and 1080"
+                        .to_string(),
                 ));
             }
             for server in &self.native_ice_servers {
@@ -1016,6 +1038,14 @@ fn default_desktop_native_bitrate_kbps() -> u32 {
     4_000
 }
 
+fn default_desktop_native_max_width() -> u32 {
+    1_920
+}
+
+fn default_desktop_native_max_height() -> u32 {
+    1_080
+}
+
 fn default_t3code_base_url() -> String {
     "http://127.0.0.1:3773".to_string()
 }
@@ -1113,6 +1143,8 @@ mod tests {
         assert_eq!(desktop.vnc_port, 5900);
         assert_eq!(desktop.native_max_fps, 30);
         assert_eq!(desktop.native_bitrate_kbps, 4_000);
+        assert_eq!(desktop.native_max_width, 1_920);
+        assert_eq!(desktop.native_max_height, 1_080);
         assert!(desktop.native_ice_servers.is_empty());
         assert!(desktop.view_only);
         assert!(!desktop.allow_non_loopback);
@@ -1222,6 +1254,31 @@ mod tests {
         };
 
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn native_desktop_rejects_oversized_or_odd_stream_caps() {
+        let oversized = BootConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                mode: DesktopMode::Native,
+                native_max_width: 3_840,
+                ..DesktopConfig::default()
+            },
+            ..BootConfig::default()
+        };
+        let odd = BootConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                mode: DesktopMode::Native,
+                native_max_height: 1_079,
+                ..DesktopConfig::default()
+            },
+            ..BootConfig::default()
+        };
+
+        assert!(oversized.validate().is_err());
+        assert!(odd.validate().is_err());
     }
 
     #[test]

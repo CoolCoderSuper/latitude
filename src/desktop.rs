@@ -18,8 +18,9 @@ pub use display::{
 pub use managed::ManagedDesktopManager;
 pub(crate) use native::{
     NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand, NativeDesktopCursor,
-    NativeDesktopFrame, NativeDesktopGeometry, NativeInputController, native_desktop_geometry,
-    native_input_controller,
+    NativeDesktopFrame, NativeDesktopGeometry, NativeInputController, fit_native_desktop_geometry,
+    native_cursor_style, native_desktop_geometry, native_input_controller,
+    scale_native_desktop_screens,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -45,6 +46,8 @@ pub struct DesktopTarget {
     pub managed: bool,
     pub native_max_fps: u16,
     pub native_bitrate_kbps: u32,
+    pub native_max_width: u32,
+    pub native_max_height: u32,
     pub native_ice_servers: Vec<DesktopIceServerConfig>,
 }
 
@@ -106,6 +109,8 @@ impl DesktopTarget {
             managed: false,
             native_max_fps: config.native_max_fps,
             native_bitrate_kbps: config.native_bitrate_kbps,
+            native_max_width: config.native_max_width,
+            native_max_height: config.native_max_height,
             native_ice_servers: config.native_ice_servers.clone(),
         }
     }
@@ -118,6 +123,8 @@ impl DesktopTarget {
             managed: true,
             native_max_fps: config.native_max_fps,
             native_bitrate_kbps: config.native_bitrate_kbps,
+            native_max_width: config.native_max_width,
+            native_max_height: config.native_max_height,
             native_ice_servers: config.native_ice_servers.clone(),
         }
     }
@@ -130,6 +137,8 @@ impl DesktopTarget {
             managed: false,
             native_max_fps: config.native_max_fps,
             native_bitrate_kbps: config.native_bitrate_kbps,
+            native_max_width: config.native_max_width,
+            native_max_height: config.native_max_height,
             native_ice_servers: config.native_ice_servers.clone(),
         }
     }
@@ -140,6 +149,7 @@ pub fn desktop_info_response(
     target: &DesktopTarget,
     websocket_href: String,
 ) -> DesktopInfoResponse {
+    let screens = desktop_screens_for_target(target);
     DesktopInfoResponse {
         label: config.label.clone(),
         enabled: config.enabled,
@@ -150,9 +160,22 @@ pub fn desktop_info_response(
         port: target.port,
         view_only: config.view_only,
         websocket_href,
-        screens: detect_desktop_screens(),
+        screens,
         resolutions: detect_desktop_resolutions(),
     }
+}
+
+pub(crate) fn desktop_screens_for_target(target: &DesktopTarget) -> Vec<DesktopScreenResponse> {
+    let screens = detect_desktop_screens();
+    if target.protocol != DesktopProtocol::LatitudeNative {
+        return screens;
+    }
+    let Ok(source) = native_desktop_geometry() else {
+        return screens;
+    };
+    let output =
+        fit_native_desktop_geometry(source, target.native_max_width, target.native_max_height);
+    scale_native_desktop_screens(screens, source, output)
 }
 
 pub async fn desktop_websocket_session(

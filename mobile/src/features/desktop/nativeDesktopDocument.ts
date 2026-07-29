@@ -469,14 +469,13 @@ ${nativeDesktopInputRuntime}
       if (document.visibilityState === 'visible') {
         window.latitudeReconnect(false);
       } else {
-        releaseModifiers();
+        releaseAllInput();
       }
     });
     window.addEventListener('beforeunload', () => {
       reconnectEnabled = false;
       clearReconnectTimer();
-      releaseModifiers();
-      if (dragLocked) sendPointer(0);
+      releaseAllInput();
       socket?.close();
       closePeerConnection();
     });

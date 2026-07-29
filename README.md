@@ -29,7 +29,13 @@ Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.ena
 
 On Windows, use `desktop.mode: "native"` for Latitude's built-in WebRTC desktop transport. Latitude encodes the interactive desktop as H.264, sends video through WebRTC, and carries pointer, wheel, keyboard, and text commands over a WebRTC data channel when `view_only` is `false`. The authenticated WebSocket is used only to exchange the WebRTC offer, answer, and incremental ICE candidates; there is no JPEG transport fallback.
 
-Tune `native_max_fps` from 1 to 60 and `native_bitrate_kbps` from 250 to 25000. The defaults are 30 FPS and 4000 kbps. Direct connections use host ICE candidates. For clients across NAT or restrictive networks, add STUN or TURN entries to `native_ice_servers`; each entry accepts `urls`, `username`, and `credential`.
+Tune `native_max_fps` from 1 to 60 and `native_bitrate_kbps` from 250 to 25000. The defaults are 30 FPS and 4000 kbps. `native_max_width` and `native_max_height` cap the encoded stream at 1920x1080 by default. Larger or multi-monitor desktops are scaled to fit that box while retaining their aspect ratio and normalized input mapping. Lower caps reduce capture-copy, color-conversion, and encoding cost.
+
+On supported Windows graphics adapters, the native producer uses DXGI Desktop Duplication update metadata, keeps frames and scaling on D3D11 surfaces, converts BGRA to BT.709 NV12 with the D3D11 video processor, and sends those surfaces to the adapter-matched Media Foundation hardware H.264 encoder. Static desktops therefore avoid frame conversion, CPU readback, and encoding work. Latitude automatically falls back to GDI capture and OpenH264 when hardware video processing or encoding is unavailable, including basic or remote display adapters and unsupported multi-adapter or rotated-display layouts. The software fallback also skips YUV conversion and encoding when the captured pixels and cursor state have not changed.
+
+Both encoder paths use the H.264 level required by the configured stream cap, frame rate, and bitrate, and the bundled clients advertise the matching receive level during WebRTC negotiation. Debug logs identify whether the GPU or fallback producer was selected.
+
+Direct connections use host ICE candidates. For clients across NAT or restrictive networks, add STUN or TURN entries to `native_ice_servers`; each entry accepts `urls`, `username`, and `credential`.
 
 Native control operates in the same Windows integrity context as Latitude. Windows can reject input directed at elevated applications, UAC prompts, or the secure desktop. Keep a managed VNC service available when those screens must be controlled.
 

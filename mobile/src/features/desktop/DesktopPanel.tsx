@@ -224,6 +224,8 @@ export function RootDesktopPanel({
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         sendCommand({ type: 'reconnect', force: true });
+      } else {
+        sendCommand({ type: 'releaseInput' });
       }
     });
     return () => subscription.remove();

@@ -139,15 +139,7 @@ impl NativeInputController {
 }
 
 fn release_native_input(state: &mut NativeInputState) {
-    if state.buttons != 0 {
-        let x = state.x;
-        let y = state.y;
-        let _ =
-            apply_native_desktop_command(NativeDesktopCommand::Pointer { x, y, buttons: 0 }, state);
-    }
-    if !state.keys.is_empty() {
-        let _ = apply_native_desktop_command(NativeDesktopCommand::ReleaseKeys, state);
-    }
+    let _ = apply_native_desktop_command(NativeDesktopCommand::ReleaseInput, state);
     *state = NativeInputState::default();
 }
 

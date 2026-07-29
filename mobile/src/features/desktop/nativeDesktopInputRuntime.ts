@@ -49,6 +49,19 @@ export const nativeDesktopInputRuntime = String.raw`
       updateModifiers();
     };
 
+    const releaseAllInput = () => {
+      const shouldRelease = !viewOnly && controlGranted;
+      pressedModifiers.clear();
+      dragLocked = false;
+      if (shouldRelease) {
+        send({ type: 'release_input' });
+      }
+      updateNativeState({
+        dragLocked,
+        pressedModifiers: [],
+      });
+    };
+
     const toggleModifier = (modifier) => {
       const definition = modifierDefinitions[modifier];
       if (!definition || viewOnly || !controlGranted) return;
@@ -233,6 +246,8 @@ export const nativeDesktopInputRuntime = String.raw`
         toggleModifier(command.modifier);
       } else if (type === 'releaseModifiers') {
         releaseModifiers();
+      } else if (type === 'releaseInput') {
+        releaseAllInput();
       } else if (type === 'shortcut') {
         sendShortcut(command.shortcut);
       } else if (type === 'sendText') {

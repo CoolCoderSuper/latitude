@@ -20,11 +20,11 @@ use webrtc::{
 use self::{
     ice::{log_candidates, rewrite_mdns_candidate, rewrite_mdns_candidates},
     peer::{create_session, send_control_message},
-    video::start_video_pipeline,
+    video::{NativeVideoSettings, h264_profile_level_id, start_video_pipeline},
 };
 use crate::desktop::{
-    DesktopProtocol, DesktopTarget, detect_desktop_screens, native_desktop_geometry,
-    native_input_controller,
+    DesktopProtocol, DesktopTarget, detect_desktop_screens, fit_native_desktop_geometry,
+    native_desktop_geometry, native_input_controller, scale_native_desktop_screens,
 };
 
 const SIGNAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -59,7 +59,19 @@ async fn run_native_desktop_session(
     peer_ip: Option<IpAddr>,
 ) -> Result<()> {
     let connected_at = Instant::now();
-    let geometry = native_desktop_geometry().map_err(|error| anyhow!(error.to_string()))?;
+    let source_geometry = native_desktop_geometry().map_err(|error| anyhow!(error.to_string()))?;
+    let geometry = fit_native_desktop_geometry(
+        source_geometry,
+        target.native_max_width,
+        target.native_max_height,
+    );
+    let screens = scale_native_desktop_screens(detect_desktop_screens(), source_geometry, geometry);
+    let h264_profile_level_id = h264_profile_level_id(
+        target.native_max_width,
+        target.native_max_height,
+        target.native_max_fps,
+        target.native_bitrate_kbps,
+    );
     let hello = serde_json::json!({
         "type": "hello",
         "protocol": DesktopProtocol::LatitudeNative,
@@ -69,9 +81,12 @@ async fn run_native_desktop_session(
         "origin_y": geometry.origin_y,
         "width": geometry.width,
         "height": geometry.height,
-        "screens": detect_desktop_screens(),
+        "source_width": source_geometry.width,
+        "source_height": source_geometry.height,
+        "screens": screens,
         "view_only": view_only,
         "ice_servers": target.native_ice_servers,
+        "h264_profile_level_id": h264_profile_level_id,
     });
     socket
         .send(Message::Text(hello.to_string().into()))
@@ -119,8 +134,12 @@ async fn run_native_desktop_session(
                             pipeline = Some(start_video_pipeline(
                                 Arc::clone(&peer_session.track),
                                 Arc::clone(&peer_session.control_channel),
-                                target.native_max_fps,
-                                target.native_bitrate_kbps,
+                                NativeVideoSettings::new(
+                                    target.native_max_fps,
+                                    target.native_bitrate_kbps,
+                                    target.native_max_width,
+                                    target.native_max_height,
+                                ),
                             ).await?);
                         }
                         RTCPeerConnectionState::Disconnected

@@ -3,6 +3,40 @@ export const nativeDesktopPeerRuntime = String.raw`
     const pendingLocalCandidates = [];
     const pendingRemoteCandidates = [];
 
+    const advertiseH264ReceiveLevel = (sdp, profileLevelId) => {
+      const requested = String(profileLevelId || '').toLowerCase();
+      if (!/^[0-9a-f]{6}$/.test(requested)) return sdp;
+      const requestedLevel = Number.parseInt(requested.slice(4), 16);
+      const lines = sdp.split(/\r?\n/);
+      const h264PayloadTypes = new Set(
+        lines
+          .map((line) => {
+            const match = line.match(/^a=rtpmap:(\d+)\s+H264\/90000/i);
+            return match ? match[1] : null;
+          })
+          .filter(Boolean),
+      );
+      return lines
+        .map((line) => {
+          const match = line.match(/^a=fmtp:(\d+)\s+(.+)$/i);
+          if (!match || !h264PayloadTypes.has(match[1])) return line;
+          const profileMatch = match[2].match(
+            /(?:^|;)\s*profile-level-id=([0-9a-f]{6})/i,
+          );
+          const profile = profileMatch ? profileMatch[1] : '';
+          if (!profile || Number.parseInt(profile.slice(4), 16) >= requestedLevel) return line;
+          const maxReceiveLevel = profile.slice(2, 4) + requested.slice(4);
+          if (/(?:^|;)\s*max-recv-level=[0-9a-f]+/i.test(match[2])) {
+            return line.replace(
+              /max-recv-level=[0-9a-f]+/i,
+              'max-recv-level=' + maxReceiveLevel,
+            );
+          }
+          return line + ';max-recv-level=' + maxReceiveLevel;
+        })
+        .join('\r\n');
+    };
+
     const closePeerConnection = () => {
       const currentPeer = peerConnection;
       peerConnection = null;
@@ -23,7 +57,7 @@ export const nativeDesktopPeerRuntime = String.raw`
       currentPeer?.close();
     };
 
-    const startPeerConnection = async (iceServers) => {
+    const startPeerConnection = async (iceServers, h264ProfileLevelId) => {
       if (peerConnection) return;
       if (typeof RTCPeerConnection !== 'function') {
         throw new Error('This device does not support WebRTC');
@@ -96,7 +130,11 @@ export const nativeDesktopPeerRuntime = String.raw`
       };
 
       peer.addTransceiver('video', { direction: 'recvonly' });
-      await peer.setLocalDescription(await peer.createOffer());
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription({
+        type: offer.type,
+        sdp: advertiseH264ReceiveLevel(offer.sdp || '', h264ProfileLevelId),
+      });
       if (peerConnection !== peer || !peer.localDescription) return;
       setStatus('Negotiating');
       if (sendSignal({ type: 'offer', sdp: peer.localDescription.sdp })) {
@@ -131,7 +169,7 @@ export const nativeDesktopPeerRuntime = String.raw`
         if (message.type === 'hello') {
           updateGeometry(message);
           try {
-            await startPeerConnection(message.ice_servers);
+            await startPeerConnection(message.ice_servers, message.h264_profile_level_id);
           } catch (error) {
             setStatus(error?.message || 'WebRTC could not be started', true);
             nextSocket.close();

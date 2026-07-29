@@ -13,6 +13,8 @@
     "vnc_port": 5900,
     "native_max_fps": 30,
     "native_bitrate_kbps": 4000,
+    "native_max_width": 1920,
+    "native_max_height": 1080,
     "native_ice_servers": [],
     "view_only": true,
     "allow_non_loopback": false
