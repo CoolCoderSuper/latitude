@@ -156,6 +156,7 @@ impl NativeDesktopCapture {
         Ok(NativeDesktopFrame {
             geometry: self.geometry,
             cursor: native_cursor_style(),
+            captured_at: std::time::Instant::now(),
             bgra,
         })
     }

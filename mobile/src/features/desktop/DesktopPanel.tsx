@@ -55,6 +55,7 @@ type DesktopViewerState = {
   status: string;
   statusIsError: boolean;
   viewOnly: boolean;
+  controlGranted: boolean;
   autoScale: boolean;
   zoomLevel: number;
   selectedScreenId: string;
@@ -151,7 +152,11 @@ export function RootDesktopPanel({
   );
   const webViewRef = useRef<WebView>(null);
   const [viewerState, setViewerState] = useState<DesktopViewerState>(() =>
-    initialViewerState(rootDesktop.view_only, rootDesktop.screens ?? []),
+    initialViewerState(
+      rootDesktop.view_only,
+      rootDesktop.screens ?? [],
+      rootDesktop.protocol !== 'latitude_native',
+    ),
   );
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [keyboardText, setKeyboardText] = useState('');
@@ -188,7 +193,7 @@ export function RootDesktopPanel({
     ],
   );
   const controlsDisabled = !viewerState.ready;
-  const canControl = !viewerState.viewOnly;
+  const canControl = !viewerState.viewOnly && viewerState.controlGranted;
   const credentialFields = viewerState.credentialsRequired ?? [];
 
   const sendCommand = useCallback((command: DesktopCommand) => {
@@ -203,11 +208,17 @@ export function RootDesktopPanel({
   }, [sendCommand]);
 
   useEffect(() => {
-    setViewerState(initialViewerState(rootDesktop.view_only, rootDesktop.screens ?? []));
+    setViewerState(
+      initialViewerState(
+        rootDesktop.view_only,
+        rootDesktop.screens ?? [],
+        rootDesktop.protocol !== 'latitude_native',
+      ),
+    );
     setKeyboardOpen(false);
     setKeyboardText('');
     setCredentialValues({ username: '', password: '', target: '' });
-  }, [rootDesktop.screens, rootDesktop.view_only]);
+  }, [rootDesktop.protocol, rootDesktop.screens, rootDesktop.view_only]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -713,6 +724,7 @@ function desktopWebSocketUrl(
 function initialViewerState(
   viewOnly: boolean,
   screens: DesktopScreen[],
+  controlGranted: boolean,
 ): DesktopViewerState {
   const normalizedScreens = normalizeScreens(screens);
   return {
@@ -721,6 +733,7 @@ function initialViewerState(
     status: 'Connecting',
     statusIsError: false,
     viewOnly,
+    controlGranted: !viewOnly && controlGranted,
     autoScale: true,
     zoomLevel: 1,
     selectedScreenId: preferredScreenId(normalizedScreens),
@@ -771,6 +784,7 @@ function mergeViewerState(
       typeof incoming.status === 'string' ? incoming.status : current.status,
     statusIsError: booleanValue(incoming.statusIsError, current.statusIsError),
     viewOnly: booleanValue(incoming.viewOnly, current.viewOnly),
+    controlGranted: booleanValue(incoming.controlGranted, current.controlGranted),
     autoScale: booleanValue(incoming.autoScale, current.autoScale),
     zoomLevel: finiteNumber(incoming.zoomLevel, current.zoomLevel),
     selectedScreenId:

@@ -23,7 +23,7 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const sendKey = (definition, down) => {
-      if (viewOnly || !definition) return;
+      if (viewOnly || !controlGranted || !definition) return;
       send({
         type: 'key',
         vk: definition.vk,
@@ -51,7 +51,7 @@ export const nativeDesktopInputRuntime = String.raw`
 
     const toggleModifier = (modifier) => {
       const definition = modifierDefinitions[modifier];
-      if (!definition || viewOnly) return;
+      if (!definition || viewOnly || !controlGranted) return;
       if (pressedModifiers.has(modifier)) {
         sendKey(definition, false);
         pressedModifiers.delete(modifier);
@@ -72,7 +72,7 @@ export const nativeDesktopInputRuntime = String.raw`
         'ctrl-alt-del': { modifiers: ['control', 'alt'], vk: 46, extended: true },
       };
       const definition = shortcutMap[shortcut];
-      if (!definition || viewOnly) return;
+      if (!definition || viewOnly || !controlGranted) return;
       releaseModifiers();
       for (const modifier of definition.modifiers) {
         sendKey(modifierDefinitions[modifier], true);
@@ -94,7 +94,7 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const handleTouchStart = (event) => {
-      if (viewOnly) return;
+      if (viewOnly || !controlGranted) return;
       event.preventDefault();
       const touch = event.touches[0];
       if (!touch) return;
@@ -118,7 +118,7 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const handleTouchMove = (event) => {
-      if (viewOnly || !touchState) return;
+      if (viewOnly || !controlGranted || !touchState) return;
       event.preventDefault();
       const touch = event.touches[0];
       if (!touch) return;
@@ -166,7 +166,7 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const handleTouchEnd = (event) => {
-      if (viewOnly || !touchState) return;
+      if (viewOnly || !controlGranted || !touchState) return;
       event.preventDefault();
       const wasTap = !touchState.moved && touchState.count === 1;
       touchState = null;
@@ -236,7 +236,9 @@ export const nativeDesktopInputRuntime = String.raw`
       } else if (type === 'shortcut') {
         sendShortcut(command.shortcut);
       } else if (type === 'sendText') {
-        send({ type: 'text', text: String(command.text || '') });
+        if (controlGranted) {
+          send({ type: 'text', text: String(command.text || '') });
+        }
       } else if (type === 'refresh') {
         send({ type: 'refresh' });
       } else if (type === 'reconnect') {

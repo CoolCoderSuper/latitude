@@ -47,7 +47,7 @@ export const nativeDesktopPeerRuntime = String.raw`
         if (controlChannel !== channel) return;
         reconnectDelay = 1000;
         updateNativeState({ connected: true });
-        setStatus('Connected');
+        setConnectedStatus();
       };
       channel.onmessage = handleControlMessage;
       channel.onclose = () => {
@@ -76,7 +76,7 @@ export const nativeDesktopPeerRuntime = String.raw`
         if (peerConnection !== peer) return;
         if (peer.connectionState === 'connected') {
           updateNativeState({ connected: true });
-          setStatus('Connected');
+          setConnectedStatus();
         } else if (peer.connectionState === 'connecting') {
           setStatus('Connecting media');
         } else if (peer.connectionState === 'failed') {
@@ -171,7 +171,9 @@ export const nativeDesktopPeerRuntime = String.raw`
         if (socket !== nextSocket) return;
         socket = null;
         pressedModifiers.clear();
+        controlGranted = false;
         updateModifiers();
+        updateNativeState({ controlGranted });
         closePeerConnection();
         updateNativeState({ connected: false });
         scheduleReconnect();

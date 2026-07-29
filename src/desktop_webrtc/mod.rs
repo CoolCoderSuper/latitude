@@ -19,10 +19,13 @@ use webrtc::{
 
 use self::{
     ice::{log_candidates, rewrite_mdns_candidate, rewrite_mdns_candidates},
-    peer::{create_session, release_native_input},
+    peer::{create_session, send_control_message},
     video::start_video_pipeline,
 };
-use crate::desktop::{DesktopProtocol, DesktopTarget, native_desktop_geometry};
+use crate::desktop::{
+    DesktopProtocol, DesktopTarget, detect_desktop_screens, native_desktop_geometry,
+    native_input_controller,
+};
 
 const SIGNAL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -66,6 +69,7 @@ async fn run_native_desktop_session(
         "origin_y": geometry.origin_y,
         "width": geometry.width,
         "height": geometry.height,
+        "screens": detect_desktop_screens(),
         "view_only": view_only,
         "ice_servers": target.native_ice_servers,
     });
@@ -101,6 +105,7 @@ async fn run_native_desktop_session(
 
     let mut pipeline = None;
     let mut candidates_open = true;
+    let mut controller_events_open = true;
     loop {
         tokio::select! {
             state = peer_session.state_rx.recv() => {
@@ -115,6 +120,7 @@ async fn run_native_desktop_session(
                             Arc::clone(&peer_session.control_channel),
                             target.native_max_fps,
                             target.native_bitrate_kbps,
+                            Arc::clone(&peer_session.force_keyframe),
                         )?);
                     }
                     RTCPeerConnectionState::Disconnected
@@ -137,6 +143,21 @@ async fn run_native_desktop_session(
                     candidates_open = false;
                 }
             }
+            controller_state = peer_session.controller_state_rx.changed(), if controller_events_open => {
+                if controller_state.is_err() {
+                    controller_events_open = false;
+                    continue;
+                }
+                let state = *peer_session.controller_state_rx.borrow_and_update();
+                send_control_message(
+                    &peer_session.control_channel,
+                    serde_json::json!({
+                        "type": "control",
+                        "state": state.as_str(),
+                    }),
+                )
+                .await;
+            }
             message = socket.recv() => {
                 match message {
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
@@ -155,7 +176,9 @@ async fn run_native_desktop_session(
         pipeline.stop().await;
     }
     peer_session.peer.close().await.ok();
-    release_native_input(&peer_session.input_state).await;
+    native_input_controller()
+        .unregister(peer_session.session_id)
+        .await;
     debug!(
         duration_ms = connected_at.elapsed().as_millis(),
         "native WebRTC desktop bridge closed"

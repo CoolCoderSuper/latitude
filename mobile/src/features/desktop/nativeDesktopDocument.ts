@@ -103,7 +103,7 @@ export function nativeDesktopDocument(
 
     const websocketUrl = ${websocketUrlJson};
     const viewOnly = ${viewOnlyJson};
-    const configuredScreens = ${screenLayoutJson};
+    let configuredScreens = ${screenLayoutJson};
     const viewerBackground = ${viewerBackgroundJson};
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('desktop');
@@ -159,6 +159,7 @@ export function nativeDesktopDocument(
     let touchState = null;
     let pressedModifiers = new Set();
     let nativeStateTimer = null;
+    let controlGranted = false;
 
     const nativeState = {
       ready: true,
@@ -166,6 +167,7 @@ export function nativeDesktopDocument(
       status: 'Connecting',
       statusIsError: false,
       viewOnly,
+      controlGranted,
       autoScale,
       zoomLevel,
       selectedScreenId,
@@ -200,6 +202,14 @@ export function nativeDesktopDocument(
 
     const setStatus = (status, statusIsError = false) => {
       updateNativeState({ status, statusIsError: Boolean(statusIsError) });
+    };
+
+    const setConnectedStatus = () => {
+      if (!viewOnly && !controlGranted) {
+        setStatus('Connected · waiting for control');
+      } else {
+        setStatus('Connected');
+      }
     };
 
     const normalizedScreens = () =>
@@ -319,7 +329,7 @@ export function nativeDesktopDocument(
     };
 
     const sendPointer = (buttons) => {
-      if (viewOnly || !frameWidth || !frameHeight) return;
+      if (viewOnly || !controlGranted || !frameWidth || !frameHeight) return;
       const screen = selectedScreen();
       if (!screen) return;
       clampPointer();
@@ -333,7 +343,7 @@ export function nativeDesktopDocument(
     };
 
     const sendPointerMove = () => {
-      if (viewOnly || !frameWidth || !frameHeight) return;
+      if (viewOnly || !controlGranted || !frameWidth || !frameHeight) return;
       const screen = selectedScreen();
       if (!screen) return;
       clampPointer();
@@ -388,6 +398,9 @@ export function nativeDesktopDocument(
     };
 
     const updateGeometry = (message) => {
+      if (Array.isArray(message.screens)) {
+        configuredScreens = message.screens;
+      }
       const nextWidth = Math.max(1, Number(message.width) || 1);
       const nextHeight = Math.max(1, Number(message.height) || 1);
       const initializePointer = frameWidth === 0 || frameHeight === 0;
@@ -415,6 +428,18 @@ export function nativeDesktopDocument(
         updateGeometry(message);
       } else if (message.type === 'cursor') {
         canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+      } else if (message.type === 'control') {
+        controlGranted = message.state === 'granted';
+        if (!controlGranted) {
+          dragLocked = false;
+          pressedModifiers.clear();
+        }
+        updateNativeState({
+          controlGranted,
+          dragLocked,
+          pressedModifiers: Array.from(pressedModifiers),
+        });
+        setConnectedStatus();
       } else if (message.type === 'error') {
         setStatus(message.message || 'Desktop stream failed', true);
       }

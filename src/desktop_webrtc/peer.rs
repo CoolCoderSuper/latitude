@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 use anyhow::{Context, Result};
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{RwLock, mpsc, watch};
 use tracing::{debug, warn};
 use webrtc::{
     api::{
@@ -18,12 +21,20 @@ use webrtc::{
         peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
     },
+    rtcp::{
+        packet::Packet,
+        payload_feedbacks::{
+            full_intra_request::FullIntraRequest, picture_loss_indication::PictureLossIndication,
+            slice_loss_indication::SliceLossIndication,
+        },
+    },
     rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
     track::track_local::{TrackLocal, track_local_static_sample::TrackLocalStaticSample},
 };
 
 use crate::desktop::{
-    DesktopTarget, NativeDesktopCommand, NativeInputState, apply_native_desktop_command,
+    DesktopTarget, NativeControllerLeaseState, NativeDesktopCommand, NativeInputController,
+    native_input_controller,
 };
 
 const CONTROL_CHANNEL_LABEL: &str = "latitude-control";
@@ -35,7 +46,9 @@ pub(super) struct NativePeerSession {
     pub(super) state_rx: mpsc::UnboundedReceiver<RTCPeerConnectionState>,
     pub(super) candidate_rx: mpsc::UnboundedReceiver<RTCIceCandidateInit>,
     pub(super) control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
-    pub(super) input_state: Arc<Mutex<NativeInputState>>,
+    pub(super) controller_state_rx: watch::Receiver<NativeControllerLeaseState>,
+    pub(super) force_keyframe: Arc<AtomicBool>,
+    pub(super) session_id: u64,
 }
 
 pub(super) async fn create_session(
@@ -90,14 +103,29 @@ pub(super) async fn create_session(
         .add_track(Arc::clone(&track) as Arc<dyn TrackLocal + Send + Sync>)
         .await
         .context("WebRTC desktop video track could not be added")?;
-    tokio::spawn(async move { while sender.read_rtcp().await.is_ok() {} });
+    let force_keyframe = Arc::new(AtomicBool::new(false));
+    let force_keyframe_for_rtcp = Arc::clone(&force_keyframe);
+    tokio::spawn(async move {
+        while let Ok((packets, _)) = sender.read_rtcp().await {
+            if packets
+                .iter()
+                .any(|packet| requests_keyframe(packet.as_ref()))
+            {
+                force_keyframe_for_rtcp.store(true, Ordering::Release);
+                debug!("native WebRTC keyframe requested by RTCP feedback");
+            }
+        }
+    });
 
-    let input_state = Arc::new(Mutex::new(NativeInputState::default()));
+    let controller: &NativeInputController = native_input_controller();
+    let session_id = controller.next_session_id();
+    let controller_state_rx = controller.subscribe(session_id, !view_only).await;
     let control_channel = Arc::new(RwLock::new(None));
     install_data_channel_handler(
         &peer,
         Arc::clone(&control_channel),
-        Arc::clone(&input_state),
+        Arc::clone(&force_keyframe),
+        session_id,
         view_only,
     );
 
@@ -145,14 +173,17 @@ pub(super) async fn create_session(
         state_rx,
         candidate_rx,
         control_channel,
-        input_state,
+        controller_state_rx,
+        force_keyframe,
+        session_id,
     })
 }
 
 fn install_data_channel_handler(
     peer: &RTCPeerConnection,
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
-    input_state: Arc<Mutex<NativeInputState>>,
+    force_keyframe: Arc<AtomicBool>,
+    session_id: u64,
     view_only: bool,
 ) {
     peer.on_data_channel(Box::new(move |channel| {
@@ -174,13 +205,14 @@ fn install_data_channel_handler(
                 let control_channel = Arc::clone(&control_channel_for_open);
                 Box::pin(async move {
                     *control_channel.write().await = Some(channel);
+                    native_input_controller().activate(session_id).await;
                 })
             }));
         }
 
-        let input_state_for_message = Arc::clone(&input_state);
+        let force_keyframe_for_message = Arc::clone(&force_keyframe);
         channel.on_message(Box::new(move |message| {
-            let input_state = Arc::clone(&input_state_for_message);
+            let force_keyframe = Arc::clone(&force_keyframe_for_message);
             Box::pin(async move {
                 if !message.is_string {
                     return;
@@ -193,28 +225,44 @@ fn install_data_channel_handler(
                             return;
                         }
                     };
-                if view_only && !matches!(&command, NativeDesktopCommand::Refresh) {
-                    return;
-                }
                 if is_pointer && !matches!(&command, NativeDesktopCommand::PointerMove { .. }) {
                     return;
                 }
-                let mut state = input_state.lock().await;
-                if let Err(error) = apply_native_desktop_command(command, &mut state) {
+                if matches!(&command, NativeDesktopCommand::Refresh) {
+                    force_keyframe.store(true, Ordering::Release);
+                    return;
+                }
+                if view_only {
+                    return;
+                }
+                if let Err(error) = native_input_controller().apply(session_id, command).await {
                     warn!(%error, "native WebRTC desktop input failed");
                 }
             })
         }));
 
         if is_control {
-            let input_state_for_close = Arc::clone(&input_state);
+            let channel_for_close = Arc::clone(&channel);
             let control_channel_for_close = Arc::clone(&control_channel);
             channel.on_close(Box::new(move || {
-                let input_state = Arc::clone(&input_state_for_close);
+                let channel = Arc::clone(&channel_for_close);
                 let control_channel = Arc::clone(&control_channel_for_close);
                 Box::pin(async move {
-                    *control_channel.write().await = None;
-                    release_native_input(&input_state).await;
+                    let should_release = {
+                        let mut current = control_channel.write().await;
+                        if current
+                            .as_ref()
+                            .is_some_and(|current| Arc::ptr_eq(current, &channel))
+                        {
+                            *current = None;
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if should_release {
+                        native_input_controller().unregister(session_id).await;
+                    }
                 })
             }));
         }
@@ -235,17 +283,33 @@ pub(super) async fn send_control_message(
     }
 }
 
-pub(super) async fn release_native_input(input_state: &Mutex<NativeInputState>) {
-    let mut state = input_state.lock().await;
-    if state.buttons != 0 {
-        let x = state.x;
-        let y = state.y;
-        let _ = apply_native_desktop_command(
-            NativeDesktopCommand::Pointer { x, y, buttons: 0 },
-            &mut state,
-        );
-    }
-    if !state.keys.is_empty() {
-        let _ = apply_native_desktop_command(NativeDesktopCommand::ReleaseKeys, &mut state);
+fn requests_keyframe(packet: &(dyn Packet + Send + Sync)) -> bool {
+    packet
+        .as_any()
+        .downcast_ref::<PictureLossIndication>()
+        .is_some()
+        || packet.as_any().downcast_ref::<FullIntraRequest>().is_some()
+        || packet
+            .as_any()
+            .downcast_ref::<SliceLossIndication>()
+            .is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use webrtc::rtcp::{
+        payload_feedbacks::{
+            full_intra_request::FullIntraRequest, picture_loss_indication::PictureLossIndication,
+        },
+        receiver_report::ReceiverReport,
+    };
+
+    use super::requests_keyframe;
+
+    #[test]
+    fn recognizes_rtcp_keyframe_feedback() {
+        assert!(requests_keyframe(&PictureLossIndication::default()));
+        assert!(requests_keyframe(&FullIntraRequest::default()));
+        assert!(!requests_keyframe(&ReceiverReport::default()));
     }
 }

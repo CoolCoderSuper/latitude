@@ -1,5 +1,8 @@
 use std::{
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -34,6 +37,7 @@ use crate::desktop::{
 struct EncodedDesktopFrame {
     geometry: NativeDesktopGeometry,
     cursor: NativeDesktopCursor,
+    captured_at: Instant,
     h264: Vec<u8>,
 }
 
@@ -133,6 +137,7 @@ pub(super) fn start_video_pipeline(
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     fps: u16,
     bitrate_kbps: u32,
+    force_keyframe: Arc<AtomicBool>,
 ) -> Result<NativeVideoPipeline> {
     let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
     let (frame_tx, mut frame_rx) = mpsc::channel::<Result<EncodedDesktopFrame, String>>(1);
@@ -143,10 +148,19 @@ pub(super) fn start_video_pipeline(
     });
     let runtime = tokio::runtime::Handle::current();
     let encoder = tokio::task::spawn_blocking(move || {
-        encode_desktop_frames(runtime, capture_rx, frame_tx, stop_rx, fps, bitrate_kbps);
+        encode_desktop_frames(
+            runtime,
+            capture_rx,
+            frame_tx,
+            stop_rx,
+            fps,
+            bitrate_kbps,
+            force_keyframe,
+        );
     });
     let writer = tokio::spawn(async move {
-        let duration = Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
+        let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(fps.max(1)));
+        let mut last_capture = None;
         let mut last_geometry = None;
         let mut last_cursor = None;
         let mut stats_started = Instant::now();
@@ -173,6 +187,7 @@ pub(super) fn start_video_pipeline(
                         "origin_y": frame.geometry.origin_y,
                         "width": frame.geometry.width,
                         "height": frame.geometry.height,
+                        "screens": crate::desktop::detect_desktop_screens(),
                     }),
                 )
                 .await;
@@ -187,6 +202,11 @@ pub(super) fn start_video_pipeline(
                 last_cursor = Some(frame.cursor);
             }
             let encoded_bytes = frame.h264.len() as u64;
+            let duration = last_capture
+                .replace(frame.captured_at)
+                .map(|previous| frame.captured_at.saturating_duration_since(previous))
+                .filter(|duration| !duration.is_zero())
+                .unwrap_or(nominal_duration);
             if let Err(error) = track
                 .write_sample(&Sample {
                     data: frame.h264.into(),
@@ -296,6 +316,7 @@ fn encode_desktop_frames(
     stop_rx: watch::Receiver<bool>,
     fps: u16,
     bitrate_kbps: u32,
+    force_keyframe: Arc<AtomicBool>,
 ) {
     let fps = fps.max(1);
     let encoder_config = EncoderConfig::new()
@@ -325,6 +346,7 @@ fn encode_desktop_frames(
     let mut encoded_frames = 0_u64;
     let mut conversion_time = Duration::ZERO;
     let mut encode_time = Duration::ZERO;
+    let mut has_encoded_frame = false;
 
     while runtime.block_on(capture_rx.changed()).is_ok() {
         if *stop_rx.borrow() {
@@ -355,6 +377,9 @@ fn encode_desktop_frames(
             break;
         }
         conversion_time += conversion_started.elapsed();
+        if force_keyframe.swap(false, Ordering::AcqRel) && has_encoded_frame {
+            encoder.force_intra_frame();
+        }
         let encode_started = Instant::now();
         let bitstream = match encoder.encode(buffer) {
             Ok(bitstream) => bitstream,
@@ -369,11 +394,13 @@ fn encode_desktop_frames(
         let h264 = bitstream.to_vec();
         attempted_frames += 1;
         encoded_frames += u64::from(!h264.is_empty());
+        has_encoded_frame |= !h264.is_empty();
         if !h264.is_empty()
             && frame_tx
                 .blocking_send(Ok(EncodedDesktopFrame {
                     geometry: frame.geometry,
                     cursor: frame.cursor,
+                    captured_at: frame.captured_at,
                     h264,
                 }))
                 .is_err()

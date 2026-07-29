@@ -16,8 +16,8 @@ if (workspace) {
   const fullscreenButton = workspace.querySelector('[data-desktop-fullscreen]');
   const viewOnly = workspace.dataset.viewOnly !== 'false';
   const actionPath = workspace.dataset.actionPath || '/_desktop';
-  const configuredScreens = parseArray(workspace.dataset.screenLayout);
-  const resolutionOptions = parseArray(workspace.dataset.resolutionOptions);
+  let configuredScreens = parseArray(workspace.dataset.screenLayout);
+  let resolutionOptions = parseArray(workspace.dataset.resolutionOptions);
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { alpha: false });
   const video = document.createElement('video');
@@ -34,6 +34,7 @@ if (workspace) {
   let pointerButtons = 0;
   const pressedKeys = new Map();
   let resolutionChanging = false;
+  let controlState = viewOnly ? 'disabled' : 'pending';
   const cursorStyles = new Set([
     'default',
     'text',
@@ -74,6 +75,20 @@ if (workspace) {
   function setStatus(message, isError = false) {
     status.textContent = message;
     status.classList.toggle('error', Boolean(isError));
+  }
+
+  function hasControl() {
+    return !viewOnly && controlState === 'granted';
+  }
+
+  function setConnectedStatus() {
+    if (!viewOnly && controlState === 'waiting') {
+      setStatus('Connected · waiting for control');
+    } else if (!viewOnly && controlState === 'pending') {
+      setStatus('Connected · checking control');
+    } else {
+      setStatus('Connected');
+    }
   }
 
   function buildSocketUrl() {
@@ -236,7 +251,7 @@ if (workspace) {
   }
 
   function sendPointer(event, buttons = pointerButtons) {
-    if (viewOnly) {
+    if (!hasControl()) {
       return;
     }
     const point = pointerPosition(event);
@@ -246,7 +261,7 @@ if (workspace) {
   }
 
   function sendPointerMove(event) {
-    if (viewOnly) {
+    if (!hasControl()) {
       return;
     }
     const point = pointerPosition(event);
@@ -277,9 +292,15 @@ if (workspace) {
   }
 
   function updateGeometry(message) {
+    let screensChanged = false;
+    if (Array.isArray(message.screens)) {
+      configuredScreens = message.screens;
+      workspace.dataset.screenLayout = JSON.stringify(configuredScreens);
+      screensChanged = true;
+    }
     const nextWidth = Math.max(1, Number(message.width) || 1);
     const nextHeight = Math.max(1, Number(message.height) || 1);
-    if (frameWidth === nextWidth && frameHeight === nextHeight) {
+    if (frameWidth === nextWidth && frameHeight === nextHeight && !screensChanged) {
       return;
     }
     frameWidth = nextWidth;
@@ -305,6 +326,15 @@ if (workspace) {
       updateGeometry(message);
     } else if (message.type === 'cursor') {
       canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+    } else if (message.type === 'control') {
+      controlState = message.state === 'granted' ? 'granted' : 'waiting';
+      if (hasControl()) {
+        canvas.focus({ preventScroll: true });
+      } else {
+        pointerButtons = 0;
+        pressedKeys.clear();
+      }
+      setConnectedStatus();
     } else if (message.type === 'error') {
       setStatus(message.message || 'Desktop stream failed', true);
     }
@@ -331,8 +361,7 @@ if (workspace) {
     }
     const peer = new NativeDesktopPeer({
       onControlOpen: () => {
-        setStatus('Connected');
-        canvas.focus({ preventScroll: true });
+        setConnectedStatus();
       },
       onControlMessage: handleControlMessage,
       onControlError: () => {
@@ -347,7 +376,7 @@ if (workspace) {
       onConnectionState: (state) => {
         if (state === 'connected') {
           reconnectDelay = 1000;
-          setStatus('Connected');
+          setConnectedStatus();
         } else if (state === 'connecting') {
           setStatus('Connecting media');
         } else if (state === 'failed') {
@@ -427,6 +456,7 @@ if (workspace) {
       socket = null;
       pointerButtons = 0;
       pressedKeys.clear();
+      controlState = viewOnly ? 'disabled' : 'pending';
       closePeerConnection();
       scheduleReconnect();
     });
@@ -436,7 +466,7 @@ if (workspace) {
   }
 
   canvas.addEventListener('pointerdown', (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     event.preventDefault();
     canvas.focus({ preventScroll: true });
     canvas.setPointerCapture?.(event.pointerId);
@@ -444,12 +474,12 @@ if (workspace) {
     sendPointer(event);
   });
   canvas.addEventListener('pointermove', (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     event.preventDefault();
     sendPointerMove(event);
   });
   const releasePointer = (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     event.preventDefault();
     pointerButtons &= ~pointerButtonMask(event.button);
     sendPointer(event);
@@ -460,7 +490,7 @@ if (workspace) {
   canvas.addEventListener(
     'wheel',
     (event) => {
-      if (viewOnly) return;
+      if (!hasControl()) return;
       event.preventDefault();
       sendPointer(event);
       send({
@@ -472,7 +502,7 @@ if (workspace) {
     { passive: false },
   );
   canvas.addEventListener('keydown', (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     const vk = virtualKeyFor(event);
     if (!vk) return;
     event.preventDefault();
@@ -481,7 +511,7 @@ if (workspace) {
     send({ type: 'key', vk, down: true, extended });
   });
   canvas.addEventListener('keyup', (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     const vk = virtualKeyFor(event);
     if (!vk) return;
     event.preventDefault();
@@ -490,13 +520,15 @@ if (workspace) {
     send({ type: 'key', vk, down: false, extended });
   });
   const releasePressedKeys = () => {
-    if (viewOnly) return;
+    const shouldRelease = hasControl();
     pressedKeys.clear();
-    send({ type: 'release_keys' });
+    if (shouldRelease) {
+      send({ type: 'release_keys' });
+    }
   };
   canvas.addEventListener('blur', releasePressedKeys);
   canvas.addEventListener('paste', (event) => {
-    if (viewOnly) return;
+    if (!hasControl()) return;
     const text = event.clipboardData?.getData('text/plain');
     if (text) {
       event.preventDefault();
@@ -526,20 +558,38 @@ if (workspace) {
     resolutionSelect.disabled = true;
     setStatus('Changing resolution');
     try {
+      const headers = { 'content-type': 'application/json' };
+      if (workspace.dataset.wsToken) {
+        headers.authorization = `Bearer ${workspace.dataset.wsToken}`;
+      }
       const response = await fetch(actionPath, {
         method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        headers,
         body: JSON.stringify({
           action: 'set_resolution',
-          screen_id: selectedScreenId,
+          screen_id: selectedScreenId.startsWith('display-') ? selectedScreenId : null,
           width,
           height,
         }),
       });
+      const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `Resolution change failed (${response.status})`);
       }
+      if (Array.isArray(payload.screens)) {
+        configuredScreens = payload.screens;
+        workspace.dataset.screenLayout = JSON.stringify(configuredScreens);
+      }
+      if (Array.isArray(payload.resolutions)) {
+        resolutionOptions = payload.resolutions;
+        workspace.dataset.resolutionOptions = JSON.stringify(resolutionOptions);
+      }
+      if (!screenOptions().some((screen) => screen.id === selectedScreenId)) {
+        selectedScreenId = 'all';
+      }
+      renderScreenSwitcher();
+      renderResolutionOptions();
       setStatus('Resolution changed');
     } catch (error) {
       setStatus(error?.message || 'Resolution change failed', true);

@@ -1,4 +1,5 @@
 mod capture;
+mod controller;
 mod input;
 
 use std::collections::BTreeSet;
@@ -7,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub(crate) use capture::{NativeDesktopCapture, native_desktop_geometry};
+pub(crate) use controller::{
+    NativeControllerLeaseState, NativeInputController, native_input_controller,
+};
 pub(crate) use input::apply_native_desktop_command;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -21,6 +25,7 @@ pub(crate) struct NativeDesktopGeometry {
 pub(crate) struct NativeDesktopFrame {
     pub(crate) geometry: NativeDesktopGeometry,
     pub(crate) cursor: NativeDesktopCursor,
+    pub(crate) captured_at: std::time::Instant,
     pub(crate) bgra: Vec<u8>,
 }
 

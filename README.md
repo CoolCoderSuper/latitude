@@ -33,6 +33,8 @@ Tune `native_max_fps` from 1 to 60 and `native_bitrate_kbps` from 250 to 25000. 
 
 Native control operates in the same Windows integrity context as Latitude. Windows can reject input directed at elevated applications, UAC prompts, or the secure desktop. Keep a managed VNC service available when those screens must be controlled.
 
+Only one native client controls Windows input at a time. Additional control-enabled clients remain connected as viewers and automatically receive control when the current controller disconnects.
+
 Use `desktop.mode: "external"` to bridge to an already-running VNC server. The default external target is `127.0.0.1:5900`, and non-loopback VNC hosts are rejected unless `allow_non_loopback` is explicitly enabled.
 
 On Windows, run `.\init-ultravnc.ps1` to prepare UltraVNC in portable mode under `tools/ultravnc/`. Run `.\init-ultravnc.ps1 -Install` from an elevated PowerShell session to install and start it as a loopback-only Windows service on `127.0.0.1:5900`. Service mode can handle UAC-protected screens; application mode cannot.

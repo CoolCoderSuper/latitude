@@ -17,8 +17,9 @@ pub use display::{
 };
 pub use managed::ManagedDesktopManager;
 pub(crate) use native::{
-    NativeDesktopCapture, NativeDesktopCommand, NativeDesktopCursor, NativeDesktopFrame,
-    NativeDesktopGeometry, NativeInputState, apply_native_desktop_command, native_desktop_geometry,
+    NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand, NativeDesktopCursor,
+    NativeDesktopFrame, NativeDesktopGeometry, NativeInputController, native_desktop_geometry,
+    native_input_controller,
 };
 
 #[derive(Clone, Debug, Serialize)]
