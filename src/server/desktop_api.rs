@@ -1,7 +1,9 @@
+use std::net::SocketAddr;
+
 use axum::{
     Json,
     body::{Body, to_bytes},
-    extract::{Query, State, ws::WebSocketUpgrade},
+    extract::{ConnectInfo, Query, State, ws::WebSocketUpgrade},
     http::{HeaderMap, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
@@ -175,6 +177,7 @@ struct DesktopSetResolutionAction {
 pub(in crate::server) async fn public_root_desktop_ws(
     Query(query): Query<DesktopWsQuery>,
     State(state): State<AppState>,
+    ConnectInfo(peer_address): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response<Body> {
@@ -199,6 +202,11 @@ pub(in crate::server) async fn public_root_desktop_ws(
 
     let view_only = config.desktop.view_only;
     ws.on_upgrade(move |socket| {
-        crate::desktop::desktop_websocket_session(socket, target, view_only)
+        crate::desktop::desktop_websocket_session(
+            socket,
+            target,
+            view_only,
+            Some(peer_address.ip()),
+        )
     })
 }

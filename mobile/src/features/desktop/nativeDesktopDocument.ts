@@ -92,6 +92,7 @@ export function nativeDesktopDocument(
 <body>
   <div id="stage">
     <canvas id="desktop" tabindex="0"></canvas>
+    <video id="stream" autoplay muted playsinline hidden></video>
     <div id="touch-cursor" hidden></div>
   </div>
   <script>
@@ -105,6 +106,7 @@ export function nativeDesktopDocument(
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('desktop');
     const context = canvas.getContext('2d', { alpha: false });
+    const video = document.getElementById('stream');
     const touchCursor = document.getElementById('touch-cursor');
     const pointerModeValues = new Set(['touchpad', 'direct']);
     const minZoom = 1;
@@ -132,13 +134,15 @@ export function nativeDesktopDocument(
     ]);
 
     let socket = null;
+    let peerConnection = null;
+    let controlChannel = null;
+    let pointerChannel = null;
     let reconnectTimer = null;
     let reconnectDelay = 1000;
     let reconnectEnabled = true;
     let frameWidth = 0;
     let frameHeight = 0;
-    let latestImage = null;
-    let frameGeneration = 0;
+    let videoFrameCallback = null;
     let autoScale = true;
     let zoomLevel = 1;
     let selectedScreenId =
@@ -245,13 +249,13 @@ export function nativeDesktopDocument(
 
     const renderFrame = () => {
       const screen = selectedScreen();
-      if (!latestImage || !screen || !context) return;
+      if (!screen || !context || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
       if (canvas.width !== screen.width || canvas.height !== screen.height) {
         canvas.width = screen.width;
         canvas.height = screen.height;
       }
       context.drawImage(
-        latestImage,
+        video,
         screen.x,
         screen.y,
         screen.width,
@@ -263,6 +267,18 @@ export function nativeDesktopDocument(
       );
       clampPointer();
       layoutCanvas();
+    };
+
+    const scheduleVideoFrame = () => {
+      if (!peerConnection || videoFrameCallback !== null) return;
+      const render = () => {
+        videoFrameCallback = null;
+        renderFrame();
+        scheduleVideoFrame();
+      };
+      videoFrameCallback = video.requestVideoFrameCallback
+        ? video.requestVideoFrameCallback(render)
+        : window.requestAnimationFrame(render);
     };
 
     const updateTouchCursor = () => {
@@ -289,8 +305,14 @@ export function nativeDesktopDocument(
     };
 
     const send = (command) => {
+      if (!controlChannel || controlChannel.readyState !== 'open') return false;
+      controlChannel.send(JSON.stringify(command));
+      return true;
+    };
+
+    const sendSignal = (message) => {
       if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-      socket.send(JSON.stringify(command));
+      socket.send(JSON.stringify(message));
       return true;
     };
 
@@ -308,28 +330,31 @@ export function nativeDesktopDocument(
       updateTouchCursor();
     };
 
+    const sendPointerMove = () => {
+      if (viewOnly || !frameWidth || !frameHeight) return;
+      const screen = selectedScreen();
+      if (!screen) return;
+      clampPointer();
+      const command = {
+        type: 'pointer_move',
+        x: (screen.x + pointerX) / frameWidth,
+        y: (screen.y + pointerY) / frameHeight,
+      };
+      if (pointerChannel && pointerChannel.readyState === 'open') {
+        if (pointerChannel.bufferedAmount < 4096) {
+          pointerChannel.send(JSON.stringify(command));
+        }
+        updateTouchCursor();
+        return;
+      }
+      send(command);
+      updateTouchCursor();
+    };
+
     const clickPointer = () => {
       if (dragLocked) return;
       sendPointer(activeMouseButton);
       window.setTimeout(() => sendPointer(0), 48);
-    };
-
-    const decodeFrame = (data) => {
-      const generation = ++frameGeneration;
-      const blob = new Blob([data], { type: 'image/jpeg' });
-      const objectUrl = URL.createObjectURL(blob);
-      const image = new Image();
-      image.onload = () => {
-        URL.revokeObjectURL(objectUrl);
-        if (generation !== frameGeneration) return;
-        latestImage = image;
-        renderFrame();
-      };
-      image.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        setStatus('Desktop frame could not be decoded', true);
-      };
-      image.src = objectUrl;
     };
 
     const buildScreensState = () => {
@@ -360,25 +385,160 @@ export function nativeDesktopDocument(
       reconnectDelay = Math.min(8000, Math.floor(reconnectDelay * 1.6));
     };
 
+    const updateGeometry = (message) => {
+      const nextWidth = Math.max(1, Number(message.width) || 1);
+      const nextHeight = Math.max(1, Number(message.height) || 1);
+      const initializePointer = frameWidth === 0 || frameHeight === 0;
+      frameWidth = nextWidth;
+      frameHeight = nextHeight;
+      buildScreensState();
+      const screen = selectedScreen();
+      if (initializePointer) {
+        pointerX = screen ? screen.width / 2 : frameWidth / 2;
+        pointerY = screen ? screen.height / 2 : frameHeight / 2;
+      }
+      renderFrame();
+      layoutCanvas();
+    };
+
+    const handleControlMessage = (event) => {
+      if (typeof event.data !== 'string') return;
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (_) {
+        return;
+      }
+      if (message.type === 'geometry') {
+        updateGeometry(message);
+      } else if (message.type === 'cursor') {
+        canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+      } else if (message.type === 'error') {
+        setStatus(message.message || 'Desktop stream failed', true);
+      }
+    };
+
+    const closePeerConnection = () => {
+      const currentPeer = peerConnection;
+      peerConnection = null;
+      controlChannel = null;
+      pointerChannel = null;
+      if (videoFrameCallback !== null) {
+        if (typeof video.cancelVideoFrameCallback === 'function') {
+          video.cancelVideoFrameCallback(videoFrameCallback);
+        } else {
+          window.cancelAnimationFrame(videoFrameCallback);
+        }
+      }
+      videoFrameCallback = null;
+      video.srcObject = null;
+      currentPeer?.close();
+    };
+
+    const waitForIceGatheringComplete = (peer) => {
+      if (peer.iceGatheringState === 'complete') return Promise.resolve();
+      return new Promise((resolve) => {
+        const timeout = window.setTimeout(finish, 10000);
+        function finish() {
+          window.clearTimeout(timeout);
+          peer.removeEventListener('icegatheringstatechange', handleStateChange);
+          resolve();
+        }
+        const handleStateChange = () => {
+          if (peer.iceGatheringState === 'complete') {
+            finish();
+          }
+        };
+        peer.addEventListener('icegatheringstatechange', handleStateChange);
+      });
+    };
+
+    const startPeerConnection = async (iceServers) => {
+      if (peerConnection) return;
+      if (typeof RTCPeerConnection !== 'function') {
+        throw new Error('This device does not support WebRTC');
+      }
+
+      const peer = new RTCPeerConnection({
+        iceServers: Array.isArray(iceServers) ? iceServers : [],
+      });
+      peerConnection = peer;
+      const channel = peer.createDataChannel('latitude-control', { ordered: true });
+      controlChannel = channel;
+      const pointer = peer.createDataChannel('latitude-pointer', {
+        ordered: false,
+        maxRetransmits: 0,
+      });
+      pointerChannel = pointer;
+      pointer.onclose = () => {
+        if (pointerChannel === pointer) pointerChannel = null;
+      };
+      channel.onopen = () => {
+        if (controlChannel !== channel) return;
+        reconnectDelay = 1000;
+        updateNativeState({ connected: true });
+        setStatus('Connected');
+      };
+      channel.onmessage = handleControlMessage;
+      channel.onclose = () => {
+        if (controlChannel === channel) controlChannel = null;
+      };
+      channel.onerror = () => setStatus('Desktop control channel failed', true);
+
+      peer.ontrack = (event) => {
+        if (peerConnection !== peer || event.track.kind !== 'video') return;
+        try {
+          if ('playoutDelayHint' in event.receiver) {
+            event.receiver.playoutDelayHint = 0;
+          }
+          if ('jitterBufferTarget' in event.receiver) {
+            event.receiver.jitterBufferTarget = 0;
+          }
+        } catch (_) {
+          // These low-latency hints are optional and browser-specific.
+        }
+        video.srcObject = event.streams[0] || new MediaStream([event.track]);
+        Promise.resolve(video.play())
+          .then(scheduleVideoFrame)
+          .catch((error) => setStatus(error?.message || 'Desktop video could not start', true));
+      };
+      peer.onconnectionstatechange = () => {
+        if (peerConnection !== peer) return;
+        if (peer.connectionState === 'connected') {
+          updateNativeState({ connected: true });
+          setStatus('Connected');
+        } else if (peer.connectionState === 'connecting') {
+          setStatus('Connecting media');
+        } else if (peer.connectionState === 'failed') {
+          updateNativeState({ connected: false });
+          setStatus('WebRTC connection failed', true);
+          socket?.close();
+        }
+      };
+
+      peer.addTransceiver('video', { direction: 'recvonly' });
+      await peer.setLocalDescription(await peer.createOffer());
+      await waitForIceGatheringComplete(peer);
+      if (peerConnection !== peer || !peer.localDescription) return;
+      setStatus('Negotiating');
+      sendSignal({ type: 'offer', sdp: peer.localDescription.sdp });
+    };
+
     const connect = () => {
       if (socket) return;
       clearReconnectTimer();
       setStatus('Connecting');
       const nextSocket = new WebSocket(websocketUrl);
-      nextSocket.binaryType = 'arraybuffer';
       socket = nextSocket;
       nextSocket.onopen = () => {
         if (socket !== nextSocket) return;
         reconnectDelay = 1000;
-        updateNativeState({ connected: true });
-        setStatus('Connected');
+        updateNativeState({ connected: false });
+        setStatus('Negotiating');
       };
-      nextSocket.onmessage = (event) => {
+      nextSocket.onmessage = async (event) => {
         if (socket !== nextSocket) return;
-        if (typeof event.data !== 'string') {
-          decodeFrame(event.data);
-          return;
-        }
+        if (typeof event.data !== 'string') return;
         let message;
         try {
           message = JSON.parse(event.data);
@@ -386,17 +546,22 @@ export function nativeDesktopDocument(
           return;
         }
         if (message.type === 'hello') {
-          frameWidth = Math.max(1, Number(message.width) || 1);
-          frameHeight = Math.max(1, Number(message.height) || 1);
-          buildScreensState();
-          const screen = selectedScreen();
-          pointerX = screen ? screen.width / 2 : frameWidth / 2;
-          pointerY = screen ? screen.height / 2 : frameHeight / 2;
-          renderFrame();
-          updateNativeState({ connected: true });
-          setStatus('Connected');
-        } else if (message.type === 'cursor') {
-          canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+          updateGeometry(message);
+          try {
+            await startPeerConnection(message.ice_servers);
+          } catch (error) {
+            setStatus(error?.message || 'WebRTC could not be started', true);
+            nextSocket.close();
+          }
+        } else if (message.type === 'answer') {
+          if (!peerConnection) return;
+          try {
+            await peerConnection.setRemoteDescription({ type: 'answer', sdp: message.sdp });
+            setStatus('Connecting media');
+          } catch (error) {
+            setStatus(error?.message || 'WebRTC answer was rejected', true);
+            nextSocket.close();
+          }
         } else if (message.type === 'error') {
           setStatus(message.message || 'Desktop connection failed', true);
         }
@@ -409,6 +574,7 @@ export function nativeDesktopDocument(
         socket = null;
         pressedModifiers.clear();
         updateModifiers();
+        closePeerConnection();
         updateNativeState({ connected: false });
         scheduleReconnect();
       };
@@ -577,7 +743,7 @@ export function nativeDesktopDocument(
           pointerY += (dy / bounds.height) * screen.height * touchpadSpeed;
         }
       }
-      sendPointer(dragLocked ? activeMouseButton : 0);
+      sendPointerMove();
     };
 
     const handleTouchEnd = (event) => {
@@ -668,6 +834,7 @@ export function nativeDesktopDocument(
         socket = null;
         current.close();
       }
+      if (force) closePeerConnection();
       if (!socket) connect();
     };
 
@@ -687,6 +854,7 @@ export function nativeDesktopDocument(
       releaseModifiers();
       if (dragLocked) sendPointer(0);
       socket?.close();
+      closePeerConnection();
     });
     window.addEventListener('error', (event) => {
       setStatus(event.message || 'Viewer error', true);

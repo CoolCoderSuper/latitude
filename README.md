@@ -27,7 +27,9 @@ Latitude stores projects, deployments, page content, and share links in the conf
 
 Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.enabled` is set to `true`.
 
-On Windows, use `desktop.mode: "native"` for Latitude's built-in desktop transport. It captures the current interactive desktop, sends JPEG frames through Latitude's authenticated WebSocket, and accepts typed pointer, wheel, keyboard, and text commands when `view_only` is `false`. Tune `native_max_fps` from 1 to 30 and `native_jpeg_quality` from 25 to 95 to balance responsiveness, CPU use, and bandwidth.
+On Windows, use `desktop.mode: "native"` for Latitude's built-in WebRTC desktop transport. Latitude encodes the interactive desktop as H.264, sends video through WebRTC, and carries pointer, wheel, keyboard, and text commands over a WebRTC data channel when `view_only` is `false`. The authenticated WebSocket is used only to exchange the WebRTC offer and answer; there is no JPEG transport fallback.
+
+Tune `native_max_fps` from 1 to 60 and `native_bitrate_kbps` from 250 to 25000. The defaults are 30 FPS and 4000 kbps. Direct connections use host ICE candidates. For clients across NAT or restrictive networks, add STUN or TURN entries to `native_ice_servers`; each entry accepts `urls`, `username`, and `credential`.
 
 Native control operates in the same Windows integrity context as Latitude. Windows can reject input directed at elevated applications, UAC prompts, or the secure desktop. Keep a managed VNC service available when those screens must be controlled.
 

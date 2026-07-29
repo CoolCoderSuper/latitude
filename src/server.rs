@@ -18,6 +18,8 @@ mod terminal_api;
 #[cfg(test)]
 mod tests;
 
+use std::net::SocketAddr;
+
 use axum::{
     Router,
     routing::{delete, get, post},
@@ -101,13 +103,13 @@ pub async fn run(state: AppState) -> anyhow::Result<()> {
         info!(bind = %gateway_bind, "authenticated T3 Code gateway listening");
         let gateway_router = t3code_gateway_router(state);
         tokio::select! {
-            result = axum::serve(public_listener, public_router) => { result?; }
+            result = axum::serve(public_listener, public_router.into_make_service_with_connect_info::<SocketAddr>()) => { result?; }
             result = axum::serve(command_listener, command_router) => { result?; }
             result = axum::serve(gateway_listener, gateway_router) => { result?; }
         }
     } else {
         tokio::select! {
-            result = axum::serve(public_listener, public_router) => { result?; }
+            result = axum::serve(public_listener, public_router.into_make_service_with_connect_info::<SocketAddr>()) => { result?; }
             result = axum::serve(command_listener, command_router) => { result?; }
         }
     }

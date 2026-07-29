@@ -85,12 +85,24 @@ pub struct DesktopConfig {
     pub vnc_port: u16,
     #[serde(default = "default_desktop_native_max_fps")]
     pub native_max_fps: u16,
-    #[serde(default = "default_desktop_native_jpeg_quality")]
-    pub native_jpeg_quality: u8,
+    #[serde(default = "default_desktop_native_bitrate_kbps")]
+    pub native_bitrate_kbps: u32,
+    #[serde(default)]
+    pub native_ice_servers: Vec<DesktopIceServerConfig>,
     #[serde(default = "default_true")]
     pub view_only: bool,
     #[serde(default)]
     pub allow_non_loopback: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DesktopIceServerConfig {
+    pub urls: Vec<String>,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default)]
+    pub credential: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -371,7 +383,8 @@ impl Default for DesktopConfig {
             vnc_host: default_desktop_vnc_host(),
             vnc_port: default_desktop_vnc_port(),
             native_max_fps: default_desktop_native_max_fps(),
-            native_jpeg_quality: default_desktop_native_jpeg_quality(),
+            native_bitrate_kbps: default_desktop_native_bitrate_kbps(),
+            native_ice_servers: Vec::new(),
             view_only: true,
             allow_non_loopback: false,
         }
@@ -540,15 +553,23 @@ impl DesktopConfig {
         }
 
         if self.mode == DesktopMode::Native {
-            if !(1..=30).contains(&self.native_max_fps) {
+            if !(1..=60).contains(&self.native_max_fps) {
                 return Err(ConfigError::Invalid(
-                    "desktop native_max_fps must be between 1 and 30".to_string(),
+                    "desktop native_max_fps must be between 1 and 60".to_string(),
                 ));
             }
-            if !(25..=95).contains(&self.native_jpeg_quality) {
+            if !(250..=25_000).contains(&self.native_bitrate_kbps) {
                 return Err(ConfigError::Invalid(
-                    "desktop native_jpeg_quality must be between 25 and 95".to_string(),
+                    "desktop native_bitrate_kbps must be between 250 and 25000".to_string(),
                 ));
+            }
+            for server in &self.native_ice_servers {
+                if server.urls.is_empty() || server.urls.iter().any(|url| url.trim().is_empty()) {
+                    return Err(ConfigError::Invalid(
+                        "desktop native_ice_servers entries require at least one non-empty URL"
+                            .to_string(),
+                    ));
+                }
             }
             return Ok(());
         }
@@ -988,11 +1009,11 @@ fn default_desktop_vnc_port() -> u16 {
 }
 
 fn default_desktop_native_max_fps() -> u16 {
-    12
+    30
 }
 
-fn default_desktop_native_jpeg_quality() -> u8 {
-    72
+fn default_desktop_native_bitrate_kbps() -> u32 {
+    4_000
 }
 
 fn default_t3code_base_url() -> String {
@@ -1090,8 +1111,9 @@ mod tests {
         );
         assert_eq!(desktop.vnc_host, "127.0.0.1");
         assert_eq!(desktop.vnc_port, 5900);
-        assert_eq!(desktop.native_max_fps, 12);
-        assert_eq!(desktop.native_jpeg_quality, 72);
+        assert_eq!(desktop.native_max_fps, 30);
+        assert_eq!(desktop.native_bitrate_kbps, 4_000);
+        assert!(desktop.native_ice_servers.is_empty());
         assert!(desktop.view_only);
         assert!(!desktop.allow_non_loopback);
     }
@@ -1193,7 +1215,7 @@ mod tests {
                 enabled: true,
                 mode: DesktopMode::Native,
                 native_max_fps: 0,
-                native_jpeg_quality: 10,
+                native_bitrate_kbps: 100,
                 ..DesktopConfig::default()
             },
             ..BootConfig::default()

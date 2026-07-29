@@ -13,14 +13,17 @@ if (workspace) {
   const resolutionOptions = parseArray(workspace.dataset.resolutionOptions);
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d', { alpha: false });
+  const video = document.createElement('video');
   let socket = null;
+  let peerConnection = null;
+  let controlChannel = null;
+  let pointerChannel = null;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
   let reconnectEnabled = true;
   let frameWidth = 0;
   let frameHeight = 0;
-  let latestBitmap = null;
-  let frameGeneration = 0;
+  let videoFrameCallback = null;
   let selectedScreenId = 'all';
   let autoScale = true;
   let pointerButtons = 0;
@@ -47,7 +50,11 @@ if (workspace) {
   canvas.className = 'native-desktop-canvas';
   canvas.tabIndex = 0;
   canvas.setAttribute('aria-label', 'Remote desktop');
-  target.replaceChildren(canvas);
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.hidden = true;
+  target.replaceChildren(canvas, video);
 
   function parseArray(value) {
     try {
@@ -160,7 +167,7 @@ if (workspace) {
 
   function renderFrame() {
     const screen = selectedScreen();
-    if (!context || !latestBitmap || !screen) {
+    if (!context || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !screen) {
       return;
     }
     if (canvas.width !== screen.width || canvas.height !== screen.height) {
@@ -168,7 +175,7 @@ if (workspace) {
       canvas.height = screen.height;
     }
     context.drawImage(
-      latestBitmap,
+      video,
       screen.x,
       screen.y,
       screen.width,
@@ -182,28 +189,33 @@ if (workspace) {
     target.classList.toggle('native-desktop-native-size', !autoScale);
   }
 
-  async function decodeFrame(data) {
-    const generation = ++frameGeneration;
-    const blob = data instanceof Blob ? data : new Blob([data], { type: 'image/jpeg' });
-    try {
-      const bitmap = await createImageBitmap(blob);
-      if (generation !== frameGeneration) {
-        bitmap.close();
-        return;
-      }
-      latestBitmap?.close?.();
-      latestBitmap = bitmap;
-      renderFrame();
-    } catch (error) {
-      setStatus(error?.message || 'Desktop frame could not be decoded', true);
+  function scheduleVideoFrame() {
+    if (!peerConnection || videoFrameCallback !== null) {
+      return;
     }
+    const render = () => {
+      videoFrameCallback = null;
+      renderFrame();
+      scheduleVideoFrame();
+    };
+    videoFrameCallback = video.requestVideoFrameCallback
+      ? video.requestVideoFrameCallback(render)
+      : window.requestAnimationFrame(render);
   }
 
   function send(command) {
+    if (!controlChannel || controlChannel.readyState !== 'open') {
+      return false;
+    }
+    controlChannel.send(JSON.stringify(command));
+    return true;
+  }
+
+  function sendSignal(message) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return false;
     }
-    socket.send(JSON.stringify(command));
+    socket.send(JSON.stringify(message));
     return true;
   }
 
@@ -229,6 +241,24 @@ if (workspace) {
     if (point) {
       send({ type: 'pointer', x: point.x, y: point.y, buttons });
     }
+  }
+
+  function sendPointerMove(event) {
+    if (viewOnly) {
+      return;
+    }
+    const point = pointerPosition(event);
+    if (!point) {
+      return;
+    }
+    const command = JSON.stringify({ type: 'pointer_move', x: point.x, y: point.y });
+    if (pointerChannel && pointerChannel.readyState === 'open') {
+      if (pointerChannel.bufferedAmount < 4096) {
+        pointerChannel.send(command);
+      }
+      return;
+    }
+    send({ type: 'pointer_move', x: point.x, y: point.y });
   }
 
   function eventButtonMask(button) {
@@ -341,6 +371,156 @@ if (workspace) {
     reconnectDelay = Math.min(8000, Math.floor(reconnectDelay * 1.6));
   }
 
+  function updateGeometry(message) {
+    const nextWidth = Math.max(1, Number(message.width) || 1);
+    const nextHeight = Math.max(1, Number(message.height) || 1);
+    if (frameWidth === nextWidth && frameHeight === nextHeight) {
+      return;
+    }
+    frameWidth = nextWidth;
+    frameHeight = nextHeight;
+    if (!screenOptions().some((screen) => screen.id === selectedScreenId)) {
+      selectedScreenId = 'all';
+    }
+    renderScreenSwitcher();
+    renderFrame();
+  }
+
+  function handleControlMessage(event) {
+    if (typeof event.data !== 'string') {
+      return;
+    }
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch (_) {
+      return;
+    }
+    if (message.type === 'geometry') {
+      updateGeometry(message);
+    } else if (message.type === 'cursor') {
+      canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+    } else if (message.type === 'error') {
+      setStatus(message.message || 'Desktop stream failed', true);
+    }
+  }
+
+  function closePeerConnection() {
+    const currentPeer = peerConnection;
+    peerConnection = null;
+    controlChannel = null;
+    pointerChannel = null;
+    if (videoFrameCallback !== null) {
+      if (typeof video.cancelVideoFrameCallback === 'function') {
+        video.cancelVideoFrameCallback(videoFrameCallback);
+      } else {
+        window.cancelAnimationFrame(videoFrameCallback);
+      }
+    }
+    videoFrameCallback = null;
+    video.srcObject = null;
+    currentPeer?.close();
+  }
+
+  function waitForIceGatheringComplete(peer) {
+    if (peer.iceGatheringState === 'complete') {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timeout = window.setTimeout(finish, 10000);
+      function finish() {
+        window.clearTimeout(timeout);
+        peer.removeEventListener('icegatheringstatechange', handleStateChange);
+        resolve();
+      }
+      const handleStateChange = () => {
+        if (peer.iceGatheringState === 'complete') {
+          finish();
+        }
+      };
+      peer.addEventListener('icegatheringstatechange', handleStateChange);
+    });
+  }
+
+  async function startPeerConnection(iceServers) {
+    if (peerConnection) {
+      return;
+    }
+    if (typeof RTCPeerConnection !== 'function') {
+      throw new Error('This browser does not support WebRTC');
+    }
+
+    const peer = new RTCPeerConnection({
+      iceServers: Array.isArray(iceServers) ? iceServers : [],
+    });
+    peerConnection = peer;
+    const channel = peer.createDataChannel('latitude-control', { ordered: true });
+    controlChannel = channel;
+    const pointer = peer.createDataChannel('latitude-pointer', {
+      ordered: false,
+      maxRetransmits: 0,
+    });
+    pointerChannel = pointer;
+    pointer.addEventListener('close', () => {
+      if (pointerChannel === pointer) {
+        pointerChannel = null;
+      }
+    });
+    channel.addEventListener('open', () => {
+      if (controlChannel !== channel) return;
+      setStatus('Connected');
+      canvas.focus({ preventScroll: true });
+    });
+    channel.addEventListener('message', handleControlMessage);
+    channel.addEventListener('close', () => {
+      if (controlChannel === channel) {
+        controlChannel = null;
+      }
+    });
+    channel.addEventListener('error', () => {
+      setStatus('Desktop control channel failed', true);
+    });
+
+    peer.addEventListener('track', (event) => {
+      if (peerConnection !== peer || event.track.kind !== 'video') return;
+      try {
+        if ('playoutDelayHint' in event.receiver) {
+          event.receiver.playoutDelayHint = 0;
+        }
+        if ('jitterBufferTarget' in event.receiver) {
+          event.receiver.jitterBufferTarget = 0;
+        }
+      } catch (_) {
+        // These low-latency hints are optional and browser-specific.
+      }
+      video.srcObject = event.streams[0] || new MediaStream([event.track]);
+      void video.play().then(scheduleVideoFrame).catch((error) => {
+        setStatus(error?.message || 'Desktop video could not start', true);
+      });
+    });
+    peer.addEventListener('connectionstatechange', () => {
+      if (peerConnection !== peer) return;
+      if (peer.connectionState === 'connected') {
+        reconnectDelay = 1000;
+        setStatus('Connected');
+      } else if (peer.connectionState === 'connecting') {
+        setStatus('Connecting media');
+      } else if (peer.connectionState === 'failed') {
+        setStatus('WebRTC connection failed', true);
+        socket?.close();
+      }
+    });
+
+    peer.addTransceiver('video', { direction: 'recvonly' });
+    await peer.setLocalDescription(await peer.createOffer());
+    await waitForIceGatheringComplete(peer);
+    if (peerConnection !== peer || !peer.localDescription) {
+      return;
+    }
+    setStatus('Negotiating');
+    sendSignal({ type: 'offer', sdp: peer.localDescription.sdp });
+  }
+
   function connect() {
     if (socket) {
       return;
@@ -348,20 +528,16 @@ if (workspace) {
     clearReconnectTimer();
     setStatus('Connecting');
     const nextSocket = new WebSocket(buildSocketUrl());
-    nextSocket.binaryType = 'blob';
     socket = nextSocket;
 
     nextSocket.addEventListener('open', () => {
       if (socket !== nextSocket) return;
       reconnectDelay = 1000;
-      setStatus('Connected');
+      setStatus('Negotiating');
     });
-    nextSocket.addEventListener('message', (event) => {
+    nextSocket.addEventListener('message', async (event) => {
       if (socket !== nextSocket) return;
-      if (typeof event.data !== 'string') {
-        void decodeFrame(event.data);
-        return;
-      }
+      if (typeof event.data !== 'string') return;
       let message;
       try {
         message = JSON.parse(event.data);
@@ -369,19 +545,22 @@ if (workspace) {
         return;
       }
       if (message.type === 'hello') {
-        const nextWidth = Math.max(1, Number(message.width) || 1);
-        const nextHeight = Math.max(1, Number(message.height) || 1);
-        if (frameWidth !== nextWidth || frameHeight !== nextHeight) {
-          frameWidth = nextWidth;
-          frameHeight = nextHeight;
-          if (!screenOptions().some((screen) => screen.id === selectedScreenId)) {
-            selectedScreenId = 'all';
-          }
-          renderScreenSwitcher();
+        updateGeometry(message);
+        try {
+          await startPeerConnection(message.ice_servers);
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC could not be started', true);
+          nextSocket.close();
         }
-        setStatus('Connected');
-      } else if (message.type === 'cursor') {
-        canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+      } else if (message.type === 'answer') {
+        if (!peerConnection) return;
+        try {
+          await peerConnection.setRemoteDescription({ type: 'answer', sdp: message.sdp });
+          setStatus('Connecting media');
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC answer was rejected', true);
+          nextSocket.close();
+        }
       } else if (message.type === 'error') {
         setStatus(message.message || 'Desktop connection failed', true);
       }
@@ -391,6 +570,7 @@ if (workspace) {
       socket = null;
       pointerButtons = 0;
       pressedKeys.clear();
+      closePeerConnection();
       scheduleReconnect();
     });
     nextSocket.addEventListener('error', () => {
@@ -409,7 +589,7 @@ if (workspace) {
   canvas.addEventListener('pointermove', (event) => {
     if (viewOnly) return;
     event.preventDefault();
-    sendPointer(event);
+    sendPointerMove(event);
   });
   const releasePointer = (event) => {
     if (viewOnly) return;
@@ -521,6 +701,7 @@ if (workspace) {
       socket = null;
       current.close();
     }
+    closePeerConnection();
     connect();
   });
   window.addEventListener('beforeunload', () => {
@@ -528,7 +709,7 @@ if (workspace) {
     clearReconnectTimer();
     releasePressedKeys();
     socket?.close();
-    latestBitmap?.close?.();
+    closePeerConnection();
   });
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {

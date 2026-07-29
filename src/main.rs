@@ -1,6 +1,7 @@
 mod cli;
 mod config;
 mod desktop;
+mod desktop_webrtc;
 mod device;
 mod server;
 mod state;

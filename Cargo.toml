@@ -12,9 +12,9 @@ hmac = "0.12"
 hostname = "0.4"
 futures-util = "0.3"
 fff-search = "0.10.1"
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
 maud = "0.27.0"
 mime_guess = "2.0"
+openh264 = "0.9.7"
 percent-encoding = "2.3"
 portable-pty = "0.9"
 pulldown-cmark = "0.13"
@@ -32,9 +32,11 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 two-face = "0.5.1"
 url = "2.5"
+webrtc = "0.17.2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+yuvutils-rs = { version = "0.8.3", features = ["fast_mode", "rayon"] }

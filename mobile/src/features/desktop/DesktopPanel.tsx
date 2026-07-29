@@ -253,10 +253,12 @@ export function RootDesktopPanel({
     >
       <WebView
         ref={webViewRef}
+        allowsInlineMediaPlayback
         bounces={false}
         domStorageEnabled
         javaScriptEnabled
         keyboardDisplayRequiresUserAction={false}
+        mediaPlaybackRequiresUserAction={false}
         mixedContentMode="always"
         onLoadEnd={requestState}
         onMessage={handleMessage}
