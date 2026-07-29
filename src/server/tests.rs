@@ -1763,6 +1763,7 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-view-only=\"true\""));
     assert!(rendered.contains("data-screen-layout=\"[]\""));
     assert!(rendered.contains("data-resolution-options=\"[]\""));
+    assert!(rendered.contains("href=\"/__latitude/assets/desktop-viewer.css?v=3\""));
     assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=2\""));
 }
 
@@ -1785,7 +1786,7 @@ fn renders_native_root_desktop_page() {
 
     assert!(rendered.contains("data-protocol=\"latitude_native\""));
     assert!(rendered.contains("data-view-only=\"false\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/native-desktop-viewer.js?v=8\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/native-desktop-viewer.js?v=10\""));
     assert!(!rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=2\""));
 }
 

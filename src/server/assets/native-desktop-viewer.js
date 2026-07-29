@@ -3,7 +3,7 @@ import {
   pointerButtonMask,
   virtualKeyFor,
 } from './native-desktop-input.js?v=1';
-import { NativeDesktopPeer } from './native-desktop-peer.js?v=1';
+import { NativeDesktopPeer } from './native-desktop-peer.js?v=2';
 
 const workspace = document.querySelector('[data-desktop-workspace]');
 
@@ -59,6 +59,7 @@ if (workspace) {
   video.muted = true;
   video.playsInline = true;
   video.hidden = true;
+  target.classList.add('native-desktop-target');
   target.replaceChildren(canvas, video);
 
   function parseArray(value) {
@@ -354,6 +355,9 @@ if (workspace) {
           socket?.close();
         }
       },
+      onIceCandidate: (candidate) => {
+        sendSignal({ type: 'candidate', candidate });
+      },
     });
     peerSession = peer;
     const offer = await peer.start(iceServers);
@@ -361,7 +365,9 @@ if (workspace) {
       return;
     }
     setStatus('Negotiating');
-    sendSignal({ type: 'offer', sdp: offer });
+    if (sendSignal({ type: 'offer', sdp: offer })) {
+      peer.releaseIceCandidates();
+    }
   }
 
   function connect() {
@@ -402,6 +408,14 @@ if (workspace) {
           setStatus('Connecting media');
         } catch (error) {
           setStatus(error?.message || 'WebRTC answer was rejected', true);
+          nextSocket.close();
+        }
+      } else if (message.type === 'candidate') {
+        if (!peerSession || !message.candidate) return;
+        try {
+          await peerSession.addCandidate(message.candidate);
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC ICE candidate was rejected', true);
           nextSocket.close();
         }
       } else if (message.type === 'error') {

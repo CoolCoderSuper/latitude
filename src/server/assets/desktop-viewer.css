@@ -255,6 +255,13 @@ a:hover {
   background: var(--desktop-frame-bg);
 }
 
+.desktop-target.native-desktop-target {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
 .native-desktop-canvas {
   display: block;
   flex: none;

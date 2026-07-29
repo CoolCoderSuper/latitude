@@ -3,15 +3,26 @@ const POINTER_CHANNEL_LABEL = 'latitude-pointer';
 const MAX_POINTER_BUFFER_BYTES = 4096;
 
 export class NativeDesktopPeer {
-  constructor({ onControlOpen, onControlMessage, onControlError, onTrack, onConnectionState }) {
+  constructor({
+    onControlOpen,
+    onControlMessage,
+    onControlError,
+    onTrack,
+    onConnectionState,
+    onIceCandidate,
+  }) {
     this.onControlOpen = onControlOpen;
     this.onControlMessage = onControlMessage;
     this.onControlError = onControlError;
     this.onTrack = onTrack;
     this.onConnectionState = onConnectionState;
+    this.onIceCandidate = onIceCandidate;
     this.peer = null;
     this.controlChannel = null;
     this.pointerChannel = null;
+    this.offerSent = false;
+    this.pendingLocalCandidates = [];
+    this.pendingRemoteCandidates = [];
   }
 
   async start(iceServers) {
@@ -38,11 +49,27 @@ export class NativeDesktopPeer {
         this.onConnectionState(peer.connectionState);
       }
     });
+    peer.addEventListener('icecandidate', (event) => {
+      if (this.peer !== peer || !event.candidate) return;
+      const candidate = event.candidate.toJSON();
+      if (this.offerSent) {
+        this.onIceCandidate(candidate);
+      } else {
+        this.pendingLocalCandidates.push(candidate);
+      }
+    });
 
     peer.addTransceiver('video', { direction: 'recvonly' });
     await peer.setLocalDescription(await peer.createOffer());
-    await waitForIceGatheringComplete(peer);
     return peer.localDescription?.sdp || '';
+  }
+
+  releaseIceCandidates() {
+    if (!this.peer || this.offerSent) return;
+    this.offerSent = true;
+    for (const candidate of this.pendingLocalCandidates.splice(0)) {
+      this.onIceCandidate(candidate);
+    }
   }
 
   sendControl(command) {
@@ -58,6 +85,21 @@ export class NativeDesktopPeer {
       return false;
     }
     await this.peer.setRemoteDescription({ type: 'answer', sdp });
+    for (const candidate of this.pendingRemoteCandidates.splice(0)) {
+      await this.peer.addIceCandidate(candidate);
+    }
+    return true;
+  }
+
+  async addCandidate(candidate) {
+    if (!this.peer) {
+      return false;
+    }
+    if (!this.peer.remoteDescription) {
+      this.pendingRemoteCandidates.push(candidate);
+      return true;
+    }
+    await this.peer.addIceCandidate(candidate);
     return true;
   }
 
@@ -76,6 +118,9 @@ export class NativeDesktopPeer {
     this.peer = null;
     this.controlChannel = null;
     this.pointerChannel = null;
+    this.offerSent = false;
+    this.pendingLocalCandidates = [];
+    this.pendingRemoteCandidates = [];
     peer?.close();
   }
 
@@ -119,24 +164,4 @@ function applyLowLatencyHints(receiver) {
   } catch (_) {
     // These low-latency hints are optional and browser-specific.
   }
-}
-
-function waitForIceGatheringComplete(peer) {
-  if (peer.iceGatheringState === 'complete') {
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const timeout = window.setTimeout(finish, 10000);
-    function finish() {
-      window.clearTimeout(timeout);
-      peer.removeEventListener('icegatheringstatechange', handleStateChange);
-      resolve();
-    }
-    const handleStateChange = () => {
-      if (peer.iceGatheringState === 'complete') {
-        finish();
-      }
-    };
-    peer.addEventListener('icegatheringstatechange', handleStateChange);
-  });
 }

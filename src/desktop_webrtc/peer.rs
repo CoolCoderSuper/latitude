@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::sync::{Mutex, RwLock, mpsc};
@@ -10,6 +10,7 @@ use webrtc::{
     },
     data_channel::{RTCDataChannel, data_channel_state::RTCDataChannelState},
     ice::network_type::NetworkType,
+    ice_transport::ice_candidate::RTCIceCandidateInit,
     ice_transport::ice_server::RTCIceServer,
     interceptor::registry::Registry,
     peer_connection::{
@@ -27,12 +28,12 @@ use crate::desktop::{
 
 const CONTROL_CHANNEL_LABEL: &str = "latitude-control";
 const POINTER_CHANNEL_LABEL: &str = "latitude-pointer";
-const ICE_GATHER_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) struct NativePeerSession {
     pub(super) peer: Arc<RTCPeerConnection>,
     pub(super) track: Arc<TrackLocalStaticSample>,
     pub(super) state_rx: mpsc::UnboundedReceiver<RTCPeerConnectionState>,
+    pub(super) candidate_rx: mpsc::UnboundedReceiver<RTCIceCandidateInit>,
     pub(super) control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     pub(super) input_state: Arc<Mutex<NativeInputState>>,
 }
@@ -107,6 +108,23 @@ pub(super) async fn create_session(
             let _ = state_tx.send(state);
         })
     }));
+    let (candidate_tx, candidate_rx) = mpsc::unbounded_channel();
+    peer.on_ice_candidate(Box::new(move |candidate| {
+        let candidate_tx = candidate_tx.clone();
+        Box::pin(async move {
+            let Some(candidate) = candidate else {
+                return;
+            };
+            match candidate.to_json() {
+                Ok(candidate) => {
+                    let _ = candidate_tx.send(candidate);
+                }
+                Err(error) => {
+                    warn!(%error, "native WebRTC ICE candidate could not be serialized");
+                }
+            }
+        })
+    }));
 
     peer.set_remote_description(
         RTCSessionDescription::offer(offer_sdp).context("WebRTC offer SDP was invalid")?,
@@ -117,16 +135,15 @@ pub(super) async fn create_session(
         .create_answer(None)
         .await
         .context("WebRTC answer could not be created")?;
-    let mut gathering_complete = peer.gathering_complete_promise().await;
     peer.set_local_description(answer)
         .await
         .context("WebRTC local answer could not be applied")?;
-    let _ = tokio::time::timeout(ICE_GATHER_TIMEOUT, gathering_complete.recv()).await;
 
     Ok(NativePeerSession {
         peer,
         track,
         state_rx,
+        candidate_rx,
         control_channel,
         input_state,
     })

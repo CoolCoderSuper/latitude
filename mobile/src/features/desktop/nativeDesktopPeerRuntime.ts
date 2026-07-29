@@ -1,4 +1,8 @@
 export const nativeDesktopPeerRuntime = String.raw`
+    let offerSent = false;
+    const pendingLocalCandidates = [];
+    const pendingRemoteCandidates = [];
+
     const closePeerConnection = () => {
       const currentPeer = peerConnection;
       peerConnection = null;
@@ -13,25 +17,10 @@ export const nativeDesktopPeerRuntime = String.raw`
       }
       videoFrameCallback = null;
       video.srcObject = null;
+      offerSent = false;
+      pendingLocalCandidates.length = 0;
+      pendingRemoteCandidates.length = 0;
       currentPeer?.close();
-    };
-
-    const waitForIceGatheringComplete = (peer) => {
-      if (peer.iceGatheringState === 'complete') return Promise.resolve();
-      return new Promise((resolve) => {
-        const timeout = window.setTimeout(finish, 10000);
-        function finish() {
-          window.clearTimeout(timeout);
-          peer.removeEventListener('icegatheringstatechange', handleStateChange);
-          resolve();
-        }
-        const handleStateChange = () => {
-          if (peer.iceGatheringState === 'complete') {
-            finish();
-          }
-        };
-        peer.addEventListener('icegatheringstatechange', handleStateChange);
-      });
     };
 
     const startPeerConnection = async (iceServers) => {
@@ -96,13 +85,26 @@ export const nativeDesktopPeerRuntime = String.raw`
           socket?.close();
         }
       };
+      peer.onicecandidate = (event) => {
+        if (peerConnection !== peer || !event.candidate) return;
+        const candidate = event.candidate.toJSON();
+        if (offerSent) {
+          sendSignal({ type: 'candidate', candidate });
+        } else {
+          pendingLocalCandidates.push(candidate);
+        }
+      };
 
       peer.addTransceiver('video', { direction: 'recvonly' });
       await peer.setLocalDescription(await peer.createOffer());
-      await waitForIceGatheringComplete(peer);
       if (peerConnection !== peer || !peer.localDescription) return;
       setStatus('Negotiating');
-      sendSignal({ type: 'offer', sdp: peer.localDescription.sdp });
+      if (sendSignal({ type: 'offer', sdp: peer.localDescription.sdp })) {
+        offerSent = true;
+        for (const candidate of pendingLocalCandidates.splice(0)) {
+          sendSignal({ type: 'candidate', candidate });
+        }
+      }
     };
 
     const connect = () => {
@@ -138,9 +140,24 @@ export const nativeDesktopPeerRuntime = String.raw`
           if (!peerConnection) return;
           try {
             await peerConnection.setRemoteDescription({ type: 'answer', sdp: message.sdp });
+            for (const candidate of pendingRemoteCandidates.splice(0)) {
+              await peerConnection.addIceCandidate(candidate);
+            }
             setStatus('Connecting media');
           } catch (error) {
             setStatus(error?.message || 'WebRTC answer was rejected', true);
+            nextSocket.close();
+          }
+        } else if (message.type === 'candidate') {
+          if (!peerConnection || !message.candidate) return;
+          try {
+            if (peerConnection.remoteDescription) {
+              await peerConnection.addIceCandidate(message.candidate);
+            } else {
+              pendingRemoteCandidates.push(message.candidate);
+            }
+          } catch (error) {
+            setStatus(error?.message || 'WebRTC ICE candidate was rejected', true);
             nextSocket.close();
           }
         } else if (message.type === 'error') {
