@@ -6,11 +6,13 @@
   "desktop": {
     "enabled": false,
     "label": "Desktop",
-    "mode": "external",
+    "mode": "native",
     "managed_provider": "ultra_vnc",
     "managed_executable": "tools/ultravnc/winvnc.exe",
     "vnc_host": "127.0.0.1",
     "vnc_port": 5900,
+    "native_max_fps": 12,
+    "native_jpeg_quality": 72,
     "view_only": true,
     "allow_non_loopback": false
   },

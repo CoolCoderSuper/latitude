@@ -38,6 +38,7 @@ fn workspace_markup(
             data-desktop-workspace
             data-action-path=(action_path)
             data-ws-path=(&info.websocket_href)
+            data-protocol=(info.protocol.as_str())
             data-view-only=(view_only)
             data-screen-layout=(screen_layout)
             data-resolution-options=(resolution_options)

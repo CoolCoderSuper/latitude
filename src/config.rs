@@ -83,6 +83,10 @@ pub struct DesktopConfig {
     pub vnc_host: String,
     #[serde(default = "default_desktop_vnc_port")]
     pub vnc_port: u16,
+    #[serde(default = "default_desktop_native_max_fps")]
+    pub native_max_fps: u16,
+    #[serde(default = "default_desktop_native_jpeg_quality")]
+    pub native_jpeg_quality: u8,
     #[serde(default = "default_true")]
     pub view_only: bool,
     #[serde(default)]
@@ -116,6 +120,7 @@ pub enum DesktopMode {
     #[default]
     External,
     Managed,
+    Native,
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -365,6 +370,8 @@ impl Default for DesktopConfig {
             managed_executable: default_desktop_managed_executable(),
             vnc_host: default_desktop_vnc_host(),
             vnc_port: default_desktop_vnc_port(),
+            native_max_fps: default_desktop_native_max_fps(),
+            native_jpeg_quality: default_desktop_native_jpeg_quality(),
             view_only: true,
             allow_non_loopback: false,
         }
@@ -527,6 +534,20 @@ impl DesktopConfig {
                 return Err(ConfigError::Invalid(
                     "desktop managed_executable must not be empty when managed desktop is enabled"
                         .to_string(),
+                ));
+            }
+            return Ok(());
+        }
+
+        if self.mode == DesktopMode::Native {
+            if !(1..=30).contains(&self.native_max_fps) {
+                return Err(ConfigError::Invalid(
+                    "desktop native_max_fps must be between 1 and 30".to_string(),
+                ));
+            }
+            if !(25..=95).contains(&self.native_jpeg_quality) {
+                return Err(ConfigError::Invalid(
+                    "desktop native_jpeg_quality must be between 25 and 95".to_string(),
                 ));
             }
             return Ok(());
@@ -966,6 +987,14 @@ fn default_desktop_vnc_port() -> u16 {
     5900
 }
 
+fn default_desktop_native_max_fps() -> u16 {
+    12
+}
+
+fn default_desktop_native_jpeg_quality() -> u8 {
+    72
+}
+
 fn default_t3code_base_url() -> String {
     "http://127.0.0.1:3773".to_string()
 }
@@ -1061,6 +1090,8 @@ mod tests {
         );
         assert_eq!(desktop.vnc_host, "127.0.0.1");
         assert_eq!(desktop.vnc_port, 5900);
+        assert_eq!(desktop.native_max_fps, 12);
+        assert_eq!(desktop.native_jpeg_quality, 72);
         assert!(desktop.view_only);
         assert!(!desktop.allow_non_loopback);
     }
@@ -1137,6 +1168,38 @@ mod tests {
         };
 
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn native_desktop_skips_external_vnc_target_validation() {
+        let config = BootConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                mode: DesktopMode::Native,
+                vnc_host: String::new(),
+                vnc_port: 0,
+                ..DesktopConfig::default()
+            },
+            ..BootConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn native_desktop_rejects_invalid_capture_settings() {
+        let config = BootConfig {
+            desktop: DesktopConfig {
+                enabled: true,
+                mode: DesktopMode::Native,
+                native_max_fps: 0,
+                native_jpeg_quality: 10,
+                ..DesktopConfig::default()
+            },
+            ..BootConfig::default()
+        };
+
+        assert!(config.validate().is_err());
     }
 
     #[test]

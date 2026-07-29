@@ -23,11 +23,15 @@ Open `http://127.0.0.1:8080/` and sign in with the configured public password. T
 
 Latitude stores projects, deployments, page content, and share links in the configured data directory. The config file contains boot settings such as listener binds, public password, desktop options, and `data_dir`.
 
-## Desktop VNC
+## Desktop Control
 
 Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.enabled` is set to `true`.
 
-Use `desktop.mode: "external"` to bridge to an already-running VNC server. The default external target is `127.0.0.1:5900`, view-only in the noVNC client, and non-loopback VNC hosts are rejected unless `allow_non_loopback` is explicitly enabled.
+On Windows, use `desktop.mode: "native"` for Latitude's built-in desktop transport. It captures the current interactive desktop, sends JPEG frames through Latitude's authenticated WebSocket, and accepts typed pointer, wheel, keyboard, and text commands when `view_only` is `false`. Tune `native_max_fps` from 1 to 30 and `native_jpeg_quality` from 25 to 95 to balance responsiveness, CPU use, and bandwidth.
+
+Native control operates in the same Windows integrity context as Latitude. Windows can reject input directed at elevated applications, UAC prompts, or the secure desktop. Keep a managed VNC service available when those screens must be controlled.
+
+Use `desktop.mode: "external"` to bridge to an already-running VNC server. The default external target is `127.0.0.1:5900`, and non-loopback VNC hosts are rejected unless `allow_non_loopback` is explicitly enabled.
 
 On Windows, run `.\init-ultravnc.ps1` to prepare UltraVNC in portable mode under `tools/ultravnc/`. Run `.\init-ultravnc.ps1 -Install` from an elevated PowerShell session to install and start it as a loopback-only Windows service on `127.0.0.1:5900`. Service mode can handle UAC-protected screens; application mode cannot.
 

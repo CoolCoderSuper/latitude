@@ -197,5 +197,8 @@ pub(in crate::server) async fn public_root_desktop_ws(
         }
     };
 
-    ws.on_upgrade(move |socket| crate::desktop::desktop_websocket_session(socket, target))
+    let view_only = config.desktop.view_only;
+    ws.on_upgrade(move |socket| {
+        crate::desktop::desktop_websocket_session(socket, target, view_only)
+    })
 }

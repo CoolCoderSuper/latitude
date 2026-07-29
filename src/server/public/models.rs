@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::config::{ApplicationConfig, ProjectConfig};
-use crate::desktop::{DesktopScreenResponse, detect_desktop_screens};
+use crate::desktop::{DesktopProtocol, DesktopScreenResponse, detect_desktop_screens};
 use crate::storage::WorktreeRecord;
 
 use super::super::{
@@ -122,6 +122,7 @@ pub(in crate::server) struct PublicRootDesktopLink {
     pub(in crate::server) api_href: String,
     pub(in crate::server) label: String,
     pub(in crate::server) description: &'static str,
+    pub(in crate::server) protocol: DesktopProtocol,
     pub(in crate::server) view_only: bool,
     pub(in crate::server) screens: Vec<DesktopScreenResponse>,
 }
@@ -180,7 +181,8 @@ pub(in crate::server) fn public_root_desktop_link(
         href: format!("/{DESKTOP_ROUTE_SEGMENT}"),
         api_href: PUBLIC_API_ROOT_DESKTOP_PATH.to_string(),
         label: config.label.clone(),
-        description: "View the desktop over VNC",
+        description: "View and control the desktop",
+        protocol: DesktopProtocol::for_mode(config.mode),
         view_only: config.view_only,
         screens: detect_desktop_screens(),
     })

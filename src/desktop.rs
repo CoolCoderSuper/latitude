@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     net::{IpAddr, TcpListener},
     path::{Path, PathBuf},
     process::Stdio,
@@ -6,14 +7,14 @@ use std::{
 };
 
 use axum::extract::ws::{Message, WebSocket};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     process::{Child, Command},
-    sync::Mutex,
-    time::{sleep, timeout},
+    sync::{Mutex, mpsc},
+    time::{MissedTickBehavior, sleep, timeout},
 };
 use tracing::{debug, info, warn};
 
@@ -22,12 +23,14 @@ use crate::config::{DesktopConfig, DesktopMode, ManagedDesktopProvider};
 const DESKTOP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MANAGED_DESKTOP_START_TIMEOUT: Duration = Duration::from_secs(8);
 const DESKTOP_BRIDGE_BUFFER_SIZE: usize = 64 * 1024;
+const NATIVE_DESKTOP_MAX_TEXT_UNITS: usize = 4096;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DesktopInfoResponse {
     pub label: String,
     pub enabled: bool,
     pub mode: DesktopMode,
+    pub protocol: DesktopProtocol,
     pub managed: bool,
     pub host: String,
     pub port: u16,
@@ -67,15 +70,43 @@ pub struct DesktopResolutionChangeResponse {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct DesktopTarget {
+    pub protocol: DesktopProtocol,
     pub host: String,
     pub port: u16,
     pub managed: bool,
+    pub native_max_fps: u16,
+    pub native_jpeg_quality: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopProtocol {
+    Rfb,
+    LatitudeNative,
+}
+
+impl DesktopProtocol {
+    pub fn for_mode(mode: DesktopMode) -> Self {
+        match mode {
+            DesktopMode::External | DesktopMode::Managed => Self::Rfb,
+            DesktopMode::Native => Self::LatitudeNative,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rfb => "rfb",
+            Self::LatitudeNative => "latitude_native",
+        }
+    }
 }
 
 #[derive(Debug, Error)]
 pub enum DesktopError {
     #[error("managed desktop mode is only supported on Windows")]
     UnsupportedManagedPlatform,
+    #[error("native desktop mode is only supported on Windows")]
+    UnsupportedNativePlatform,
     #[error("managed desktop executable path is empty")]
     EmptyManagedExecutable,
     #[error("managed desktop executable was not found at {0}")]
@@ -125,6 +156,7 @@ pub fn desktop_info_response(
         label: config.label.clone(),
         enabled: config.enabled,
         mode: config.mode,
+        protocol: target.protocol,
         managed: target.managed,
         host: target.host.clone(),
         port: target.port,
@@ -214,17 +246,34 @@ fn display_number(device: &str) -> Option<u32> {
 impl DesktopTarget {
     fn external(config: &DesktopConfig) -> Self {
         Self {
+            protocol: DesktopProtocol::Rfb,
             host: config.vnc_host.clone(),
             port: config.vnc_port,
             managed: false,
+            native_max_fps: config.native_max_fps,
+            native_jpeg_quality: config.native_jpeg_quality,
         }
     }
 
-    fn managed(port: u16) -> Self {
+    fn managed(config: &DesktopConfig, port: u16) -> Self {
         Self {
+            protocol: DesktopProtocol::Rfb,
             host: "127.0.0.1".to_string(),
             port,
             managed: true,
+            native_max_fps: config.native_max_fps,
+            native_jpeg_quality: config.native_jpeg_quality,
+        }
+    }
+
+    fn native(config: &DesktopConfig) -> Self {
+        Self {
+            protocol: DesktopProtocol::LatitudeNative,
+            host: String::new(),
+            port: 0,
+            managed: false,
+            native_max_fps: config.native_max_fps,
+            native_jpeg_quality: config.native_jpeg_quality,
         }
     }
 }
@@ -234,6 +283,12 @@ impl ManagedDesktopManager {
         match config.mode {
             DesktopMode::External => Ok(DesktopTarget::external(config)),
             DesktopMode::Managed => self.ensure_ultravnc(config).await,
+            DesktopMode::Native => {
+                if !cfg!(windows) {
+                    return Err(DesktopError::UnsupportedNativePlatform);
+                }
+                Ok(DesktopTarget::native(config))
+            }
         }
     }
 
@@ -248,7 +303,7 @@ impl ManagedDesktopManager {
             && existing.matches(config.managed_provider, &executable, config.view_only)
         {
             if existing.is_running().await? {
-                return Ok(existing.target());
+                return Ok(existing.target(config));
             }
         }
 
@@ -281,7 +336,7 @@ impl ManagedDesktopManager {
             port,
             view_only: config.view_only,
         };
-        let target = managed.target();
+        let target = managed.target(config);
         *process = Some(managed);
         info!(port = target.port, "managed UltraVNC desktop started");
         Ok(target)
@@ -307,8 +362,8 @@ impl ManagedDesktopProcess {
         self.provider == provider && self.executable == executable && self.view_only == view_only
     }
 
-    fn target(&self) -> DesktopTarget {
-        DesktopTarget::managed(self.port)
+    fn target(&self, config: &DesktopConfig) -> DesktopTarget {
+        DesktopTarget::managed(config, self.port)
     }
 
     async fn is_running(&mut self) -> Result<bool, DesktopError> {
@@ -330,7 +385,16 @@ impl Drop for ManagedDesktopProcess {
     }
 }
 
-pub async fn desktop_websocket_session(mut socket: WebSocket, target: DesktopTarget) {
+pub async fn desktop_websocket_session(socket: WebSocket, target: DesktopTarget, view_only: bool) {
+    match target.protocol {
+        DesktopProtocol::Rfb => vnc_desktop_websocket_session(socket, target).await,
+        DesktopProtocol::LatitudeNative => {
+            native_desktop_websocket_session(socket, target, view_only).await
+        }
+    }
+}
+
+async fn vnc_desktop_websocket_session(mut socket: WebSocket, target: DesktopTarget) {
     let address = desktop_vnc_address(&target.host, target.port);
     let connected_at = Instant::now();
     let stream = match timeout(DESKTOP_CONNECT_TIMEOUT, TcpStream::connect(&address)).await {
@@ -405,6 +469,607 @@ pub async fn desktop_websocket_session(mut socket: WebSocket, target: DesktopTar
         duration_ms = connected_at.elapsed().as_millis(),
         "desktop VNC bridge closed"
     );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+struct NativeDesktopGeometry {
+    origin_x: i32,
+    origin_y: i32,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug)]
+struct NativeDesktopFrame {
+    geometry: NativeDesktopGeometry,
+    cursor: NativeDesktopCursor,
+    jpeg: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum NativeDesktopCursor {
+    Default,
+    Text,
+    Pointer,
+    Wait,
+    Progress,
+    Crosshair,
+    Help,
+    NotAllowed,
+    Move,
+    NsResize,
+    EwResize,
+    NwseResize,
+    NeswResize,
+    NResize,
+    None,
+}
+
+#[derive(Debug, Error)]
+enum NativeDesktopError {
+    #[cfg(not(windows))]
+    #[error("native desktop capture is only supported on Windows")]
+    UnsupportedPlatform,
+    #[error("Windows desktop operation failed: {0}")]
+    WindowsApi(&'static str),
+    #[error("native desktop frame encoding failed: {0}")]
+    Encode(#[from] image::ImageError),
+    #[error("{0}")]
+    Message(String),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum NativeDesktopCommand {
+    Pointer {
+        x: f64,
+        y: f64,
+        #[serde(default)]
+        buttons: u8,
+    },
+    Wheel {
+        #[serde(default)]
+        delta_x: i32,
+        #[serde(default)]
+        delta_y: i32,
+    },
+    Key {
+        vk: u16,
+        down: bool,
+        #[serde(default)]
+        extended: bool,
+    },
+    Text {
+        text: String,
+    },
+    ReleaseKeys,
+    Refresh,
+}
+
+#[derive(Debug)]
+struct NativeInputState {
+    x: f64,
+    y: f64,
+    buttons: u8,
+    keys: BTreeSet<(u16, bool)>,
+}
+
+impl Default for NativeInputState {
+    fn default() -> Self {
+        Self {
+            x: 0.5,
+            y: 0.5,
+            buttons: 0,
+            keys: BTreeSet::new(),
+        }
+    }
+}
+
+async fn native_desktop_websocket_session(
+    mut socket: WebSocket,
+    target: DesktopTarget,
+    view_only: bool,
+) {
+    let connected_at = Instant::now();
+    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(target.native_max_fps.max(1)));
+    let jpeg_quality = target.native_jpeg_quality;
+    let (frame_tx, mut frame_rx) =
+        mpsc::channel::<Result<NativeDesktopFrame, NativeDesktopError>>(1);
+    let capture_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(frame_interval);
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        loop {
+            interval.tick().await;
+            if frame_tx.capacity() == 0 {
+                continue;
+            }
+
+            let frame = match tokio::task::spawn_blocking(move || native_capture_jpeg(jpeg_quality))
+                .await
+            {
+                Ok(frame) => frame,
+                Err(error) => Err(NativeDesktopError::Message(format!(
+                    "native desktop capture task failed: {error}"
+                ))),
+            };
+            let failed = frame.is_err();
+            if frame_tx.send(frame).await.is_err() || failed {
+                break;
+            }
+        }
+    });
+
+    let mut input_state = NativeInputState::default();
+    let mut last_geometry = None;
+    let mut last_cursor = None;
+
+    loop {
+        tokio::select! {
+            frame = frame_rx.recv() => {
+                let Some(frame) = frame else {
+                    break;
+                };
+                let frame = match frame {
+                    Ok(frame) => frame,
+                    Err(error) => {
+                        let message = serde_json::json!({
+                            "type": "error",
+                            "message": error.to_string(),
+                        });
+                        let _ = socket.send(Message::Text(message.to_string().into())).await;
+                        break;
+                    }
+                };
+
+                if last_geometry != Some(frame.geometry) {
+                    let hello = serde_json::json!({
+                        "type": "hello",
+                        "protocol": DesktopProtocol::LatitudeNative,
+                        "encoding": "jpeg",
+                        "origin_x": frame.geometry.origin_x,
+                        "origin_y": frame.geometry.origin_y,
+                        "width": frame.geometry.width,
+                        "height": frame.geometry.height,
+                        "view_only": view_only,
+                    });
+                    if socket
+                        .send(Message::Text(hello.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    last_geometry = Some(frame.geometry);
+                }
+
+                if last_cursor != Some(frame.cursor) {
+                    let cursor = serde_json::json!({
+                        "type": "cursor",
+                        "cursor": frame.cursor,
+                    });
+                    if socket
+                        .send(Message::Text(cursor.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    last_cursor = Some(frame.cursor);
+                }
+
+                if socket
+                    .send(Message::Binary(frame.jpeg.into()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            message = socket.recv() => {
+                let Some(message) = message else {
+                    break;
+                };
+                let Ok(message) = message else {
+                    break;
+                };
+
+                match message {
+                    Message::Text(text) => {
+                        let command = match serde_json::from_slice::<NativeDesktopCommand>(
+                            text.as_bytes(),
+                        ) {
+                            Ok(command) => command,
+                            Err(error) => {
+                                debug!(%error, "native desktop command was rejected");
+                                continue;
+                            }
+                        };
+                        if view_only && !matches!(command, NativeDesktopCommand::Refresh) {
+                            continue;
+                        }
+                        if let Err(error) = apply_native_desktop_command(command, &mut input_state) {
+                            warn!(%error, "native desktop input failed");
+                        }
+                    }
+                    Message::Close(_) => break,
+                    Message::Binary(_) | Message::Ping(_) | Message::Pong(_) => {}
+                }
+            }
+        }
+    }
+
+    capture_task.abort();
+    if input_state.buttons != 0 {
+        let _ = apply_native_desktop_command(
+            NativeDesktopCommand::Pointer {
+                x: input_state.x,
+                y: input_state.y,
+                buttons: 0,
+            },
+            &mut input_state,
+        );
+    }
+    if !input_state.keys.is_empty() {
+        let _ = apply_native_desktop_command(NativeDesktopCommand::ReleaseKeys, &mut input_state);
+    }
+    debug!(
+        duration_ms = connected_at.elapsed().as_millis(),
+        "native desktop bridge closed"
+    );
+}
+
+#[cfg(windows)]
+fn native_capture_jpeg(quality: u8) -> Result<NativeDesktopFrame, NativeDesktopError> {
+    use std::{mem::size_of, ptr::null_mut, slice};
+
+    use image::{ExtendedColorType, codecs::jpeg::JpegEncoder};
+    use windows_sys::Win32::{
+        Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, CAPTUREBLT, CreateCompatibleDC,
+            CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, HGDIOBJ, RGBQUAD,
+            ReleaseDC, SRCCOPY, SelectObject,
+        },
+        UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN,
+        },
+    };
+
+    let origin_x = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    let origin_y = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+    let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+    let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+    if width <= 0 || height <= 0 {
+        return Err(NativeDesktopError::WindowsApi(
+            "virtual desktop dimensions are unavailable",
+        ));
+    }
+
+    let screen_dc = unsafe { GetDC(null_mut()) };
+    if screen_dc.is_null() {
+        return Err(NativeDesktopError::WindowsApi(
+            "screen device context could not be opened",
+        ));
+    }
+    let memory_dc = unsafe { CreateCompatibleDC(screen_dc) };
+    if memory_dc.is_null() {
+        unsafe {
+            ReleaseDC(null_mut(), screen_dc);
+        }
+        return Err(NativeDesktopError::WindowsApi(
+            "capture device context could not be created",
+        ));
+    }
+
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: (i64::from(width) * i64::from(height) * 4) as u32,
+            ..BITMAPINFOHEADER::default()
+        },
+        bmiColors: [RGBQUAD::default()],
+    };
+    let mut bits = null_mut();
+    let bitmap = unsafe {
+        CreateDIBSection(
+            screen_dc,
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            null_mut(),
+            0,
+        )
+    };
+    if bitmap.is_null() || bits.is_null() {
+        unsafe {
+            DeleteDC(memory_dc);
+            ReleaseDC(null_mut(), screen_dc);
+        }
+        return Err(NativeDesktopError::WindowsApi(
+            "capture bitmap could not be created",
+        ));
+    }
+
+    let previous = unsafe { SelectObject(memory_dc, bitmap as HGDIOBJ) };
+    let copied = unsafe {
+        BitBlt(
+            memory_dc,
+            0,
+            0,
+            width,
+            height,
+            screen_dc,
+            origin_x,
+            origin_y,
+            SRCCOPY | CAPTUREBLT,
+        )
+    };
+    let byte_len = (width as usize)
+        .saturating_mul(height as usize)
+        .saturating_mul(4);
+    let mut rgb = Vec::with_capacity((width as usize) * (height as usize) * 3);
+    if copied != 0 {
+        let bgra = unsafe { slice::from_raw_parts(bits.cast::<u8>(), byte_len) };
+        for pixel in bgra.chunks_exact(4) {
+            rgb.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
+        }
+    }
+
+    unsafe {
+        if !previous.is_null() {
+            SelectObject(memory_dc, previous);
+        }
+        DeleteObject(bitmap as HGDIOBJ);
+        DeleteDC(memory_dc);
+        ReleaseDC(null_mut(), screen_dc);
+    }
+
+    if copied == 0 {
+        return Err(NativeDesktopError::WindowsApi(
+            "desktop pixels could not be copied",
+        ));
+    }
+
+    let mut jpeg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpeg, quality).encode(
+        &rgb,
+        width as u32,
+        height as u32,
+        ExtendedColorType::Rgb8,
+    )?;
+
+    Ok(NativeDesktopFrame {
+        geometry: NativeDesktopGeometry {
+            origin_x,
+            origin_y,
+            width: width as u32,
+            height: height as u32,
+        },
+        cursor: native_cursor_style(),
+        jpeg,
+    })
+}
+
+#[cfg(windows)]
+fn native_cursor_style() -> NativeDesktopCursor {
+    use std::{mem::size_of, ptr::null_mut};
+
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CURSOR_SHOWING, CURSORINFO, GetCursorInfo, IDC_APPSTARTING, IDC_ARROW, IDC_CROSS, IDC_HAND,
+        IDC_HELP, IDC_IBEAM, IDC_NO, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
+        IDC_SIZEWE, IDC_UPARROW, IDC_WAIT, LoadCursorW,
+    };
+
+    let mut info = CURSORINFO {
+        cbSize: size_of::<CURSORINFO>() as u32,
+        ..CURSORINFO::default()
+    };
+    if unsafe { GetCursorInfo(&mut info) } == 0 {
+        return NativeDesktopCursor::Default;
+    }
+    if info.flags & CURSOR_SHOWING == 0 {
+        return NativeDesktopCursor::None;
+    }
+
+    let cursor = info.hCursor;
+    for (resource, style) in [
+        (IDC_ARROW, NativeDesktopCursor::Default),
+        (IDC_IBEAM, NativeDesktopCursor::Text),
+        (IDC_HAND, NativeDesktopCursor::Pointer),
+        (IDC_WAIT, NativeDesktopCursor::Wait),
+        (IDC_APPSTARTING, NativeDesktopCursor::Progress),
+        (IDC_CROSS, NativeDesktopCursor::Crosshair),
+        (IDC_HELP, NativeDesktopCursor::Help),
+        (IDC_NO, NativeDesktopCursor::NotAllowed),
+        (IDC_SIZEALL, NativeDesktopCursor::Move),
+        (IDC_SIZENS, NativeDesktopCursor::NsResize),
+        (IDC_SIZEWE, NativeDesktopCursor::EwResize),
+        (IDC_SIZENWSE, NativeDesktopCursor::NwseResize),
+        (IDC_SIZENESW, NativeDesktopCursor::NeswResize),
+        (IDC_UPARROW, NativeDesktopCursor::NResize),
+    ] {
+        if cursor == unsafe { LoadCursorW(null_mut(), resource) } {
+            return style;
+        }
+    }
+
+    NativeDesktopCursor::Default
+}
+
+#[cfg(not(windows))]
+fn native_capture_jpeg(_quality: u8) -> Result<NativeDesktopFrame, NativeDesktopError> {
+    Err(NativeDesktopError::UnsupportedPlatform)
+}
+
+#[cfg(windows)]
+fn apply_native_desktop_command(
+    command: NativeDesktopCommand,
+    state: &mut NativeInputState,
+) -> Result<(), NativeDesktopError> {
+    use std::mem::size_of;
+
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+        KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL,
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
+        MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
+        MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
+    };
+
+    fn mouse_input(flags: u32, x: i32, y: i32, data: u32) -> INPUT {
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: x,
+                    dy: y,
+                    mouseData: data,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    fn keyboard_input(vk: u16, scan: u16, flags: u32) -> INPUT {
+        INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: scan,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        }
+    }
+
+    fn send(inputs: &[INPUT]) -> Result<(), NativeDesktopError> {
+        if inputs.is_empty() {
+            return Ok(());
+        }
+        let sent = unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                size_of::<INPUT>() as i32,
+            )
+        };
+        if sent != inputs.len() as u32 {
+            return Err(NativeDesktopError::WindowsApi(
+                "Windows rejected one or more input events",
+            ));
+        }
+        Ok(())
+    }
+
+    match command {
+        NativeDesktopCommand::Pointer { x, y, buttons } => {
+            let x = x.clamp(0.0, 1.0);
+            let y = y.clamp(0.0, 1.0);
+            let buttons = buttons & 0x07;
+            let mut inputs = vec![mouse_input(
+                MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+                (x * 65_535.0).round() as i32,
+                (y * 65_535.0).round() as i32,
+                0,
+            )];
+            for (mask, down, up) in [
+                (0x01, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+                (0x02, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+                (0x04, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+            ] {
+                if state.buttons & mask == 0 && buttons & mask != 0 {
+                    inputs.push(mouse_input(down, 0, 0, 0));
+                } else if state.buttons & mask != 0 && buttons & mask == 0 {
+                    inputs.push(mouse_input(up, 0, 0, 0));
+                }
+            }
+            send(&inputs)?;
+            state.x = x;
+            state.y = y;
+            state.buttons = buttons;
+        }
+        NativeDesktopCommand::Wheel { delta_x, delta_y } => {
+            let mut inputs = Vec::with_capacity(2);
+            if delta_y != 0 {
+                inputs.push(mouse_input(
+                    MOUSEEVENTF_WHEEL,
+                    0,
+                    0,
+                    delta_y.clamp(-1200, 1200) as u32,
+                ));
+            }
+            if delta_x != 0 {
+                inputs.push(mouse_input(
+                    MOUSEEVENTF_HWHEEL,
+                    0,
+                    0,
+                    delta_x.clamp(-1200, 1200) as u32,
+                ));
+            }
+            send(&inputs)?;
+        }
+        NativeDesktopCommand::Key { vk, down, extended } => {
+            if vk == 0 || vk > u16::from(u8::MAX) {
+                return Ok(());
+            }
+            let mut flags = if down { 0 } else { KEYEVENTF_KEYUP };
+            if extended {
+                flags |= KEYEVENTF_EXTENDEDKEY;
+            }
+            send(&[keyboard_input(vk, 0, flags)])?;
+            if down {
+                state.keys.insert((vk, extended));
+            } else {
+                state.keys.remove(&(vk, extended));
+            }
+        }
+        NativeDesktopCommand::ReleaseKeys => {
+            let inputs = state
+                .keys
+                .iter()
+                .map(|(vk, extended)| {
+                    let mut flags = KEYEVENTF_KEYUP;
+                    if *extended {
+                        flags |= KEYEVENTF_EXTENDEDKEY;
+                    }
+                    keyboard_input(*vk, 0, flags)
+                })
+                .collect::<Vec<_>>();
+            send(&inputs)?;
+            state.keys.clear();
+        }
+        NativeDesktopCommand::Text { text } => {
+            let mut inputs = Vec::new();
+            for unit in text.encode_utf16().take(NATIVE_DESKTOP_MAX_TEXT_UNITS) {
+                inputs.push(keyboard_input(0, unit, KEYEVENTF_UNICODE));
+                inputs.push(keyboard_input(0, unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+            }
+            send(&inputs)?;
+        }
+        NativeDesktopCommand::Refresh => {}
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_native_desktop_command(
+    _command: NativeDesktopCommand,
+    _state: &mut NativeInputState,
+) -> Result<(), NativeDesktopError> {
+    Err(NativeDesktopError::UnsupportedPlatform)
 }
 
 fn desktop_vnc_address(host: &str, port: u16) -> String {
@@ -805,7 +1470,17 @@ fn platform_desktop_screens() -> Vec<DesktopScreenResponse> {
 
 #[cfg(test)]
 mod tests {
-    use super::{RawDesktopScreen, display_number, normalize_desktop_screens};
+    use super::{
+        NativeDesktopCommand, RawDesktopScreen, display_number, normalize_desktop_screens,
+    };
+
+    #[test]
+    fn accepts_native_release_keys_command() {
+        let command =
+            serde_json::from_str::<NativeDesktopCommand>(r#"{"type":"release_keys"}"#).unwrap();
+
+        assert!(matches!(command, NativeDesktopCommand::ReleaseKeys));
+    }
 
     #[test]
     fn extracts_windows_display_number() {

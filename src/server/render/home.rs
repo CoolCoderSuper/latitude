@@ -125,7 +125,7 @@ pub(in crate::server) fn render_server_home(
                     @if config.desktop.enabled {
                         li { a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
                             strong { (&config.desktop.label) }
-                            span { "View the desktop over VNC" }
+                            span { "View and control the desktop" }
                         } }
                     }
                     li { a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {

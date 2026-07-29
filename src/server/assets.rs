@@ -29,6 +29,8 @@ pub(super) const TERMINAL_VIEWER_STYLE_HREF: &str = asset_href!("terminal-viewer
 pub(super) const TERMINAL_VIEWER_SCRIPT_SRC: &str = asset_href!("terminal-viewer.js");
 pub(super) const DESKTOP_VIEWER_STYLE_HREF: &str = asset_href!("desktop-viewer.css");
 pub(super) const DESKTOP_VIEWER_SCRIPT_SRC: &str = asset_href!("desktop-viewer.js");
+pub(super) const NATIVE_DESKTOP_VIEWER_SCRIPT_SRC: &str =
+    "/__latitude/assets/native-desktop-viewer.js?v=5";
 pub(super) const PAGE_STYLE_HREF: &str = asset_href!("page.css");
 
 struct EmbeddedAsset {
@@ -128,6 +130,10 @@ fn embedded_asset(name: &str) -> Option<EmbeddedAsset> {
             "text/javascript; charset=utf-8",
             include_bytes!("assets/desktop-viewer.js"),
         ),
+        "native-desktop-viewer.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("assets/native-desktop-viewer.js"),
+        ),
         "page.css" => ("text/css; charset=utf-8", include_bytes!("assets/page.css")),
         _ => return None,
     };
@@ -155,6 +161,7 @@ pub(super) fn embedded_asset_names() -> &'static [&'static str] {
         "terminal-viewer.js",
         "desktop-viewer.css",
         "desktop-viewer.js",
+        "native-desktop-viewer.js",
         "page.css",
     ]
 }

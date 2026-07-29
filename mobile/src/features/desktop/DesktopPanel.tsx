@@ -34,6 +34,7 @@ import { normalizeBaseUrl } from '../../api';
 import { useTheme, type ThemeColors, type ThemeMode } from '../../theme';
 import type { DesktopScreen, RootDesktopLink, SessionRecord } from '../../types';
 import { desktopDocument } from './desktopDocument';
+import { nativeDesktopDocument } from './nativeDesktopDocument';
 
 type PointerMode = 'touchpad' | 'direct';
 
@@ -164,18 +165,24 @@ export function RootDesktopPanel({
     [rootDesktop.href, session.baseUrl, session.token],
   );
   const desktopHtml = useMemo(
-    () =>
-      desktopDocument(
+    () => {
+      const createDocument =
+        rootDesktop.protocol === 'latitude_native'
+          ? nativeDesktopDocument
+          : desktopDocument;
+      return createDocument(
         rootDesktop.label,
         desktopUrl,
         rootDesktop.view_only,
         rootDesktop.screens ?? [],
         chrome.viewerBackground,
-      ),
+      );
+    },
     [
       chrome.viewerBackground,
       desktopUrl,
       rootDesktop.label,
+      rootDesktop.protocol,
       rootDesktop.screens,
       rootDesktop.view_only,
     ],

@@ -17,7 +17,7 @@ use crate::{
         SeedApplicationTarget, SeedProjectConfig, T3CodeConfig, decode_page_binary_content,
         encode_page_binary_content,
     },
-    desktop::DesktopInfoResponse,
+    desktop::{DesktopInfoResponse, DesktopProtocol},
     state::AppState,
     storage::{CatalogStore, WorktreeRecord},
 };
@@ -1734,6 +1734,7 @@ fn renders_root_desktop_page() {
         label: "Desktop".to_string(),
         enabled: true,
         mode: DesktopMode::External,
+        protocol: DesktopProtocol::Rfb,
         managed: false,
         host: "127.0.0.1".to_string(),
         port: 5900,
@@ -1758,10 +1759,34 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-action-path=\"/_desktop\""));
     assert!(rendered.contains("data-ws-path=\"/_desktop/ws\""));
     assert!(rendered.contains("data-ws-token=\"signed-token\""));
+    assert!(rendered.contains("data-protocol=\"rfb\""));
     assert!(rendered.contains("data-view-only=\"true\""));
     assert!(rendered.contains("data-screen-layout=\"[]\""));
     assert!(rendered.contains("data-resolution-options=\"[]\""));
     assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=2\""));
+}
+
+#[test]
+fn renders_native_root_desktop_page() {
+    let info = DesktopInfoResponse {
+        label: "Desktop".to_string(),
+        enabled: true,
+        mode: DesktopMode::Native,
+        protocol: DesktopProtocol::LatitudeNative,
+        managed: false,
+        host: String::new(),
+        port: 0,
+        view_only: false,
+        websocket_href: "/_desktop/ws".to_string(),
+        screens: Vec::new(),
+        resolutions: Vec::new(),
+    };
+    let rendered = render_root_desktop(&info, None, TEST_HOSTNAME);
+
+    assert!(rendered.contains("data-protocol=\"latitude_native\""));
+    assert!(rendered.contains("data-view-only=\"false\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/native-desktop-viewer.js?v=5\""));
+    assert!(!rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=2\""));
 }
 
 #[tokio::test]
@@ -2172,7 +2197,7 @@ fn renders_server_home_with_enabled_desktop() {
 
     assert!(rendered.contains("href=\"/_desktop\""));
     assert!(rendered.contains("Desktop"));
-    assert!(rendered.contains("View the desktop over VNC"));
+    assert!(rendered.contains("View and control the desktop"));
 }
 
 #[test]
