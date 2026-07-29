@@ -1754,6 +1754,7 @@ dependencies = [
  "anyhow",
  "axum",
  "base64",
+ "bytes",
  "clap",
  "fff-search",
  "futures-util",

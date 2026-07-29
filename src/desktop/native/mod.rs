@@ -2,7 +2,11 @@ mod capture;
 mod controller;
 mod input;
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    ops::Deref,
+    sync::{Arc, Mutex},
+};
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -26,7 +30,53 @@ pub(crate) struct NativeDesktopFrame {
     pub(crate) geometry: NativeDesktopGeometry,
     pub(crate) cursor: NativeDesktopCursor,
     pub(crate) captured_at: std::time::Instant,
-    pub(crate) bgra: Vec<u8>,
+    pub(crate) bgra: NativeDesktopPixels,
+}
+
+pub(crate) struct NativeDesktopPixels {
+    bytes: Option<Vec<u8>>,
+    pool: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl NativeDesktopPixels {
+    const MAX_POOLED_BUFFERS: usize = 3;
+
+    fn new(bytes: Vec<u8>, pool: Arc<Mutex<Vec<Vec<u8>>>>) -> Self {
+        Self {
+            bytes: Some(bytes),
+            pool,
+        }
+    }
+}
+
+impl std::fmt::Debug for NativeDesktopPixels {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeDesktopPixels")
+            .field("len", &self.bytes.as_deref().map_or(0, <[u8]>::len))
+            .finish()
+    }
+}
+
+impl Deref for NativeDesktopPixels {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        self.bytes.as_deref().unwrap_or_default()
+    }
+}
+
+impl Drop for NativeDesktopPixels {
+    fn drop(&mut self) {
+        let Some(bytes) = self.bytes.take() else {
+            return;
+        };
+        if let Ok(mut pool) = self.pool.lock()
+            && pool.len() < Self::MAX_POOLED_BUFFERS
+        {
+            pool.push(bytes);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -111,7 +161,9 @@ impl Default for NativeInputState {
 
 #[cfg(test)]
 mod tests {
-    use super::NativeDesktopCommand;
+    use std::sync::{Arc, Mutex};
+
+    use super::{NativeDesktopCommand, NativeDesktopPixels};
 
     #[test]
     fn accepts_release_keys_command() {
@@ -133,5 +185,16 @@ mod tests {
             NativeDesktopCommand::PointerMove { x, y }
                 if x == 0.25 && y == 0.75
         ));
+    }
+
+    #[test]
+    fn returns_captured_pixel_buffers_to_the_pool() {
+        let pool = Arc::new(Mutex::new(Vec::new()));
+        let pixels = NativeDesktopPixels::new(vec![1, 2, 3, 4], Arc::clone(&pool));
+
+        assert_eq!(&*pixels, &[1, 2, 3, 4]);
+        drop(pixels);
+
+        assert_eq!(pool.lock().unwrap().pop(), Some(vec![1, 2, 3, 4]));
     }
 }

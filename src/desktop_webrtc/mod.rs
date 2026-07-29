@@ -88,94 +88,98 @@ async fn run_native_desktop_session(
         );
     }
     let mut peer_session = create_session(&target, view_only, offer).await?;
-    let answer = peer_session
-        .peer
-        .local_description()
-        .await
-        .context("WebRTC answer was not available")?;
-    let answer_message = serde_json::json!({
-        "type": "answer",
-        "sdp": answer.sdp,
-    });
-    log_candidates("answer", &answer.sdp);
-    socket
-        .send(Message::Text(answer_message.to_string().into()))
-        .await
-        .context("WebRTC answer could not be sent")?;
-
     let mut pipeline = None;
-    let mut candidates_open = true;
-    let mut controller_events_open = true;
-    loop {
-        tokio::select! {
-            state = peer_session.state_rx.recv() => {
-                let Some(state) = state else {
-                    break;
-                };
-                debug!(?state, "native desktop WebRTC state changed");
-                match state {
-                    RTCPeerConnectionState::Connected if pipeline.is_none() => {
-                        pipeline = Some(start_video_pipeline(
-                            Arc::clone(&peer_session.track),
-                            Arc::clone(&peer_session.control_channel),
-                            target.native_max_fps,
-                            target.native_bitrate_kbps,
-                            Arc::clone(&peer_session.force_keyframe),
-                        )?);
+    let session_result: Result<()> = async {
+        let answer = peer_session
+            .peer
+            .local_description()
+            .await
+            .context("WebRTC answer was not available")?;
+        let answer_message = serde_json::json!({
+            "type": "answer",
+            "sdp": answer.sdp,
+        });
+        log_candidates("answer", &answer.sdp);
+        socket
+            .send(Message::Text(answer_message.to_string().into()))
+            .await
+            .context("WebRTC answer could not be sent")?;
+
+        let mut candidates_open = true;
+        let mut controller_events_open = true;
+        loop {
+            tokio::select! {
+                state = peer_session.state_rx.recv() => {
+                    let Some(state) = state else {
+                        break;
+                    };
+                    debug!(?state, "native desktop WebRTC state changed");
+                    match state {
+                        RTCPeerConnectionState::Connected if pipeline.is_none() => {
+                            pipeline = Some(start_video_pipeline(
+                                Arc::clone(&peer_session.track),
+                                Arc::clone(&peer_session.control_channel),
+                                target.native_max_fps,
+                                target.native_bitrate_kbps,
+                            ).await?);
+                        }
+                        RTCPeerConnectionState::Disconnected
+                        | RTCPeerConnectionState::Failed
+                        | RTCPeerConnectionState::Closed => break,
+                        _ => {}
                     }
-                    RTCPeerConnectionState::Disconnected
-                    | RTCPeerConnectionState::Failed
-                    | RTCPeerConnectionState::Closed => break,
-                    _ => {}
                 }
-            }
-            candidate = peer_session.candidate_rx.recv(), if candidates_open => {
-                if let Some(candidate) = candidate {
-                    let message = serde_json::json!({
-                        "type": "candidate",
-                        "candidate": candidate,
-                    });
-                    socket
-                        .send(Message::Text(message.to_string().into()))
-                        .await
-                        .context("WebRTC ICE candidate could not be sent")?;
-                } else {
-                    candidates_open = false;
-                }
-            }
-            controller_state = peer_session.controller_state_rx.changed(), if controller_events_open => {
-                if controller_state.is_err() {
-                    controller_events_open = false;
-                    continue;
-                }
-                let state = *peer_session.controller_state_rx.borrow_and_update();
-                send_control_message(
-                    &peer_session.control_channel,
-                    serde_json::json!({
-                        "type": "control",
-                        "state": state.as_str(),
-                    }),
-                )
-                .await;
-            }
-            message = socket.recv() => {
-                match message {
-                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
-                    Some(Ok(Message::Text(text))) => {
-                        receive_candidate(&peer_session.peer, text.as_bytes(), peer_ip).await?;
+                candidate = peer_session.candidate_rx.recv(), if candidates_open => {
+                    if let Some(candidate) = candidate {
+                        let message = serde_json::json!({
+                            "type": "candidate",
+                            "candidate": candidate,
+                        });
+                        socket
+                            .send(Message::Text(message.to_string().into()))
+                            .await
+                            .context("WebRTC ICE candidate could not be sent")?;
+                    } else {
+                        candidates_open = false;
                     }
-                    Some(Ok(Message::Ping(_)))
-                    | Some(Ok(Message::Pong(_)))
-                    | Some(Ok(Message::Binary(_))) => {}
+                }
+                controller_state = peer_session.controller_state_rx.changed(), if controller_events_open => {
+                    if controller_state.is_err() {
+                        controller_events_open = false;
+                        continue;
+                    }
+                    let state = *peer_session.controller_state_rx.borrow_and_update();
+                    send_control_message(
+                        &peer_session.control_channel,
+                        serde_json::json!({
+                            "type": "control",
+                            "state": state.as_str(),
+                        }),
+                    )
+                    .await;
+                }
+                message = socket.recv() => {
+                    match message {
+                        Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                        Some(Ok(Message::Text(text))) => {
+                            receive_candidate(&peer_session.peer, text.as_bytes(), peer_ip).await?;
+                        }
+                        Some(Ok(Message::Ping(_)))
+                        | Some(Ok(Message::Pong(_)))
+                        | Some(Ok(Message::Binary(_))) => {}
+                    }
                 }
             }
         }
-    }
 
-    if let Some(pipeline) = pipeline {
+        Ok(())
+    }
+    .await;
+
+    peer_session.peer.close().await.ok();
+    if let Some(pipeline) = pipeline.take() {
         pipeline.stop().await;
     }
-    peer_session.peer.close().await.ok();
     native_input_controller()
         .unregister(peer_session.session_id)
         .await;
@@ -183,7 +187,7 @@ async fn run_native_desktop_session(
         duration_ms = connected_at.elapsed().as_millis(),
         "native WebRTC desktop bridge closed"
     );
-    Ok(())
+    session_result
 }
 
 async fn receive_offer(socket: &mut WebSocket) -> Result<String> {

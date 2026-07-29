@@ -1,7 +1,4 @@
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tokio::sync::{RwLock, mpsc, watch};
@@ -37,6 +34,8 @@ use crate::desktop::{
     native_input_controller,
 };
 
+use super::video::request_video_keyframe;
+
 const CONTROL_CHANNEL_LABEL: &str = "latitude-control";
 const POINTER_CHANNEL_LABEL: &str = "latitude-pointer";
 
@@ -47,7 +46,6 @@ pub(super) struct NativePeerSession {
     pub(super) candidate_rx: mpsc::UnboundedReceiver<RTCIceCandidateInit>,
     pub(super) control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     pub(super) controller_state_rx: watch::Receiver<NativeControllerLeaseState>,
-    pub(super) force_keyframe: Arc<AtomicBool>,
     pub(super) session_id: u64,
 }
 
@@ -103,15 +101,15 @@ pub(super) async fn create_session(
         .add_track(Arc::clone(&track) as Arc<dyn TrackLocal + Send + Sync>)
         .await
         .context("WebRTC desktop video track could not be added")?;
-    let force_keyframe = Arc::new(AtomicBool::new(false));
-    let force_keyframe_for_rtcp = Arc::clone(&force_keyframe);
+    let video_fps = target.native_max_fps;
+    let video_bitrate_kbps = target.native_bitrate_kbps;
     tokio::spawn(async move {
         while let Ok((packets, _)) = sender.read_rtcp().await {
             if packets
                 .iter()
                 .any(|packet| requests_keyframe(packet.as_ref()))
             {
-                force_keyframe_for_rtcp.store(true, Ordering::Release);
+                request_video_keyframe(video_fps, video_bitrate_kbps).await;
                 debug!("native WebRTC keyframe requested by RTCP feedback");
             }
         }
@@ -124,9 +122,10 @@ pub(super) async fn create_session(
     install_data_channel_handler(
         &peer,
         Arc::clone(&control_channel),
-        Arc::clone(&force_keyframe),
         session_id,
         view_only,
+        video_fps,
+        video_bitrate_kbps,
     );
 
     let (state_tx, state_rx) = mpsc::unbounded_channel();
@@ -154,18 +153,26 @@ pub(super) async fn create_session(
         })
     }));
 
-    peer.set_remote_description(
-        RTCSessionDescription::offer(offer_sdp).context("WebRTC offer SDP was invalid")?,
-    )
-    .await
-    .context("WebRTC offer could not be applied")?;
-    let answer = peer
-        .create_answer(None)
+    let setup_result: Result<()> = async {
+        peer.set_remote_description(
+            RTCSessionDescription::offer(offer_sdp).context("WebRTC offer SDP was invalid")?,
+        )
         .await
-        .context("WebRTC answer could not be created")?;
-    peer.set_local_description(answer)
-        .await
-        .context("WebRTC local answer could not be applied")?;
+        .context("WebRTC offer could not be applied")?;
+        let answer = peer
+            .create_answer(None)
+            .await
+            .context("WebRTC answer could not be created")?;
+        peer.set_local_description(answer)
+            .await
+            .context("WebRTC local answer could not be applied")
+    }
+    .await;
+    if let Err(error) = setup_result {
+        peer.close().await.ok();
+        controller.unregister(session_id).await;
+        return Err(error);
+    }
 
     Ok(NativePeerSession {
         peer,
@@ -174,7 +181,6 @@ pub(super) async fn create_session(
         candidate_rx,
         control_channel,
         controller_state_rx,
-        force_keyframe,
         session_id,
     })
 }
@@ -182,9 +188,10 @@ pub(super) async fn create_session(
 fn install_data_channel_handler(
     peer: &RTCPeerConnection,
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
-    force_keyframe: Arc<AtomicBool>,
     session_id: u64,
     view_only: bool,
+    video_fps: u16,
+    video_bitrate_kbps: u32,
 ) {
     peer.on_data_channel(Box::new(move |channel| {
         let is_control = channel.label() == CONTROL_CHANNEL_LABEL;
@@ -210,9 +217,7 @@ fn install_data_channel_handler(
             }));
         }
 
-        let force_keyframe_for_message = Arc::clone(&force_keyframe);
         channel.on_message(Box::new(move |message| {
-            let force_keyframe = Arc::clone(&force_keyframe_for_message);
             Box::pin(async move {
                 if !message.is_string {
                     return;
@@ -229,7 +234,7 @@ fn install_data_channel_handler(
                     return;
                 }
                 if matches!(&command, NativeDesktopCommand::Refresh) {
-                    force_keyframe.store(true, Ordering::Release);
+                    request_video_keyframe(video_fps, video_bitrate_kbps).await;
                     return;
                 }
                 if view_only {

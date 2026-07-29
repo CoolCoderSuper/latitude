@@ -1,4 +1,7 @@
-use super::{NativeDesktopCursor, NativeDesktopError, NativeDesktopFrame, NativeDesktopGeometry};
+use super::{
+    NativeDesktopCursor, NativeDesktopError, NativeDesktopFrame, NativeDesktopGeometry,
+    NativeDesktopPixels,
+};
 
 #[cfg(windows)]
 pub(crate) struct NativeDesktopCapture {
@@ -9,6 +12,7 @@ pub(crate) struct NativeDesktopCapture {
     previous: windows_sys::Win32::Graphics::Gdi::HGDIOBJ,
     bits: *mut core::ffi::c_void,
     byte_len: usize,
+    buffers: std::sync::Arc<std::sync::Mutex<Vec<Vec<u8>>>>,
 }
 
 #[cfg(not(windows))]
@@ -118,6 +122,7 @@ impl NativeDesktopCapture {
             byte_len: (width as usize)
                 .saturating_mul(height as usize)
                 .saturating_mul(4),
+            buffers: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -149,15 +154,21 @@ impl NativeDesktopCapture {
             ));
         }
 
-        let mut bgra = Vec::with_capacity(self.byte_len);
-        bgra.extend_from_slice(unsafe {
+        let mut bgra = self
+            .buffers
+            .lock()
+            .ok()
+            .and_then(|mut buffers| buffers.pop())
+            .unwrap_or_else(|| Vec::with_capacity(self.byte_len));
+        bgra.resize(self.byte_len, 0);
+        bgra.copy_from_slice(unsafe {
             slice::from_raw_parts(self.bits.cast::<u8>(), self.byte_len)
         });
         Ok(NativeDesktopFrame {
             geometry: self.geometry,
             cursor: native_cursor_style(),
             captured_at: std::time::Instant::now(),
-            bgra,
+            bgra: NativeDesktopPixels::new(bgra, std::sync::Arc::clone(&self.buffers)),
         })
     }
 }
