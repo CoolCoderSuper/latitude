@@ -116,6 +116,7 @@ export function nativeDesktopDocument(
     const zoomStep = 1.25;
     const touchpadSpeed = 1.32;
     const tapMoveThreshold = 9;
+    const pinchZoomThreshold = 12;
     const wheelStep = 42;
     const cursorStyles = new Set([
       'default',
@@ -149,6 +150,8 @@ export function nativeDesktopDocument(
     let pendingPointerMove = null;
     let autoScale = true;
     let zoomLevel = 1;
+    let viewportPanX = 0;
+    let viewportPanY = 0;
     let selectedScreenId =
       configuredScreens.length > 1
         ? ((configuredScreens.find((screen) => screen.primary) || configuredScreens[0]).id)
@@ -251,6 +254,31 @@ export function nativeDesktopDocument(
       pointerY = clamp(pointerY, 0, Math.max(0, screen.height - 1));
     };
 
+    const clampViewportPan = () => {
+      const width = Number.parseFloat(canvas.style.width) || canvas.getBoundingClientRect().width;
+      const height = Number.parseFloat(canvas.style.height) || canvas.getBoundingClientRect().height;
+      const maxX = Math.max(0, (width - stage.clientWidth) / 2);
+      const maxY = Math.max(0, (height - stage.clientHeight) / 2);
+      viewportPanX = clamp(viewportPanX, -maxX, maxX);
+      viewportPanY = clamp(viewportPanY, -maxY, maxY);
+    };
+
+    const applyViewportTransform = () => {
+      clampViewportPan();
+      canvas.style.transform =
+        'translate(-50%, -50%) translate(' +
+        viewportPanX +
+        'px, ' +
+        viewportPanY +
+        'px)';
+    };
+
+    const canPanViewport = () => {
+      const width = Number.parseFloat(canvas.style.width) || canvas.getBoundingClientRect().width;
+      const height = Number.parseFloat(canvas.style.height) || canvas.getBoundingClientRect().height;
+      return width > stage.clientWidth + 1 || height > stage.clientHeight + 1;
+    };
+
     const layoutCanvas = () => {
       const screen = selectedScreen();
       if (!screen || !screen.width || !screen.height) return;
@@ -258,6 +286,28 @@ export function nativeDesktopDocument(
       const scale = (autoScale ? fitScale : 1) * zoomLevel;
       canvas.style.width = Math.max(1, screen.width * scale) + 'px';
       canvas.style.height = Math.max(1, screen.height * scale) + 'px';
+      applyViewportTransform();
+      updateTouchCursor();
+    };
+
+    const setZoomLevelAt = (nextZoom, clientX, clientY) => {
+      const oldBounds = canvas.getBoundingClientRect();
+      const anchorX =
+        oldBounds.width > 0 ? clamp((clientX - oldBounds.left) / oldBounds.width, 0, 1) : 0.5;
+      const anchorY =
+        oldBounds.height > 0 ? clamp((clientY - oldBounds.top) / oldBounds.height, 0, 1) : 0.5;
+      zoomLevel = clamp(nextZoom, minZoom, maxZoom);
+      layoutCanvas();
+
+      const stageBounds = stage.getBoundingClientRect();
+      const width = Number.parseFloat(canvas.style.width) || oldBounds.width;
+      const height = Number.parseFloat(canvas.style.height) || oldBounds.height;
+      viewportPanX =
+        clientX - anchorX * width - (stageBounds.left + (stageBounds.width - width) / 2);
+      viewportPanY =
+        clientY - anchorY * height - (stageBounds.top + (stageBounds.height - height) / 2);
+      applyViewportTransform();
+      updateNativeState({ zoomLevel });
       updateTouchCursor();
     };
 

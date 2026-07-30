@@ -106,11 +106,32 @@ export const nativeDesktopInputRuntime = String.raw`
       };
     };
 
-    const handleTouchStart = (event) => {
-      if (viewOnly || !controlGranted) return;
-      event.preventDefault();
-      const touch = event.touches[0];
-      if (!touch) return;
+    const touchCenter = (touches) => ({
+      x: (touches[0].clientX + touches[1].clientX) / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2,
+    });
+
+    const touchDistance = (touches) =>
+      Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY,
+      );
+
+    const startMultiTouch = (touches) => {
+      const center = touchCenter(touches);
+      touchState = {
+        type: 'multi',
+        lastX: center.x,
+        lastY: center.y,
+        startDistance: touchDistance(touches),
+        startZoom: zoomLevel,
+        wheelX: 0,
+        wheelY: 0,
+        zooming: false,
+      };
+    };
+
+    const startSingleTouch = (touch, suppressTap = false) => {
       const point = touchPoint(touch);
       if (!point) return;
       if (pointerMode === 'direct') {
@@ -119,22 +140,86 @@ export const nativeDesktopInputRuntime = String.raw`
         sendPointer(dragLocked ? activeMouseButton : 0);
       }
       touchState = {
-        count: event.touches.length,
+        type: 'single',
         startX: touch.clientX,
         startY: touch.clientY,
         lastX: touch.clientX,
         lastY: touch.clientY,
-        moved: false,
-        wheelX: 0,
-        wheelY: 0,
+        moved: suppressTap,
       };
     };
 
-    const handleTouchMove = (event) => {
-      if (viewOnly || !controlGranted || !touchState) return;
+    const handleTouchStart = (event) => {
+      const touches = Array.from(event.touches);
+      const handlingMultiTouch = touches.length >= 2;
+      const handlingPointer = !viewOnly && controlGranted;
+      if (!handlingMultiTouch && !handlingPointer) return;
       event.preventDefault();
-      const touch = event.touches[0];
-      if (!touch) return;
+      if (handlingMultiTouch) {
+        startMultiTouch(touches);
+      } else if (touches[0]) {
+        startSingleTouch(touches[0]);
+      }
+    };
+
+    const handleTouchMove = (event) => {
+      if (!touchState) return;
+      event.preventDefault();
+      const touches = Array.from(event.touches);
+
+      if (touches.length >= 2) {
+        if (touchState.type !== 'multi') {
+          startMultiTouch(touches);
+          return;
+        }
+        const center = touchCenter(touches);
+        const distance = touchDistance(touches);
+        const dx = center.x - touchState.lastX;
+        const dy = center.y - touchState.lastY;
+        const distanceDelta = Math.abs(distance - touchState.startDistance);
+        const shouldZoom = touchState.zooming || distanceDelta > pinchZoomThreshold;
+
+        if (shouldZoom) {
+          touchState.zooming = true;
+          setZoomLevelAt(
+            touchState.startZoom * (distance / Math.max(1, touchState.startDistance)),
+            center.x,
+            center.y,
+          );
+          viewportPanX += dx;
+          viewportPanY += dy;
+          applyViewportTransform();
+          updateTouchCursor();
+        } else if (canPanViewport()) {
+          viewportPanX += dx;
+          viewportPanY += dy;
+          applyViewportTransform();
+          updateTouchCursor();
+        } else if (!viewOnly && controlGranted) {
+          touchState.wheelX += dx;
+          touchState.wheelY += dy;
+          if (Math.abs(touchState.wheelY) >= wheelStep || Math.abs(touchState.wheelX) >= wheelStep) {
+            send({
+              type: 'wheel',
+              delta_x: touchState.wheelX >= wheelStep ? 120 : touchState.wheelX <= -wheelStep ? -120 : 0,
+              delta_y: touchState.wheelY >= wheelStep ? -120 : touchState.wheelY <= -wheelStep ? 120 : 0,
+            });
+            touchState.wheelX = 0;
+            touchState.wheelY = 0;
+          }
+        }
+        touchState.lastX = center.x;
+        touchState.lastY = center.y;
+        return;
+      }
+
+      if (
+        touchState.type !== 'single' ||
+        viewOnly ||
+        !controlGranted ||
+        !touches[0]
+      ) return;
+      const touch = touches[0];
       const dx = touch.clientX - touchState.lastX;
       const dy = touch.clientY - touchState.lastY;
       touchState.lastX = touch.clientX;
@@ -144,21 +229,6 @@ export const nativeDesktopInputRuntime = String.raw`
         Math.abs(touch.clientY - touchState.startY) > tapMoveThreshold
       ) {
         touchState.moved = true;
-      }
-
-      if (event.touches.length >= 2 || touchState.count >= 2) {
-        touchState.wheelX += dx;
-        touchState.wheelY += dy;
-        if (Math.abs(touchState.wheelY) >= wheelStep || Math.abs(touchState.wheelX) >= wheelStep) {
-          send({
-            type: 'wheel',
-            delta_x: touchState.wheelX > wheelStep ? 120 : touchState.wheelX < -wheelStep ? -120 : 0,
-            delta_y: touchState.wheelY > wheelStep ? -120 : touchState.wheelY < -wheelStep ? 120 : 0,
-          });
-          touchState.wheelX = 0;
-          touchState.wheelY = 0;
-        }
-        return;
       }
 
       if (pointerMode === 'direct') {
@@ -179,16 +249,30 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const handleTouchEnd = (event) => {
-      if (viewOnly || !controlGranted || !touchState) return;
+      if (!touchState) return;
       event.preventDefault();
-      const wasTap = !touchState.moved && touchState.count === 1;
-      touchState = null;
+      const touches = Array.from(event.touches);
+      const wasMultiTouch = touchState.type === 'multi';
+      const wasTap =
+        touchState.type === 'single' &&
+        !touchState.moved &&
+        event.type !== 'touchcancel' &&
+        touches.length === 0;
+
+      if (touches.length >= 2) {
+        startMultiTouch(touches);
+      } else if (touches.length === 1 && !viewOnly && controlGranted) {
+        startSingleTouch(touches[0], wasMultiTouch);
+      } else {
+        touchState = null;
+      }
+
       if (wasTap) clickPointer();
-      else if (!dragLocked) sendPointer(0);
+      else if (!wasMultiTouch && touches.length === 0 && !dragLocked) sendPointer(0);
     };
 
     for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel']) {
-      canvas.addEventListener(
+      stage.addEventListener(
         type,
         type === 'touchstart'
           ? handleTouchStart
@@ -208,6 +292,8 @@ export const nativeDesktopInputRuntime = String.raw`
         if (zoomLevel > 1 || !autoScale) {
           zoomLevel = 1;
           autoScale = true;
+          viewportPanX = 0;
+          viewportPanY = 0;
         } else {
           autoScale = false;
         }
@@ -215,11 +301,16 @@ export const nativeDesktopInputRuntime = String.raw`
         layoutCanvas();
       } else if (type === 'zoomIn' || type === 'zoomOut') {
         const factor = type === 'zoomIn' ? zoomStep : 1 / zoomStep;
-        zoomLevel = clamp(zoomLevel * factor, minZoom, maxZoom);
-        updateNativeState({ zoomLevel });
-        layoutCanvas();
+        const bounds = stage.getBoundingClientRect();
+        setZoomLevelAt(
+          zoomLevel * factor,
+          bounds.left + bounds.width / 2,
+          bounds.top + bounds.height / 2,
+        );
       } else if (type === 'selectScreen') {
         selectedScreenId = String(command.screenId || 'all');
+        viewportPanX = 0;
+        viewportPanY = 0;
         const screen = selectedScreen();
         if (screen) {
           pointerX = screen.width / 2;
