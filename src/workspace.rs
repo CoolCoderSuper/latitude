@@ -14,9 +14,8 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::terminal::TerminalSessionManager;
+use crate::{project_files::ProjectFileService, terminal::TerminalSessionManager};
 
-use files::WorkspaceFiles;
 pub(crate) use host::run_workspace_host;
 
 static GLOBAL_WORKSPACE_BRIDGE: OnceLock<WorkspaceBridge> = OnceLock::new();
@@ -31,13 +30,14 @@ struct WorkspaceEndpoint {
 #[derive(Clone, Default)]
 pub(crate) struct WorkspaceBridge {
     endpoint: Arc<RwLock<Option<WorkspaceEndpoint>>>,
+    client: reqwest::Client,
 }
 
 #[derive(Clone)]
 struct WorkspaceHostState {
     token: Arc<str>,
     terminals: Arc<TerminalSessionManager>,
-    files: WorkspaceFiles,
+    files: ProjectFileService,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -82,26 +82,6 @@ pub(crate) struct WorkspaceTerminalRequest {
     pub(crate) project: Option<String>,
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) session: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct WorkspaceFileRequest {
-    pub(crate) project_dir: PathBuf,
-    #[serde(default)]
-    pub(crate) path: String,
-    #[serde(default)]
-    pub(crate) raw: bool,
-    #[serde(default)]
-    pub(crate) search: String,
-    #[serde(default)]
-    pub(crate) search_kind: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct WorkspaceFileWriteRequest {
-    pub(crate) project_dir: PathBuf,
-    pub(crate) path: String,
-    pub(crate) content: String,
 }
 
 pub(crate) fn install_global_workspace_bridge(bridge: WorkspaceBridge) -> Result<()> {

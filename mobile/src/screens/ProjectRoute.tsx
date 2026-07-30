@@ -3,7 +3,10 @@ import { useIsFocused } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, ScrollView, View } from 'react-native';
 
-import type { LatitudePublicApi } from '../api';
+import {
+  LatitudeRequestCancelledError,
+  type LatitudePublicApi,
+} from '../api';
 import {
   EmptyState,
   IconButton,
@@ -43,26 +46,56 @@ export function ProjectRoute({
   const [projectLoading, setProjectLoading] = useState(true);
   const [tab, setTab] = useState<ProjectTab>(initialTab);
   const [error, setError] = useState<string | null>(null);
-  const requestPendingRef = useRef<string | null>(null);
+  const requestPendingRef = useRef<{
+    controller: AbortController;
+    key: string;
+  } | null>(null);
 
-  const loadProject = useCallback(async (fetchRemote = false, quiet = false) => {
-    if (requestPendingRef.current === projectName) return;
-    const requestKey = projectName;
-    requestPendingRef.current = requestKey;
+  const loadProject = useCallback(async (
+    fetchRemote = false,
+    quiet = false,
+    autoRefresh = false,
+  ) => {
+    if (requestPendingRef.current?.key === projectName) return;
+    requestPendingRef.current?.controller.abort();
+    const request = {
+      controller: new AbortController(),
+      key: projectName,
+    };
+    requestPendingRef.current = request;
     if (!quiet) {
       setProjectLoading(true);
       setError(null);
     }
     try {
-      setProject(await api.project(projectName, fetchRemote));
-    } catch (projectError) {
-      if (!quiet) setError(errorMessage(projectError));
-    } finally {
-      if (requestPendingRef.current === requestKey) {
-        requestPendingRef.current = null;
+      const response = await api.project(
+        projectName,
+        fetchRemote,
+        autoRefresh,
+        request.controller.signal,
+      );
+      if (requestPendingRef.current === request) {
+        setProject(response);
       }
-      if (!quiet) setProjectLoading(false);
+    } catch (projectError) {
+      if (
+        requestPendingRef.current === request &&
+        !(projectError instanceof LatitudeRequestCancelledError) &&
+        !quiet
+      ) {
+        setError(errorMessage(projectError));
+      }
+    } finally {
+      if (requestPendingRef.current === request) {
+        requestPendingRef.current = null;
+        if (!quiet) setProjectLoading(false);
+      }
     }
+  }, [api, projectName]);
+
+  useEffect(() => () => {
+    requestPendingRef.current?.controller.abort();
+    requestPendingRef.current = null;
   }, [api, projectName]);
 
   useEffect(() => {
@@ -73,7 +106,9 @@ export function ProjectRoute({
     if (!isFocused) return;
     let appActive = AppState.currentState === 'active';
     const refresh = (fetchRemote = false) => {
-      if (appActive) void loadProject(fetchRemote && tab !== 'code', true);
+      if (appActive) {
+        void loadProject(fetchRemote && tab !== 'code', true, true);
+      }
     };
     refresh(true);
     const refreshInterval = setInterval(() => refresh(false), 2_000);

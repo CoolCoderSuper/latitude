@@ -12,13 +12,13 @@ use axum::{
 use tokio::net::TcpListener;
 use tracing::info;
 
+use crate::project_files::ProjectFileService;
 use crate::terminal::{TerminalSessionManager, root_terminal_cwd};
 
 use super::{
     WorkspaceHealth, WorkspaceHostState,
     files::{
-        WORKSPACE_FILE_WRITE_PATH, WORKSPACE_FILES_PATH, WorkspaceFiles, workspace_file_write,
-        workspace_files,
+        WORKSPACE_FILE_WRITE_PATH, WORKSPACE_FILES_PATH, workspace_file_write, workspace_files,
     },
     process::{WORKSPACE_EXEC_PATH, workspace_exec},
     terminal::{
@@ -45,7 +45,7 @@ pub(crate) async fn run_workspace_host(address: SocketAddr, token: String) -> Re
     let state = WorkspaceHostState {
         token: Arc::from(token),
         terminals: Arc::new(TerminalSessionManager::default()),
-        files: WorkspaceFiles::default(),
+        files: ProjectFileService::default(),
     };
     let router = Router::new()
         .route(WORKSPACE_HEALTH_PATH, get(workspace_health))

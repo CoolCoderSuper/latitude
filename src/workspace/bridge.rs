@@ -52,7 +52,8 @@ impl WorkspaceBridge {
     ) -> Result<WorkspaceProcessOutput> {
         let endpoint = self.endpoint().await?;
         let url = format!("http://{}{}", endpoint.address, WORKSPACE_EXEC_PATH);
-        let response = reqwest::Client::new()
+        let response = self
+            .client
             .post(url)
             .bearer_auth(&endpoint.token)
             .json(&request)

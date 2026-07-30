@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   LatitudeApiError,
   LatitudePublicApi,
+  LatitudeRequestCancelledError,
   normalizeBaseUrl,
 } from './api';
 import { DEFAULT_BASE_URL } from './constants';
@@ -65,7 +66,10 @@ export function AppContent() {
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const activeBaseUrlRef = useRef<string | null>(null);
-  const projectsRequestPendingRef = useRef<string | null>(null);
+  const projectsRequestPendingRef = useRef<{
+    controller: AbortController;
+    key: string;
+  } | null>(null);
 
   const api = useMemo(
     () => new LatitudePublicApi(session?.baseUrl ?? '', session?.token),
@@ -76,20 +80,35 @@ export function AppContent() {
     activeBaseUrlRef.current = session?.baseUrl ?? null;
   }, [session]);
 
-  const loadProjects = useCallback(async (fetchRemote = false, quiet = false) => {
-    if (!session || projectsRequestPendingRef.current === session.baseUrl) {
+  const loadProjects = useCallback(async (
+    fetchRemote = false,
+    quiet = false,
+    autoRefresh = false,
+  ) => {
+    if (!session || projectsRequestPendingRef.current?.key === session.baseUrl) {
       return;
     }
-    const requestKey = session.baseUrl;
-    projectsRequestPendingRef.current = requestKey;
+    projectsRequestPendingRef.current?.controller.abort();
+    const request = {
+      controller: new AbortController(),
+      key: session.baseUrl,
+    };
+    projectsRequestPendingRef.current = request;
 
     if (!quiet) {
       setProjectsLoading(true);
       setError(null);
     }
     try {
-      const response = await api.projects(fetchRemote);
-      if (activeBaseUrlRef.current === session.baseUrl) {
+      const response = await api.projects(
+        fetchRemote,
+        autoRefresh,
+        request.controller.signal,
+      );
+      if (
+        projectsRequestPendingRef.current === request &&
+        activeBaseUrlRef.current === session.baseUrl
+      ) {
         setProjects(response.projects);
         setRootTerminal(response.root_terminal ?? DEFAULT_ROOT_TERMINAL);
         setRootDesktop(response.root_desktop ?? null);
@@ -106,7 +125,12 @@ export function AppContent() {
         }
       }
     } catch (loadError) {
-      if (activeBaseUrlRef.current !== session.baseUrl || quiet) {
+      if (
+        loadError instanceof LatitudeRequestCancelledError ||
+        projectsRequestPendingRef.current !== request ||
+        activeBaseUrlRef.current !== session.baseUrl ||
+        quiet
+      ) {
         return;
       }
 
@@ -122,15 +146,20 @@ export function AppContent() {
         setError(errorMessage(loadError));
       }
     } finally {
-      if (projectsRequestPendingRef.current === requestKey) {
+      if (projectsRequestPendingRef.current === request) {
         projectsRequestPendingRef.current = null;
-      }
-      if (!quiet && activeBaseUrlRef.current === session.baseUrl) {
-        setProjectsLoading(false);
-        setBooting(false);
+        if (!quiet && activeBaseUrlRef.current === session.baseUrl) {
+          setProjectsLoading(false);
+          setBooting(false);
+        }
       }
     }
   }, [api, session]);
+
+  useEffect(() => () => {
+    projectsRequestPendingRef.current?.controller.abort();
+    projectsRequestPendingRef.current = null;
+  }, [api]);
 
   useEffect(() => {
     let mounted = true;

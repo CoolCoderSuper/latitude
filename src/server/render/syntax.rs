@@ -273,11 +273,11 @@ fn tokens_from_ranges(ranges: Vec<(Style, &str)>, is_rust: bool) -> Vec<SyntaxTo
 }
 
 fn push_token(tokens: &mut Vec<SyntaxToken>, token: SyntaxToken) {
-    if let Some(previous) = tokens.last_mut() {
-        if previous.kind == token.kind {
-            previous.text.push_str(&token.text);
-            return;
-        }
+    if let Some(previous) = tokens.last_mut()
+        && previous.kind == token.kind
+    {
+        previous.text.push_str(&token.text);
+        return;
     }
 
     tokens.push(token);

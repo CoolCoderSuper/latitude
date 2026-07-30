@@ -9,7 +9,10 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, AppState, ScrollView, Text, TextInput, View } from 'react-native';
 
-import type { LatitudePublicApi } from '../../api';
+import {
+  LatitudeRequestCancelledError,
+  type LatitudePublicApi,
+} from '../../api';
 import { AppButton, EmptyState, InlineNotice, LoadingBlock } from '../../components/ui';
 import { useRefreshControl, useTheme } from '../../theme';
 import type { GitActionPayload, GitDiffResponse, GitFileChange } from '../../types';
@@ -44,6 +47,7 @@ export function DiffPanel({
   const pendingActionKeysRef = useRef<Set<string>>(new Set());
   const actionQueue = useRef<Promise<void>>(Promise.resolve());
   const refreshPending = useRef(false);
+  const refreshControllerRef = useRef<AbortController | null>(null);
   const [message, setMessage] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'success' | 'error'>('success');
@@ -51,21 +55,39 @@ export function DiffPanel({
   const loadDiff = useCallback(async (showLoading = true) => {
     if (refreshPending.current) return;
     refreshPending.current = true;
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
     if (showLoading) {
       setLoading(true);
       setNotice(null);
     }
     try {
-      setDiff(await api.diff(projectName));
+      const response = await api.diff(projectName, controller.signal);
+      if (refreshControllerRef.current === controller) {
+        setDiff(response);
+      }
     } catch (diffError) {
-      if (showLoading) {
+      if (
+        refreshControllerRef.current === controller &&
+        !(diffError instanceof LatitudeRequestCancelledError) &&
+        showLoading
+      ) {
         setNotice(errorMessage(diffError));
         setNoticeTone('error');
       }
     } finally {
-      refreshPending.current = false;
-      if (showLoading) setLoading(false);
+      if (refreshControllerRef.current === controller) {
+        refreshControllerRef.current = null;
+        refreshPending.current = false;
+        if (showLoading) setLoading(false);
+      }
     }
+  }, [api, projectName]);
+
+  useEffect(() => () => {
+    refreshControllerRef.current?.abort();
+    refreshControllerRef.current = null;
+    refreshPending.current = false;
   }, [api, projectName]);
 
   useEffect(() => {

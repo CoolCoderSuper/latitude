@@ -1194,7 +1194,6 @@ mod tests {
                     },
                 ],
             }],
-            ..CatalogSeed::default()
         }
     }
 

@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
@@ -8,7 +8,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fff_search::{FFFMode, FilePicker, FilePickerOptions, SharedFilePicker, SharedFrecency};
 use hmac::{Hmac, Mac};
 use rand::random;
 use reqwest::Client;
@@ -19,6 +18,7 @@ use crate::{
     config::{BootConfig, ConfigError},
     desktop::{ManagedDesktopManager, NativeSessionBridge},
     device::current_hostname,
+    project_files::ProjectFileService,
     server::GitStatusSummary,
     storage::CatalogStore,
     terminal::TerminalSessionManager,
@@ -54,7 +54,7 @@ struct AppStateInner {
     native_session_bridge: Option<NativeSessionBridge>,
     workspace_bridge: Option<WorkspaceBridge>,
     terminal_sessions: Arc<TerminalSessionManager>,
-    file_search_pickers: Mutex<HashMap<PathBuf, SharedFilePicker>>,
+    project_files: ProjectFileService,
     project_git_statuses: RwLock<HashMap<String, GitStatusSummary>>,
     git_refresh_lock: Arc<AsyncMutex<()>>,
     git_refresh_generation: AtomicU64,
@@ -93,7 +93,7 @@ impl AppState {
                 native_session_bridge,
                 workspace_bridge,
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
-                file_search_pickers: Mutex::new(HashMap::new()),
+                project_files: ProjectFileService::default(),
                 project_git_statuses: RwLock::new(HashMap::new()),
                 git_refresh_lock: Arc::new(AsyncMutex::new(())),
                 git_refresh_generation: AtomicU64::new(0),
@@ -132,33 +132,8 @@ impl AppState {
         &self.inner.catalog
     }
 
-    pub fn file_search_picker(&self, project_dir: &Path) -> Result<SharedFilePicker, String> {
-        let project_dir = std::fs::canonicalize(project_dir).map_err(|error| error.to_string())?;
-        let mut pickers = self
-            .inner
-            .file_search_pickers
-            .lock()
-            .map_err(|_| "file search index lock was poisoned".to_string())?;
-        if let Some(picker) = pickers.get(&project_dir) {
-            return Ok(picker.clone());
-        }
-
-        let picker = SharedFilePicker::default();
-        FilePicker::new_with_shared_state(
-            picker.clone(),
-            SharedFrecency::default(),
-            FilePickerOptions {
-                base_path: project_dir.to_string_lossy().into_owned(),
-                enable_mmap_cache: true,
-                enable_content_indexing: true,
-                mode: FFFMode::Ai,
-                watch: true,
-                ..Default::default()
-            },
-        )
-        .map_err(|error| error.to_string())?;
-        pickers.insert(project_dir, picker.clone());
-        Ok(picker)
+    pub(crate) fn project_files(&self) -> &ProjectFileService {
+        &self.inner.project_files
     }
 
     pub fn public_auth_cookie_value(&self, password: &str) -> String {
@@ -280,7 +255,7 @@ fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     let bytes = value.as_bytes();
-    if bytes.len() % 2 != 0 {
+    if !bytes.len().is_multiple_of(2) {
         return None;
     }
 

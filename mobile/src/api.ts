@@ -20,6 +20,7 @@ import type {
 } from './types';
 
 const PUBLIC_API_PREFIX = '/__latitude/api';
+const REQUEST_TIMEOUT_MS = 45_000;
 
 export class LatitudeApiError extends Error {
   status: number;
@@ -28,6 +29,13 @@ export class LatitudeApiError extends Error {
     super(message);
     this.name = 'LatitudeApiError';
     this.status = status;
+  }
+}
+
+export class LatitudeRequestCancelledError extends Error {
+  constructor() {
+    super('Latitude request was cancelled.');
+    this.name = 'LatitudeRequestCancelledError';
   }
 }
 
@@ -83,15 +91,30 @@ export class LatitudePublicApi {
     });
   }
 
-  async projects(fetchRemote = false): Promise<ProjectListResponse> {
-    const query = fetchRemote ? '?fetch=1' : '';
-    return this.get<ProjectListResponse>(`${PUBLIC_API_PREFIX}/projects${query}`);
+  async projects(
+    fetchRemote = false,
+    autoRefresh = false,
+    signal?: AbortSignal,
+  ): Promise<ProjectListResponse> {
+    const query = refreshQuery(fetchRemote, autoRefresh);
+    return this.get<ProjectListResponse>(
+      `${PUBLIC_API_PREFIX}/projects${query}`,
+      true,
+      signal,
+    );
   }
 
-  async project(name: string, fetchRemote = false): Promise<ProjectDetail> {
-    const query = fetchRemote ? '?fetch=1' : '';
+  async project(
+    name: string,
+    fetchRemote = false,
+    autoRefresh = false,
+    signal?: AbortSignal,
+  ): Promise<ProjectDetail> {
+    const query = refreshQuery(fetchRemote, autoRefresh);
     return this.get<ProjectDetail>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(name)}${query}`,
+      true,
+      signal,
     );
   }
 
@@ -127,9 +150,11 @@ export class LatitudePublicApi {
     );
   }
 
-  async diff(projectName: string): Promise<GitDiffResponse> {
+  async diff(projectName: string, signal?: AbortSignal): Promise<GitDiffResponse> {
     return this.get<GitDiffResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff`,
+      true,
+      signal,
     );
   }
 
@@ -252,8 +277,12 @@ export class LatitudePublicApi {
     );
   }
 
-  private async get<T>(path: string, includeAuth = true): Promise<T> {
-    return this.request<T>(path, { method: 'GET', includeAuth });
+  private async get<T>(
+    path: string,
+    includeAuth = true,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return this.request<T>(path, { method: 'GET', includeAuth, signal });
   }
 
   private async request<T>(
@@ -264,7 +293,11 @@ export class LatitudePublicApi {
       throw new LatitudeApiError(0, 'Latitude URL is required.');
     }
 
-    const includeAuth = options.includeAuth ?? true;
+    const {
+      includeAuth = true,
+      signal: externalSignal,
+      ...requestOptions
+    } = options;
     const headers: Record<string, string> = {
       Accept: 'application/json',
       ...(options.headers as Record<string, string> | undefined),
@@ -275,30 +308,64 @@ export class LatitudePublicApi {
     }
 
     const url = absoluteUrl(this.baseUrl, path);
-    let response: Response;
+    const controller = new AbortController();
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort();
+    if (externalSignal?.aborted) {
+      controller.abort();
+    } else {
+      externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    }
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, REQUEST_TIMEOUT_MS);
+
     try {
-      response = await fetch(url, {
-        ...options,
+      const response = await fetch(url, {
+        ...requestOptions,
         headers,
+        signal: controller.signal,
       });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new LatitudeApiError(
+          response.status,
+          payload && typeof payload.error === 'string'
+            ? payload.error
+            : `Latitude returned ${response.status}.`,
+        );
+      }
+      return payload as T;
     } catch (error) {
+      if (error instanceof LatitudeApiError) {
+        throw error;
+      }
+      if (timedOut) {
+        throw new LatitudeApiError(
+          0,
+          `Latitude did not respond within ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
+        );
+      }
+      if (externalSignal?.aborted || controller.signal.aborted) {
+        throw new LatitudeRequestCancelledError();
+      }
       const reason = error instanceof Error ? error.message : 'Could not reach Latitude.';
       throw new LatitudeApiError(
         0,
         `Could not reach ${this.baseUrl}. ${reason}`,
       );
+    } finally {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener('abort', abortFromCaller);
     }
-
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new LatitudeApiError(
-        response.status,
-        payload && typeof payload.error === 'string'
-          ? payload.error
-          : `Latitude returned ${response.status}.`,
-      );
-    }
-
-    return payload as T;
   }
+}
+
+function refreshQuery(fetchRemote: boolean, autoRefresh: boolean): string {
+  const params = new URLSearchParams();
+  if (fetchRemote) params.set('fetch', '1');
+  if (autoRefresh) params.set('refresh', 'auto');
+  const query = params.toString();
+  return query ? `?${query}` : '';
 }

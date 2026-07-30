@@ -1,7 +1,7 @@
 use axum::{
     Json,
     body::Body,
-    http::{Response, StatusCode, header},
+    http::{Method, Response, StatusCode, header},
     response::IntoResponse,
 };
 use serde::Serialize;
@@ -79,6 +79,32 @@ pub(super) fn plain_response(status: StatusCode, body: impl Into<Body>) -> Respo
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(body.into())
         .unwrap_or_else(internal_response)
+}
+
+pub(super) fn html_response(method: &Method, html: String) -> Response<Body> {
+    html_status_response(StatusCode::OK, method, html)
+}
+
+pub(super) fn html_status_response(
+    status: StatusCode,
+    method: &Method,
+    html: String,
+) -> Response<Body> {
+    let bytes = html.into_bytes();
+    let builder = Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CONTENT_LENGTH, bytes.len());
+
+    if method == Method::HEAD {
+        builder
+            .body(Body::empty())
+            .unwrap_or_else(internal_response)
+    } else {
+        builder
+            .body(Body::from(bytes))
+            .unwrap_or_else(internal_response)
+    }
 }
 
 pub(super) fn internal_response(_: axum::http::Error) -> Response<Body> {

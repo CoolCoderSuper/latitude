@@ -148,7 +148,10 @@ async fn run_git_command_owned_with_execution(
         (output.status_code, output.stdout, output.stderr)
     } else {
         let mut command = Command::new("git");
-        command.args(&command_args).current_dir(project_dir);
+        command
+            .args(&command_args)
+            .current_dir(project_dir)
+            .kill_on_drop(true);
         let output = match timeout(GIT_COMMAND_TIMEOUT, command.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(error)) => {

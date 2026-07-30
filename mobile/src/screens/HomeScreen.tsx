@@ -55,7 +55,11 @@ export function HomeScreen({
   onOpenProject: (name: string) => void;
   onOpenRootTerminal: () => void;
   onSetWorktreeArchived: (name: string, archived: boolean) => void | Promise<void>;
-  onRefresh: (fetchRemote?: boolean, quiet?: boolean) => void | Promise<void>;
+  onRefresh: (
+    fetchRemote?: boolean,
+    quiet?: boolean,
+    autoRefresh?: boolean,
+  ) => void | Promise<void>;
   onSwitchServer: (baseUrl: string) => void | Promise<void>;
   projects: ProjectSummary[];
   rootDesktop: RootDesktopLink | null;
@@ -81,7 +85,7 @@ export function HomeScreen({
     if (!isFocused) return;
     let appActive = AppState.currentState === 'active';
     const refresh = (fetchRemote = false) => {
-      if (appActive) void onRefresh(fetchRemote, true);
+      if (appActive) void onRefresh(fetchRemote, true, true);
     };
     refresh(true);
     const refreshInterval = setInterval(() => refresh(false), 2_000);

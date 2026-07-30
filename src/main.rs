@@ -3,6 +3,8 @@ mod config;
 mod desktop;
 mod desktop_webrtc;
 mod device;
+mod http_stream;
+mod project_files;
 mod server;
 mod state;
 mod storage;

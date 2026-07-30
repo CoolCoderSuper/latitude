@@ -1,23 +1,16 @@
-use std::{path::Path, time::Duration};
-
 use axum::{
     Json,
     body::{Body, to_bytes},
     extract::State,
-    http::{HeaderValue, Method, Request, Response, StatusCode, header},
+    http::{Method, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
-use tokio::fs;
 use tracing::error;
 
 use crate::{
-    config::{
-        ApplicationConfig, ApplicationTarget, BootConfig, DeploymentShareConfig, PageFormat,
-        ProjectConfig, current_unix_timestamp, is_binary_document_media_type,
-    },
+    config::{BootConfig, DeploymentShareConfig, ProjectConfig, current_unix_timestamp},
     desktop::desktop_info_response,
     state::AppState,
-    storage::PageContent,
 };
 
 use super::super::{
@@ -27,7 +20,7 @@ use super::super::{
         request_bearer_token,
     },
     constants::{
-        AUTH_COOKIE_MAX_AGE_SECONDS, AUTH_COOKIE_NAME, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
+        AUTH_COOKIE_MAX_AGE_SECONDS, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
         FILES_ROUTE_SEGMENT, MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES,
         PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
     },
@@ -36,23 +29,21 @@ use super::super::{
         GitCommandExecution, collect_project_diff, collect_project_file_diff,
         collect_project_git_commit, collect_project_git_history, handle_git_action_request,
     },
-    page::{page_theme_from_headers, render_project_page_content},
-    paths::{
-        ProjectPath, is_hop_by_hop_header, join_upstream_url, resolve_project_path,
-        sanitized_relative_path, split_project_path,
-    },
+    paths::{ProjectPath, split_project_path},
     render::{
         render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
         render_project_files, render_project_git_commit, render_project_git_history,
         render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
         render_server_home, render_share_login,
     },
-    response::{internal_response, json_error, plain_response},
+    response::{html_response, html_status_response, json_error, plain_response},
     terminal_api::{
         execute_root_terminal_command, execute_terminal_command, parse_terminal_command_payload,
         root_terminal_info_response, terminal_info_response,
     },
 };
+
+use super::deployment::{DeploymentRequest, serve_deployment_target};
 
 pub(in crate::server) async fn public_entry(
     State(state): State<AppState>,
@@ -163,12 +154,14 @@ pub(in crate::server) async fn public_entry(
     serve_deployment_target(
         state,
         req,
-        &project,
-        &app,
-        remainder.as_str(),
-        &mount_path,
-        None,
-        &device_hostname,
+        DeploymentRequest {
+            project: &project,
+            deployment: &app,
+            remainder: remainder.as_str(),
+            mount_path: &mount_path,
+            extra_excluded_cookie_name: None,
+            device_hostname: &device_hostname,
+        },
     )
     .await
 }
@@ -243,12 +236,14 @@ async fn serve_shared_deployment(
     serve_deployment_target(
         state,
         req,
-        &project,
-        &app,
-        &share_path.remainder,
-        &share_path.mount_path,
-        share_cookie_name.as_deref(),
-        device_hostname,
+        DeploymentRequest {
+            project: &project,
+            deployment: &app,
+            remainder: &share_path.remainder,
+            mount_path: &share_path.mount_path,
+            extra_excluded_cookie_name: share_cookie_name.as_deref(),
+            device_hostname,
+        },
     )
     .await
 }
@@ -392,376 +387,6 @@ fn split_share_path(path: &str) -> Option<SharePath> {
         token,
         remainder,
     })
-}
-
-async fn serve_deployment_target(
-    state: AppState,
-    req: Request<Body>,
-    project: &ProjectConfig,
-    app: &ApplicationConfig,
-    remainder: &str,
-    mount_path: &str,
-    extra_excluded_cookie_name: Option<&str>,
-    device_hostname: &str,
-) -> Response<Body> {
-    match &app.target {
-        ApplicationTarget::ReverseProxy {
-            upstream,
-            strip_prefix,
-        } => {
-            proxy_request(
-                state,
-                req,
-                upstream,
-                *strip_prefix,
-                remainder,
-                mount_path,
-                extra_excluded_cookie_name,
-            )
-            .await
-        }
-        ApplicationTarget::Static {
-            root,
-            index_file,
-            spa_fallback,
-        } => {
-            let root = resolve_project_path(&project.project_dir, root);
-            serve_static(
-                req,
-                &project.name,
-                &app.name,
-                &root,
-                index_file,
-                *spa_fallback,
-                remainder,
-                device_hostname,
-            )
-            .await
-        }
-        ApplicationTarget::Page { .. } => {
-            match state
-                .catalog()
-                .get_page_content(&project.name, &app.name)
-                .await
-            {
-                Ok(Some(content)) => {
-                    serve_page(req, &project.name, content, remainder, device_hostname).await
-                }
-                Ok(None) => plain_response(
-                    StatusCode::NOT_FOUND,
-                    format!(
-                        "page deployment '{}' was not found in project '{}'\n",
-                        app.name, project.name
-                    ),
-                ),
-                Err(error) => json_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("page content could not be read: {error}"),
-                ),
-            }
-        }
-    }
-}
-
-async fn proxy_request(
-    state: AppState,
-    req: Request<Body>,
-    upstream: &str,
-    strip_prefix: bool,
-    remainder: &str,
-    mount_path: &str,
-    extra_excluded_cookie_name: Option<&str>,
-) -> Response<Body> {
-    let (parts, body) = req.into_parts();
-    let forward_path = if strip_prefix {
-        remainder.to_string()
-    } else {
-        format!("{}{}", mount_path.trim_end_matches('/'), remainder)
-    };
-
-    let target_url = match join_upstream_url(upstream, &forward_path, parts.uri.query()) {
-        Ok(url) => url,
-        Err(error) => {
-            return json_error(
-                StatusCode::BAD_GATEWAY,
-                format!("upstream URL could not be built: {error}"),
-            );
-        }
-    };
-
-    let body_bytes = match to_bytes(body, usize::MAX).await {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return json_error(
-                StatusCode::BAD_REQUEST,
-                format!("request body could not be read: {error}"),
-            );
-        }
-    };
-
-    let mut builder = state.client().request(parts.method, target_url);
-    for (name, value) in &parts.headers {
-        if is_hop_by_hop_header(name.as_str()) || *name == header::HOST {
-            continue;
-        }
-        if *name == header::COOKIE {
-            let excluded_cookie_names = [Some(AUTH_COOKIE_NAME), extra_excluded_cookie_name];
-            if let Some(filtered_cookie) =
-                filtered_cookie_header_except(value, &excluded_cookie_names)
-            {
-                builder = builder.header(name, filtered_cookie);
-            }
-            continue;
-        }
-        builder = builder.header(name, value);
-    }
-
-    match builder
-        .timeout(Duration::from_secs(60))
-        .body(body_bytes)
-        .send()
-        .await
-    {
-        Ok(response) => {
-            let status = response.status();
-            let mut response_builder = Response::builder().status(status);
-
-            for (name, value) in response.headers() {
-                if is_hop_by_hop_header(name.as_str()) {
-                    continue;
-                }
-                response_builder = response_builder.header(name, value);
-            }
-
-            match response.bytes().await {
-                Ok(bytes) => response_builder
-                    .body(Body::from(bytes))
-                    .unwrap_or_else(internal_response),
-                Err(error) => json_error(
-                    StatusCode::BAD_GATEWAY,
-                    format!("upstream body could not be read: {error}"),
-                ),
-            }
-        }
-        Err(error) => json_error(
-            StatusCode::BAD_GATEWAY,
-            format!("upstream request failed: {error}"),
-        ),
-    }
-}
-
-fn filtered_cookie_header_except(
-    value: &HeaderValue,
-    excluded_names: &[Option<&str>],
-) -> Option<String> {
-    let raw = value.to_str().ok()?;
-    let cookies = raw
-        .split(';')
-        .filter_map(|cookie| {
-            let cookie = cookie.trim();
-            let (name, _) = cookie.split_once('=')?;
-            let should_exclude = excluded_names
-                .iter()
-                .flatten()
-                .any(|excluded_name| name.trim() == *excluded_name);
-            (!should_exclude).then(|| cookie.to_string())
-        })
-        .collect::<Vec<_>>();
-
-    if cookies.is_empty() {
-        None
-    } else {
-        Some(cookies.join("; "))
-    }
-}
-
-async fn serve_static(
-    req: Request<Body>,
-    project_name: &str,
-    deployment_name: &str,
-    root: &Path,
-    index_file: &str,
-    spa_fallback: bool,
-    remainder: &str,
-    device_hostname: &str,
-) -> Response<Body> {
-    if req.method() != Method::GET && req.method() != Method::HEAD {
-        return plain_response(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "static deployments support GET and HEAD\n",
-        );
-    }
-
-    if remainder == "/"
-        && !page_raw_requested(req.uri().query())
-        && let Some(media_type) = static_document_media_type(index_file)
-    {
-        return html_response(
-            req.method(),
-            render_project_page_content(
-                project_name,
-                Some(deployment_name),
-                PageFormat::Binary,
-                Some(&media_type),
-                "",
-                page_theme_from_headers(req.headers()),
-                device_hostname,
-            ),
-        );
-    }
-
-    let relative_path = match sanitized_relative_path(remainder) {
-        Some(path) => path,
-        None => return plain_response(StatusCode::BAD_REQUEST, "invalid static path\n"),
-    };
-
-    let mut candidate = root.join(relative_path);
-    match fs::metadata(&candidate).await {
-        Ok(metadata) if metadata.is_dir() => {
-            candidate = candidate.join(index_file);
-        }
-        Ok(_) => {}
-        Err(_) if spa_fallback => {
-            candidate = root.join(index_file);
-        }
-        Err(_) => return plain_response(StatusCode::NOT_FOUND, "file not found\n"),
-    }
-
-    let metadata = match fs::metadata(&candidate).await {
-        Ok(metadata) if metadata.is_file() => metadata,
-        _ if spa_fallback => match fs::metadata(root.join(index_file)).await {
-            Ok(metadata) if metadata.is_file() => {
-                candidate = root.join(index_file);
-                metadata
-            }
-            _ => return plain_response(StatusCode::NOT_FOUND, "file not found\n"),
-        },
-        _ => return plain_response(StatusCode::NOT_FOUND, "file not found\n"),
-    };
-
-    let content_type = mime_guess::from_path(&candidate)
-        .first_or_octet_stream()
-        .to_string();
-
-    if req.method() == Method::HEAD {
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header(header::CONTENT_LENGTH, metadata.len())
-            .body(Body::empty())
-            .unwrap_or_else(internal_response);
-    }
-
-    match fs::read(&candidate).await {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, content_type)
-            .header(header::CONTENT_LENGTH, bytes.len())
-            .body(Body::from(bytes))
-            .unwrap_or_else(internal_response),
-        Err(error) => json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("file could not be read: {error}"),
-        ),
-    }
-}
-
-async fn serve_page(
-    req: Request<Body>,
-    project_name: &str,
-    content: PageContent,
-    remainder: &str,
-    device_hostname: &str,
-) -> Response<Body> {
-    if req.method() != Method::GET && req.method() != Method::HEAD {
-        return plain_response(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "page deployments support GET and HEAD\n",
-        );
-    }
-
-    if remainder != "/" {
-        return plain_response(
-            StatusCode::NOT_FOUND,
-            "page deployments only serve one document\n",
-        );
-    }
-
-    if content.format == PageFormat::Binary && page_raw_requested(req.uri().query()) {
-        return binary_document_response(
-            req.method(),
-            content.media_type.as_deref(),
-            content.bytes,
-        );
-    }
-
-    let rendered_content = match content.format {
-        PageFormat::Binary => String::new(),
-        PageFormat::Html | PageFormat::Markdown => match String::from_utf8(content.bytes) {
-            Ok(content) => content,
-            Err(error) => {
-                return plain_response(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("page content could not be decoded as UTF-8: {error}\n"),
-                );
-            }
-        },
-    };
-
-    html_response(
-        req.method(),
-        render_project_page_content(
-            project_name,
-            content.title.as_deref(),
-            content.format,
-            content.media_type.as_deref(),
-            &rendered_content,
-            page_theme_from_headers(req.headers()),
-            device_hostname,
-        ),
-    )
-}
-
-fn binary_document_response(
-    method: &Method,
-    media_type: Option<&str>,
-    bytes: Vec<u8>,
-) -> Response<Body> {
-    let Some(media_type) = media_type else {
-        return plain_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "binary page media_type is missing\n",
-        );
-    };
-    let builder = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, media_type)
-        .header(header::CONTENT_LENGTH, bytes.len());
-
-    if method == Method::HEAD {
-        builder
-            .body(Body::empty())
-            .unwrap_or_else(internal_response)
-    } else {
-        builder
-            .body(Body::from(bytes))
-            .unwrap_or_else(internal_response)
-    }
-}
-
-fn page_raw_requested(query: Option<&str>) -> bool {
-    query.is_some_and(|query| {
-        url::form_urlencoded::parse(query.as_bytes()).any(|(name, value)| {
-            name.eq_ignore_ascii_case("raw") && value != "0" && !value.eq_ignore_ascii_case("false")
-        })
-    })
-}
-
-fn static_document_media_type(index_file: &str) -> Option<String> {
-    mime_guess::from_path(index_file)
-        .first()
-        .map(|mime| mime.essence_str().to_string())
-        .filter(|media_type| is_binary_document_media_type(media_type))
 }
 
 async fn serve_project_home(
@@ -1141,26 +766,4 @@ fn root_desktop_remainder(path: &str) -> Option<&str> {
             if remainder.is_empty() { "/" } else { remainder }
         },
     )
-}
-
-fn html_response(method: &Method, html: String) -> Response<Body> {
-    html_status_response(StatusCode::OK, method, html)
-}
-
-fn html_status_response(status: StatusCode, method: &Method, html: String) -> Response<Body> {
-    let bytes = html.into_bytes();
-    let builder = Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::CONTENT_LENGTH, bytes.len());
-
-    if method == Method::HEAD {
-        builder
-            .body(Body::empty())
-            .unwrap_or_else(internal_response)
-    } else {
-        builder
-            .body(Body::from(bytes))
-            .unwrap_or_else(internal_response)
-    }
 }

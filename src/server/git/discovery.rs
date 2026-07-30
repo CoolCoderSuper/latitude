@@ -194,15 +194,15 @@ fn parse_worktree_porcelain(output: &[u8]) -> Vec<DiscoveredWorktree> {
             if let Some(worktree) = current.as_mut() {
                 worktree.head = head.to_string();
             }
-        } else if let Some(branch) = field.strip_prefix("branch ") {
-            if let Some(worktree) = current.as_mut() {
-                worktree.branch = Some(
-                    branch
-                        .strip_prefix("refs/heads/")
-                        .unwrap_or(branch)
-                        .to_string(),
-                );
-            }
+        } else if let Some(branch) = field.strip_prefix("branch ")
+            && let Some(worktree) = current.as_mut()
+        {
+            worktree.branch = Some(
+                branch
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(branch)
+                    .to_string(),
+            );
         }
     }
     if let Some(worktree) = current {

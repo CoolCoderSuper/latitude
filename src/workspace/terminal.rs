@@ -46,7 +46,8 @@ impl WorkspaceBridge {
     ) -> Result<Vec<TerminalSessionSummary>> {
         let endpoint = self.endpoint().await?;
         let url = format!("http://{}{}", endpoint.address, WORKSPACE_TERMINALS_PATH);
-        let response = reqwest::Client::new()
+        let response = self
+            .client
             .get(url)
             .bearer_auth(&endpoint.token)
             .query(&WorkspaceTerminalQuery {
@@ -69,7 +70,8 @@ impl WorkspaceBridge {
     ) -> Result<TerminalSessionSummary> {
         let endpoint = self.endpoint().await?;
         let url = format!("http://{}{}", endpoint.address, WORKSPACE_TERMINALS_PATH);
-        let response = reqwest::Client::new()
+        let response = self
+            .client
             .post(url)
             .bearer_auth(&endpoint.token)
             .json(&WorkspaceTerminalRequest {
@@ -97,7 +99,8 @@ impl WorkspaceBridge {
             "http://{}{}/{}",
             endpoint.address, WORKSPACE_TERMINALS_PATH, session
         );
-        let response = reqwest::Client::new()
+        let response = self
+            .client
             .request(Method::DELETE, url)
             .bearer_auth(&endpoint.token)
             .query(&WorkspaceTerminalQuery {

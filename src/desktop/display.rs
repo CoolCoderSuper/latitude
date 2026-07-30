@@ -214,8 +214,10 @@ fn platform_desktop_resolutions(screen_id: Option<&str>) -> Vec<DesktopResolutio
     use windows_sys::core::PCWSTR;
 
     unsafe fn current_mode(device: PCWSTR) -> Option<DEVMODEW> {
-        let mut mode = DEVMODEW::default();
-        mode.dmSize = size_of::<DEVMODEW>() as u16;
+        let mut mode = DEVMODEW {
+            dmSize: size_of::<DEVMODEW>() as u16,
+            ..DEVMODEW::default()
+        };
         let ok = unsafe { EnumDisplaySettingsW(device, ENUM_CURRENT_SETTINGS, &mut mode) };
         (ok != 0).then_some(mode)
     }
@@ -231,8 +233,10 @@ fn platform_desktop_resolutions(screen_id: Option<&str>) -> Vec<DesktopResolutio
     let mut mode_index = 0_u32;
 
     loop {
-        let mut mode = DEVMODEW::default();
-        mode.dmSize = size_of::<DEVMODEW>() as u16;
+        let mut mode = DEVMODEW {
+            dmSize: size_of::<DEVMODEW>() as u16,
+            ..DEVMODEW::default()
+        };
         let ok = unsafe { EnumDisplaySettingsW(device, mode_index, &mut mode) };
         if ok == 0 {
             break;
@@ -296,8 +300,10 @@ fn platform_set_desktop_resolution(
         .as_ref()
         .map(|name| name.as_ptr())
         .unwrap_or_else(null);
-    let mut mode = DEVMODEW::default();
-    mode.dmSize = size_of::<DEVMODEW>() as u16;
+    let mut mode = DEVMODEW {
+        dmSize: size_of::<DEVMODEW>() as u16,
+        ..DEVMODEW::default()
+    };
 
     let current_ok = unsafe { EnumDisplaySettingsW(device, ENUM_CURRENT_SETTINGS, &mut mode) };
     if current_ok == 0 {

@@ -680,7 +680,7 @@ mod tests {
         let mut summary = GitStatusSummary::default();
         let untracked = apply_porcelain_v2_status(
             &mut summary,
-            b"# branch.oid abc\0# branch.ab +3 -2\01 .M N... tracked.txt\0? new.txt\0",
+            b"# branch.oid abc\0# branch.ab +3 -2\x001 .M N... tracked.txt\0? new.txt\0",
         );
 
         assert!(summary.dirty);

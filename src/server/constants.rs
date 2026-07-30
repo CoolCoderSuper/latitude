@@ -31,7 +31,6 @@ pub(super) const PUBLIC_API_PROJECT_GIT_HISTORY_PATH: &str =
 pub(super) const PUBLIC_API_PROJECT_GIT_COMMIT_PATH: &str =
     "/__latitude/api/projects/{project}/diff/history/{hash}";
 pub(super) const PUBLIC_API_PROJECT_FILES_PATH: &str = "/__latitude/api/projects/{project}/files";
-pub(super) const MAX_FILE_EDITOR_BYTES: usize = 5 * 1024 * 1024;
 pub(super) const PUBLIC_API_PROJECT_TERMINAL_PATH: &str =
     "/__latitude/api/projects/{project}/terminal";
 pub(super) const PUBLIC_API_PROJECT_TERMINAL_SESSIONS_PATH: &str =

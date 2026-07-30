@@ -1,4 +1,5 @@
 mod api;
+mod deployment;
 mod models;
 mod serve;
 
@@ -113,6 +114,26 @@ fn git_command_execution(query: Option<&str>) -> GitCommandExecution {
 }
 
 #[cfg(test)]
+pub(super) use api::ShareUiForm;
+pub(super) use api::{
+    get_public_login, post_public_login, public_api_create_root_terminal_session,
+    public_api_create_share, public_api_create_terminal_session,
+    public_api_delete_root_terminal_session, public_api_delete_share,
+    public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
+    public_api_get_project_git_commit, public_api_get_project_git_history,
+    public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
+    public_api_list_root_terminal_sessions, public_api_list_shares,
+    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
+    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
+    public_api_session, public_root_terminal_ws, public_terminal_ws, public_ui_archive_project,
+    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
+};
+pub(super) use serve::public_entry;
+
+#[cfg(test)]
+pub(super) use models::public_project_detail;
+
+#[cfg(test)]
 mod tests {
     use super::{GitCommandExecution, git_command_execution};
 
@@ -132,23 +153,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(test)]
-pub(super) use api::ShareUiForm;
-pub(super) use api::{
-    get_public_login, post_public_login, public_api_create_root_terminal_session,
-    public_api_create_share, public_api_create_terminal_session,
-    public_api_delete_root_terminal_session, public_api_delete_share,
-    public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
-    public_api_get_project_git_commit, public_api_get_project_git_history,
-    public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
-    public_api_list_root_terminal_sessions, public_api_list_shares,
-    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
-    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
-    public_api_session, public_root_terminal_ws, public_terminal_ws, public_ui_archive_project,
-    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
-};
-pub(super) use serve::public_entry;
-
-#[cfg(test)]
-pub(super) use models::public_project_detail;

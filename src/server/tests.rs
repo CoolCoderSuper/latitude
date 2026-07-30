@@ -130,6 +130,17 @@ fn seed_static(name: &str, root: PathBuf, index_file: &str) -> SeedApplicationCo
     }
 }
 
+fn seed_reverse_proxy(name: &str, upstream: String) -> SeedApplicationConfig {
+    SeedApplicationConfig {
+        name: name.to_string(),
+        enabled: true,
+        target: SeedApplicationTarget::ReverseProxy {
+            upstream,
+            strip_prefix: true,
+        },
+    }
+}
+
 #[test]
 fn splits_project_home_and_deployment_paths() {
     assert_eq!(
@@ -619,6 +630,72 @@ fn joins_upstream_url_with_base_path() {
     assert_eq!(joined, "http://127.0.0.1:3000/base/hello?a=1");
 }
 
+#[tokio::test]
+async fn reverse_proxy_streams_upstream_chunks_without_waiting_for_completion() {
+    use futures_util::StreamExt;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        sync::oneshot,
+        time::{Duration, timeout},
+    };
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (release_tail_tx, release_tail_rx) = oneshot::channel();
+    let upstream = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0_u8; 1024];
+        let _ = socket.read(&mut request).await.unwrap();
+        socket
+            .write_all(
+                b"HTTP/1.1 200 OK\r\n\
+                  content-type: text/plain\r\n\
+                  transfer-encoding: chunked\r\n\
+                  \r\n\
+                  5\r\nfirst\r\n",
+            )
+            .await
+            .unwrap();
+        release_tail_rx.await.unwrap();
+        socket.write_all(b"6\r\nsecond\r\n0\r\n\r\n").await.unwrap();
+    });
+
+    let config = BootConfig::default();
+    let state = test_state_with_seed(
+        config.clone(),
+        demo_seed(vec![seed_reverse_proxy(
+            "live",
+            format!("http://{address}"),
+        )]),
+    )
+    .await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+    let request = Request::builder()
+        .uri("/demo/live/")
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = public_entry(State(state), request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body().into_data_stream();
+    let first = timeout(Duration::from_secs(1), body.next())
+        .await
+        .expect("the first chunk should not wait for the complete upstream response")
+        .expect("the response should contain a first chunk")
+        .expect("the first chunk should be readable");
+    assert_eq!(first.as_ref(), b"first");
+
+    release_tail_tx.send(()).unwrap();
+    let second = timeout(Duration::from_secs(1), body.next())
+        .await
+        .expect("the released tail should arrive")
+        .expect("the response should contain a second chunk")
+        .expect("the second chunk should be readable");
+    assert_eq!(second.as_ref(), b"second");
+    upstream.await.unwrap();
+}
+
 #[test]
 fn parses_raw_markdown_page_payload() {
     let payload =
@@ -690,7 +767,6 @@ async fn command_config_response_is_boot_only() {
             password: None,
             expires_at: None,
         }],
-        ..CatalogSeed::default()
     };
     let state = test_state_with_seed(BootConfig::default(), seed).await;
 

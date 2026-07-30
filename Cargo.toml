@@ -28,6 +28,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 syntect = "5.3.0"
 thiserror = "2.0"
 tokio = { version = "1.45", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
 tokio-tungstenite = "0.29"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
