@@ -39,6 +39,38 @@ use super::video::{NativeVideoSettings, h264_profile_level_id, request_video_key
 const CONTROL_CHANNEL_LABEL: &str = "latitude-control";
 const POINTER_CHANNEL_LABEL: &str = "latitude-pointer";
 
+#[derive(Clone)]
+struct PointerMoveDispatcher {
+    latest: watch::Sender<Option<(f64, f64)>>,
+}
+
+impl PointerMoveDispatcher {
+    fn new(session_id: u64, view_only: bool) -> Self {
+        let (latest, mut pending) = watch::channel(None);
+        tokio::spawn(async move {
+            while pending.changed().await.is_ok() {
+                let Some((x, y)) = *pending.borrow_and_update() else {
+                    continue;
+                };
+                if view_only {
+                    continue;
+                }
+                if let Err(error) = native_input_controller()
+                    .apply(session_id, NativeDesktopCommand::PointerMove { x, y })
+                    .await
+                {
+                    warn!(%error, "native WebRTC pointer move failed");
+                }
+            }
+        });
+        Self { latest }
+    }
+
+    fn submit(&self, x: f64, y: f64) {
+        self.latest.send_replace(Some((x, y)));
+    }
+}
+
 pub(super) struct NativePeerSession {
     pub(super) peer: Arc<RTCPeerConnection>,
     pub(super) track: Arc<TrackLocalStaticSample>,
@@ -202,6 +234,7 @@ fn install_data_channel_handler(
     view_only: bool,
     video_settings: NativeVideoSettings,
 ) {
+    let pointer_moves = PointerMoveDispatcher::new(session_id, view_only);
     peer.on_data_channel(Box::new(move |channel| {
         let is_control = channel.label() == CONTROL_CHANNEL_LABEL;
         let is_pointer = channel.label() == POINTER_CHANNEL_LABEL;
@@ -213,6 +246,7 @@ fn install_data_channel_handler(
             "native WebRTC data channel accepted"
         );
 
+        let pointer_moves_for_message = pointer_moves.clone();
         if is_control {
             let channel_for_open = Arc::clone(&channel);
             let control_channel_for_open = Arc::clone(&control_channel);
@@ -227,6 +261,7 @@ fn install_data_channel_handler(
         }
 
         channel.on_message(Box::new(move |message| {
+            let pointer_moves = pointer_moves_for_message.clone();
             Box::pin(async move {
                 if !message.is_string {
                     return;
@@ -239,7 +274,11 @@ fn install_data_channel_handler(
                             return;
                         }
                     };
-                if is_pointer && !matches!(&command, NativeDesktopCommand::PointerMove { .. }) {
+                if let NativeDesktopCommand::PointerMove { x, y } = command {
+                    pointer_moves.submit(x, y);
+                    return;
+                }
+                if is_pointer {
                     return;
                 }
                 if matches!(&command, NativeDesktopCommand::Refresh) {

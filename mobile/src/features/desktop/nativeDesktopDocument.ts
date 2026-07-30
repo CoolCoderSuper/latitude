@@ -145,6 +145,8 @@ export function nativeDesktopDocument(
     let frameWidth = 0;
     let frameHeight = 0;
     let videoFrameCallback = null;
+    let pointerMoveFrame = null;
+    let pendingPointerMove = null;
     let autoScale = true;
     let zoomLevel = 1;
     let selectedScreenId =
@@ -330,6 +332,7 @@ export function nativeDesktopDocument(
 
     const sendPointer = (buttons) => {
       if (viewOnly || !controlGranted || !frameWidth || !frameHeight) return;
+      cancelPendingPointerMove();
       const screen = selectedScreen();
       if (!screen) return;
       clampPointer();
@@ -347,20 +350,42 @@ export function nativeDesktopDocument(
       const screen = selectedScreen();
       if (!screen) return;
       clampPointer();
-      const command = {
+      pendingPointerMove = {
         type: 'pointer_move',
         x: (screen.x + pointerX) / frameWidth,
         y: (screen.y + pointerY) / frameHeight,
       };
-      if (pointerChannel && pointerChannel.readyState === 'open') {
-        if (pointerChannel.bufferedAmount < 4096) {
-          pointerChannel.send(JSON.stringify(command));
-        }
-        updateTouchCursor();
+      if (pointerMoveFrame === null) {
+        pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+      }
+      updateTouchCursor();
+    };
+
+    const flushPointerMove = () => {
+      pointerMoveFrame = null;
+      if (!pendingPointerMove || viewOnly || !controlGranted) {
+        pendingPointerMove = null;
         return;
       }
-      send(command);
-      updateTouchCursor();
+      if (pointerChannel && pointerChannel.readyState === 'open') {
+        if (pointerChannel.bufferedAmount < 256) {
+          pointerChannel.send(JSON.stringify(pendingPointerMove));
+          pendingPointerMove = null;
+        }
+      } else if (send(pendingPointerMove)) {
+        pendingPointerMove = null;
+      }
+      if (pendingPointerMove !== null) {
+        pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+      }
+    };
+
+    const cancelPendingPointerMove = () => {
+      if (pointerMoveFrame !== null) {
+        window.cancelAnimationFrame(pointerMoveFrame);
+        pointerMoveFrame = null;
+      }
+      pendingPointerMove = null;
     };
 
     const clickPointer = () => {

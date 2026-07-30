@@ -30,7 +30,7 @@ pub(super) const TERMINAL_VIEWER_SCRIPT_SRC: &str = asset_href!("terminal-viewer
 pub(super) const DESKTOP_VIEWER_STYLE_HREF: &str = "/__latitude/assets/desktop-viewer.css?v=3";
 pub(super) const DESKTOP_VIEWER_SCRIPT_SRC: &str = asset_href!("desktop-viewer.js");
 pub(super) const NATIVE_DESKTOP_VIEWER_SCRIPT_SRC: &str =
-    "/__latitude/assets/native-desktop-viewer.js?v=12";
+    "/__latitude/assets/native-desktop-viewer.js?v=13";
 pub(super) const PAGE_STYLE_HREF: &str = asset_href!("page.css");
 
 struct EmbeddedAsset {

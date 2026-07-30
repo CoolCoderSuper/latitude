@@ -1,6 +1,6 @@
 const CONTROL_CHANNEL_LABEL = 'latitude-control';
 const POINTER_CHANNEL_LABEL = 'latitude-pointer';
-const MAX_POINTER_BUFFER_BYTES = 4096;
+const MAX_POINTER_BUFFER_BYTES = 256;
 
 export class NativeDesktopPeer {
   constructor({
@@ -109,9 +109,10 @@ export class NativeDesktopPeer {
 
   sendPointer(command) {
     if (this.pointerChannel && this.pointerChannel.readyState === 'open') {
-      if (this.pointerChannel.bufferedAmount < MAX_POINTER_BUFFER_BYTES) {
-        this.pointerChannel.send(JSON.stringify(command));
+      if (this.pointerChannel.bufferedAmount >= MAX_POINTER_BUFFER_BYTES) {
+        return false;
       }
+      this.pointerChannel.send(JSON.stringify(command));
       return true;
     }
     return this.sendControl(command);

@@ -42,6 +42,7 @@ export const nativeDesktopPeerRuntime = String.raw`
       peerConnection = null;
       controlChannel = null;
       pointerChannel = null;
+      cancelPendingPointerMove();
       if (videoFrameCallback !== null) {
         if (typeof video.cancelVideoFrameCallback === 'function') {
           video.cancelVideoFrameCallback(videoFrameCallback);

@@ -3,7 +3,7 @@ import {
   pointerButtonMask,
   virtualKeyFor,
 } from './native-desktop-input.js?v=2';
-import { NativeDesktopPeer } from './native-desktop-peer.js?v=3';
+import { NativeDesktopPeer } from './native-desktop-peer.js?v=4';
 
 const workspace = document.querySelector('[data-desktop-workspace]');
 
@@ -29,6 +29,8 @@ if (workspace) {
   let frameWidth = 0;
   let frameHeight = 0;
   let videoFrameCallback = null;
+  let pointerMoveFrame = null;
+  let pendingPointerMove = null;
   let selectedScreenId = 'all';
   let autoScale = true;
   let pointerButtons = 0;
@@ -254,6 +256,7 @@ if (workspace) {
     if (!hasControl()) {
       return;
     }
+    cancelPendingPointerMove();
     const point = pointerPosition(event);
     if (point) {
       send({ type: 'pointer', x: point.x, y: point.y, buttons });
@@ -268,7 +271,32 @@ if (workspace) {
     if (!point) {
       return;
     }
-    peerSession?.sendPointer({ type: 'pointer_move', x: point.x, y: point.y });
+    pendingPointerMove = { type: 'pointer_move', x: point.x, y: point.y };
+    if (pointerMoveFrame === null) {
+      pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+    }
+  }
+
+  function flushPointerMove() {
+    pointerMoveFrame = null;
+    if (!pendingPointerMove || !hasControl()) {
+      pendingPointerMove = null;
+      return;
+    }
+    if (peerSession?.sendPointer(pendingPointerMove)) {
+      pendingPointerMove = null;
+    }
+    if (pendingPointerMove !== null) {
+      pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+    }
+  }
+
+  function cancelPendingPointerMove() {
+    if (pointerMoveFrame !== null) {
+      window.cancelAnimationFrame(pointerMoveFrame);
+      pointerMoveFrame = null;
+    }
+    pendingPointerMove = null;
   }
 
   function clearReconnectTimer() {
@@ -343,6 +371,7 @@ if (workspace) {
   function closePeerConnection() {
     const currentPeer = peerSession;
     peerSession = null;
+    cancelPendingPointerMove();
     if (videoFrameCallback !== null) {
       if (typeof video.cancelVideoFrameCallback === 'function') {
         video.cancelVideoFrameCallback(videoFrameCallback);
@@ -525,6 +554,7 @@ if (workspace) {
   });
   const releaseAllInput = () => {
     const shouldRelease = hasControl();
+    cancelPendingPointerMove();
     pointerButtons = 0;
     pressedKeys.clear();
     if (shouldRelease) {
