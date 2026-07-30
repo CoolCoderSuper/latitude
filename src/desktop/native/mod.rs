@@ -1,6 +1,7 @@
 mod capture;
 mod controller;
 mod input;
+mod input_desktop;
 
 use std::{
     collections::BTreeSet,
@@ -18,6 +19,7 @@ pub(crate) use controller::{
     NativeControllerLeaseState, NativeInputController, native_input_controller,
 };
 pub(crate) use input::apply_native_desktop_command;
+pub(crate) use input_desktop::InputDesktop;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct NativeDesktopGeometry {

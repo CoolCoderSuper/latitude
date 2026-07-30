@@ -211,6 +211,7 @@
 
   function diffSnapshot(root) {
     const overview = root.querySelector('.git-overview')?.outerHTML || '';
+    const collectionError = root.querySelector('[data-git-collection-error]')?.outerHTML || '';
     const panels = Array.from(root.querySelectorAll('[data-file-panel]')).map((panel) => {
       const clone = panel.cloneNode(true);
       clone.querySelectorAll('details[open]').forEach((details) => details.removeAttribute('open'));
@@ -225,7 +226,7 @@
       }
       return clone.outerHTML;
     });
-    return `${overview}\n${panels.join('\n')}`;
+    return `${overview}\n${collectionError}\n${panels.join('\n')}`;
   }
 
   function blockRefreshFor(milliseconds) {

@@ -1327,6 +1327,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
+        error: None,
         file_changes: vec![
             GitFileChange {
                 path: "src/server.rs".to_string(),
@@ -1414,6 +1415,7 @@ fn renders_diff_workspace_fragment_without_full_document() {
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
+        error: None,
         file_changes: vec![GitFileChange {
             path: "README.md".to_string(),
             original_path: None,
@@ -1434,10 +1436,26 @@ fn renders_diff_workspace_fragment_without_full_document() {
 }
 
 #[test]
+fn renders_git_collection_error_in_workspace() {
+    let report = GitDiffReport {
+        repo_dir: PathBuf::from("C:/work/demo"),
+        status: GitStatusSummary::default(),
+        error: Some("git status failed <unexpectedly>".to_string()),
+        file_changes: Vec::new(),
+    };
+
+    let rendered = render_diff_workspace_fragment(&report, "/demo/_diff").into_string();
+
+    assert!(rendered.contains("data-git-collection-error"));
+    assert!(rendered.contains("git status failed &lt;unexpectedly&gt;"));
+}
+
+#[test]
 fn renders_targeted_diff_file_update() {
     let report = GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
+        error: None,
         file_changes: vec![GitFileChange {
             path: "README.md".to_string(),
             original_path: None,
@@ -1990,6 +2008,7 @@ fn public_diff_response_includes_highlighted_lines() {
     let response = public_diff_response(GitDiffReport {
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
+        error: None,
         file_changes: vec![GitFileChange {
             path: "src/lib.rs".to_string(),
             original_path: None,
@@ -2005,6 +2024,7 @@ fn public_diff_response_includes_highlighted_lines() {
     });
 
     let payload = serde_json::to_value(&response).unwrap();
+    assert!(payload["error"].is_null());
     let diff = &payload["file_changes"][0]["diffs"][0];
     assert_eq!(diff["content"], content);
     assert_eq!(diff["lines"][0]["kind"], "file");

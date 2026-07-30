@@ -11,9 +11,10 @@ pub(super) use actions::{
     execute_git_action, handle_git_action_request, parse_public_git_action_payload,
 };
 pub(super) use command::GitCommandExecution;
+pub(crate) use diff::file_baseline;
 pub(super) use diff::{
     collect_project_diff, collect_project_file_diff, collect_project_git_commit,
-    collect_project_git_history, collect_project_git_status_with_execution, file_baseline,
+    collect_project_git_history, collect_project_git_status_with_execution,
 };
 #[cfg(test)]
 pub(super) use diff::{parse_diff_file_sections, parse_porcelain_status};

@@ -37,9 +37,40 @@ Both encoder paths use the H.264 level required by the configured stream cap, fr
 
 Direct connections use host ICE candidates. For clients across NAT or restrictive networks, add STUN or TURN entries to `native_ice_servers`; each entry accepts `urls`, `username`, and `credential`.
 
-Native control operates in the same Windows integrity context as Latitude. Windows can reject input directed at elevated applications, UAC prompts, or the secure desktop. Keep a managed VNC service available when those screens must be controlled.
+In a normal foreground run, native control operates in the same Windows integrity context as Latitude, so Windows can reject input directed at elevated applications or the secure desktop. Latitude can instead run as an automatic Windows service. Service mode keeps the HTTP server alive from boot and launches a short-lived LocalSystem host in the active interactive session, falling back to the console session. That host owns WebRTC capture and input, follows `Default`/`Winlogon` input-desktop changes, and falls back from DXGI to the desktop-aware GDI capture path when Windows switches to a protected desktop.
 
 Only one native client controls Windows input at a time. Additional control-enabled clients remain connected as viewers and automatically receive control when the current controller disconnects.
+
+### Always-on Windows service
+
+Build the release executable, set a strong `public_password` in `latitude.json`, and install from an elevated PowerShell:
+
+```powershell
+cargo build --release
+.\target\release\latitude.exe --config .\latitude.json service install
+.\target\release\latitude.exe service status
+```
+
+The service starts automatically at boot. Its HTTP and command listeners run even before sign-in. Two short-lived helpers are created for the active interactive session and replaced if that session changes:
+
+- `session-host` runs as LocalSystem and owns native WebRTC capture, protected-desktop switching, and input.
+- `workspace-host` runs as the signed-in Windows user and owns terminals, Git commands, file browsing/search/editing, and T3 Code processes.
+
+Both helpers listen only on random loopback ports, use independent random per-process bearer tokens, and are placed in kill-on-close Windows jobs so they cannot survive the service. Before a user signs in, the API and protected desktop remain available but workspace operations return a service-unavailable response.
+
+Service management commands are:
+
+```powershell
+.\target\release\latitude.exe service stop
+.\target\release\latitude.exe service start
+.\target\release\latitude.exe service uninstall
+```
+
+Stop the service before rebuilding the installed executable because Windows holds a running executable open. Re-run `service install` after moving the executable or config; installation updates the registered paths and restarts the service unless `--no-start` is supplied.
+
+The coordinator service and native desktop host run as LocalSystem so desktop control can cross integrity levels and access protected desktops. User workspace operations do not inherit that identity: they are executed by `workspace-host` with the signed-in user's profile, environment, Git configuration, credentials, and filesystem permissions. The public API still controls a privileged service, so expose it only through a trusted network or authenticated tunnel and never use the example `test` password. Installation refuses the default password.
+
+Service mode follows an active RDP session while it is connected and otherwise controls the physical console, like VNC Service Mode. It does not keep a separate disconnected RDP desktop rendered. Before sign-in it can reach the Windows sign-in desktop, but ordinary user applications do not exist until that user signs in.
 
 Use `desktop.mode: "external"` to bridge to an already-running VNC server. The default external target is `127.0.0.1:5900`, and non-loopback VNC hosts are rejected unless `allow_non_loopback` is explicitly enabled.
 

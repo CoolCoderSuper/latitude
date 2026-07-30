@@ -14,6 +14,7 @@ use super::{
 #[derive(Debug, Serialize)]
 pub(in crate::server) struct PublicGitDiffResponse {
     pub(in crate::server) repo_dir: String,
+    pub(in crate::server) error: Option<String>,
     pub(in crate::server) unstaged_count: usize,
     pub(in crate::server) staged_count: usize,
     pub(in crate::server) additions: usize,
@@ -148,6 +149,7 @@ pub(in crate::server) fn public_diff_response(report: GitDiffReport) -> PublicGi
 
     PublicGitDiffResponse {
         repo_dir: display_path(&report.repo_dir),
+        error: report.error,
         unstaged_count,
         staged_count,
         additions: report.status.additions,

@@ -210,6 +210,11 @@ fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
                 span class="overview-ahead" { "↑" (report.status.ahead) " push" }
             }
         }
+        @if let Some(error) = &report.error {
+            div class="action-status error" data-git-collection-error role="alert" {
+                (error)
+            }
+        }
         div class="action-status" data-action-status hidden {}
         (git_action_panel(action_url))
         (git_file_panel(&report.file_changes, action_url))

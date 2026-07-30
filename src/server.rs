@@ -30,6 +30,8 @@ use tracing::info;
 use crate::state::AppState;
 
 pub(crate) use git::GitStatusSummary;
+pub(crate) use git::file_baseline;
+pub(crate) use terminal_api::terminal_websocket_session;
 
 use assets::{ASSET_BASE_PATH, public_asset};
 use auth::open_t3code_embed;

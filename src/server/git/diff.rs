@@ -35,6 +35,7 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
         return GitDiffReport {
             repo_dir,
             status: status_summary,
+            error: status.output.err(),
             file_changes: Vec::new(),
         };
     }
@@ -73,6 +74,7 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
     GitDiffReport {
         repo_dir,
         status: status_summary,
+        error: None,
         file_changes,
     }
 }
@@ -96,15 +98,23 @@ pub(in crate::server) async fn collect_project_file_diff(
         "--".to_string(),
         path.to_string(),
     ];
-    let mut file_changes = run_git_command_owned(&repo_dir, &status_args, &[0])
-        .await
-        .map(|output| parse_porcelain_status(&output.stdout))
-        .unwrap_or_default();
+    let mut file_changes = match run_git_command_owned(&repo_dir, &status_args, &[0]).await {
+        Ok(output) => parse_porcelain_status(&output.stdout),
+        Err(error) => {
+            return GitDiffReport {
+                repo_dir,
+                status: status_summary,
+                error: Some(error),
+                file_changes: Vec::new(),
+            };
+        }
+    };
 
     if file_changes.is_empty() {
         return GitDiffReport {
             repo_dir,
             status: status_summary,
+            error: None,
             file_changes,
         };
     }
@@ -152,13 +162,14 @@ pub(in crate::server) async fn collect_project_file_diff(
     GitDiffReport {
         repo_dir,
         status: status_summary,
+        error: None,
         file_changes,
     }
 }
 
 /// Returns the version of a text file at HEAD. New, untracked files use an
 /// empty baseline, while files outside a Git worktree do not get a baseline.
-pub(in crate::server) async fn file_baseline(project_dir: &Path, file: &Path) -> Option<String> {
+pub(crate) async fn file_baseline(project_dir: &Path, file: &Path) -> Option<String> {
     let repo_dir = git_worktree_root(project_dir).await.ok()?;
     let repo_dir = fs::canonicalize(repo_dir).await.ok()?;
     let canonical_file = fs::canonicalize(file).await.ok()?;

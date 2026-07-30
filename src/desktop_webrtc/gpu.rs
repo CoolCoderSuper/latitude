@@ -78,7 +78,9 @@ use windows::{
 };
 
 use super::{EncodedDesktopEvent, EncodedDesktopFrame, NativeVideoSettings};
-use crate::desktop::{NativeDesktopGeometry, fit_native_desktop_geometry, native_cursor_style};
+use crate::desktop::{
+    InputDesktop, NativeDesktopGeometry, fit_native_desktop_geometry, native_cursor_style,
+};
 
 const ENCODER_EVENT_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_D3D11_TEXTURE_DIMENSION: u32 = 16_384;
@@ -89,6 +91,9 @@ pub(super) fn run_gpu_video_pipeline(
     settings: NativeVideoSettings,
     force_keyframe: Arc<AtomicBool>,
 ) -> Result<()> {
+    // This is best-effort for ordinary user-mode runs. The SYSTEM session host can attach here
+    // before DXGI creates duplication objects for Default, Winlogon, or the UAC desktop.
+    let _input_desktop = InputDesktop::attach_current_thread().ok();
     let _runtime = WindowsMediaRuntime::new()?;
     let mut pipeline = GpuVideoPipeline::new(settings)?;
     debug!(

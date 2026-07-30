@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use tokio::{process::Command, sync::Semaphore, time::timeout};
 
+use crate::workspace::{WorkspaceExecRequest, global_workspace_bridge};
+
 use super::{super::constants::GIT_COMMAND_TIMEOUT, types::GitCommandOutput};
 
 static GIT_COMMAND_CONCURRENCY: Semaphore = Semaphore::const_new(4);
@@ -108,48 +110,77 @@ async fn run_git_command_owned_with_execution(
     } else {
         None
     };
-    let mut command = Command::new("git");
-    command.args(args).current_dir(project_dir);
+    let mut command_args = vec![
+        "-c".to_string(),
+        format!("safe.directory={}", git_safe_directory(project_dir)),
+    ];
+    command_args.extend_from_slice(args);
 
-    let output = match timeout(GIT_COMMAND_TIMEOUT, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
-            return Err(format!(
-                "Could not run {}: {error}",
-                git_command_label_owned(args)
-            ));
-        }
-        Err(_) => {
+    let (status_code, stdout, stderr) = if let Some(bridge) = global_workspace_bridge() {
+        let output = bridge
+            .execute(WorkspaceExecRequest::captured(
+                "git",
+                command_args,
+                Some(project_dir.to_path_buf()),
+                GIT_COMMAND_TIMEOUT,
+                usize::MAX,
+            ))
+            .await
+            .map_err(|error| {
+                format!(
+                    "Could not run {} in the signed-in user workspace: {error}",
+                    git_command_label_owned(args)
+                )
+            })?;
+        if output.timed_out {
             return Err(format!(
                 "{} timed out after {} seconds",
                 git_command_label_owned(args),
                 GIT_COMMAND_TIMEOUT.as_secs()
             ));
         }
+        if output.truncated {
+            return Err(format!(
+                "{} produced more workspace output than Latitude can safely transfer",
+                git_command_label_owned(args)
+            ));
+        }
+        (output.status_code, output.stdout, output.stderr)
+    } else {
+        let mut command = Command::new("git");
+        command.args(&command_args).current_dir(project_dir);
+        let output = match timeout(GIT_COMMAND_TIMEOUT, command.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(error)) => {
+                return Err(format!(
+                    "Could not run {}: {error}",
+                    git_command_label_owned(args)
+                ));
+            }
+            Err(_) => {
+                return Err(format!(
+                    "{} timed out after {} seconds",
+                    git_command_label_owned(args),
+                    GIT_COMMAND_TIMEOUT.as_secs()
+                ));
+            }
+        };
+        (output.status.code(), output.stdout, output.stderr)
     };
 
-    if output
-        .status
-        .code()
-        .is_some_and(|code| success_codes.contains(&code))
-    {
-        return Ok(GitCommandOutput {
-            stdout: output.stdout,
-            stderr: output.stderr,
-        });
+    if status_code.is_some_and(|code| success_codes.contains(&code)) {
+        return Ok(GitCommandOutput { stdout, stderr });
     }
 
-    let status = output
-        .status
-        .code()
+    let status = status_code
         .map(|code| code.to_string())
         .unwrap_or_else(|| "terminated".to_string());
     let mut message = format!(
         "{} exited with status {status}",
         git_command_label_owned(args)
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&stderr);
+    let stdout = String::from_utf8_lossy(&stdout);
     if !stderr.trim().is_empty() {
         message.push_str("\n\n");
         message.push_str(stderr.trim());
@@ -159,6 +190,10 @@ async fn run_git_command_owned_with_execution(
     }
 
     Err(message)
+}
+
+fn git_safe_directory(project_dir: &Path) -> String {
+    project_dir.to_string_lossy().replace('\\', "/")
 }
 
 pub(super) fn parse_nul_separated_paths(bytes: &[u8]) -> Vec<String> {
@@ -189,11 +224,21 @@ fn git_command_label_owned(args: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::GitCommandExecution;
+    use std::path::Path;
+
+    use super::{GitCommandExecution, git_safe_directory};
 
     #[test]
     fn only_auto_refresh_commands_use_the_concurrency_pool() {
         assert!(!GitCommandExecution::Interactive.uses_concurrency_pool());
         assert!(GitCommandExecution::AutoRefresh.uses_concurrency_pool());
+    }
+
+    #[test]
+    fn safe_directory_uses_git_friendly_path_separators() {
+        assert_eq!(
+            git_safe_directory(Path::new(r"C:\Users\Joseph\source\repos\latitude")),
+            "C:/Users/Joseph/source/repos/latitude"
+        );
     }
 }

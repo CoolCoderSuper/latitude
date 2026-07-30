@@ -10,7 +10,9 @@ use axum::{
 use serde::Deserialize;
 
 use crate::{
-    desktop::{DesktopResolutionError, desktop_info_response, set_desktop_resolution},
+    desktop::{
+        DesktopProtocol, DesktopResolutionError, desktop_info_response, set_desktop_resolution,
+    },
     state::AppState,
 };
 
@@ -201,6 +203,22 @@ pub(in crate::server) async fn public_root_desktop_ws(
     };
 
     let view_only = config.desktop.view_only;
+    if target.protocol == DesktopProtocol::LatitudeNative
+        && let Some(bridge) = state.native_session_bridge()
+    {
+        if !bridge.is_available().await {
+            return json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the interactive Windows desktop session host is not available",
+            );
+        }
+        return ws.on_upgrade(move |socket| async move {
+            bridge
+                .proxy(socket, target, view_only, Some(peer_address.ip()))
+                .await
+        });
+    }
+
     ws.on_upgrade(move |socket| {
         crate::desktop::desktop_websocket_session(
             socket,

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio::{process::Command, sync::broadcast, time::timeout};
 
 use crate::terminal::{TerminalSession, TerminalSessionSummary, root_terminal_cwd, terminal_cwd};
+use crate::workspace::{WorkspaceExecRequest, global_workspace_bridge};
 
 use super::{
     constants::{
@@ -109,7 +110,11 @@ pub(super) async fn terminal_info_response(
 }
 
 pub(super) async fn root_terminal_info_response() -> PublicTerminalInfoResponse {
-    let root_dir = root_terminal_cwd();
+    let root_dir = if let Some(bridge) = global_workspace_bridge() {
+        bridge.profile_dir().await.unwrap_or_else(root_terminal_cwd)
+    } else {
+        root_terminal_cwd()
+    };
     scoped_terminal_info_response(
         &root_dir,
         PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH.to_string(),
@@ -134,15 +139,83 @@ async fn scoped_terminal_info_response(
 pub(super) async fn execute_root_terminal_command(
     command_text: String,
 ) -> PublicTerminalCommandResponse {
-    let root_dir = root_terminal_cwd();
-    execute_terminal_command(&root_dir, command_text).await
+    execute_terminal_command_in(None, command_text).await
 }
 
 pub(super) async fn execute_terminal_command(
     project_dir: &Path,
     command_text: String,
 ) -> PublicTerminalCommandResponse {
-    let cwd = terminal_cwd(project_dir);
+    execute_terminal_command_in(Some(project_dir), command_text).await
+}
+
+async fn execute_terminal_command_in(
+    project_dir: Option<&Path>,
+    command_text: String,
+) -> PublicTerminalCommandResponse {
+    let cwd = match project_dir {
+        Some(project_dir) => terminal_cwd(project_dir),
+        None => {
+            if let Some(bridge) = global_workspace_bridge() {
+                bridge.profile_dir().await.unwrap_or_else(root_terminal_cwd)
+            } else {
+                root_terminal_cwd()
+            }
+        }
+    };
+
+    if let Some(bridge) = global_workspace_bridge() {
+        let started = Instant::now();
+        let (program, args) = terminal_shell_parts(&command_text);
+        let output = bridge
+            .execute(
+                WorkspaceExecRequest::captured(
+                    program,
+                    args,
+                    Some(cwd.clone()),
+                    TERMINAL_COMMAND_TIMEOUT,
+                    MAX_TERMINAL_OUTPUT_BYTES,
+                )
+                .with_environment("NO_COLOR", "1"),
+            )
+            .await;
+        return match output {
+            Ok(output) => {
+                let mut stderr = terminal_output_text(&output.stderr);
+                if output.truncated {
+                    if !stderr.is_empty() && !stderr.ends_with('\n') {
+                        stderr.push('\n');
+                    }
+                    stderr.push_str(&format!(
+                        "[workspace output truncated after {MAX_TERMINAL_OUTPUT_BYTES} bytes]"
+                    ));
+                }
+                PublicTerminalCommandResponse {
+                    command: command_text,
+                    cwd: display_path(&cwd),
+                    shell: terminal_shell_name(),
+                    exit_code: output.status_code,
+                    success: output.status_code == Some(0) && !output.timed_out,
+                    stdout: terminal_output_text(&output.stdout),
+                    stderr,
+                    duration_ms: output.duration_ms,
+                    timed_out: output.timed_out,
+                }
+            }
+            Err(error) => PublicTerminalCommandResponse {
+                command: command_text,
+                cwd: display_path(&cwd),
+                shell: terminal_shell_name(),
+                exit_code: None,
+                success: false,
+                stdout: String::new(),
+                stderr: format!("Could not run terminal command in the user workspace: {error}"),
+                duration_ms: started.elapsed().as_millis(),
+                timed_out: false,
+            },
+        };
+    }
+
     let started = Instant::now();
     let mut command = terminal_shell_command(&command_text);
     command
@@ -198,22 +271,37 @@ fn terminal_shell_name() -> &'static str {
 }
 
 fn terminal_shell_command(command_text: &str) -> Command {
+    let (program, args) = terminal_shell_parts(command_text);
+    let mut command = Command::new(program);
+    command.args(args);
+    command
+}
+
+fn terminal_shell_parts(command_text: &str) -> (&'static str, Vec<String>) {
     if cfg!(windows) {
-        let mut command = Command::new("powershell.exe");
-        command.args([
-            "-NoLogo",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            command_text,
-        ]);
-        command
+        (
+            "powershell.exe",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command_text,
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        )
     } else {
-        let mut command = Command::new("sh");
-        command.args(["-lc", command_text]);
-        command
+        (
+            "sh",
+            ["-lc", command_text]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        )
     }
 }
 
@@ -237,7 +325,7 @@ fn terminal_output_text(bytes: &[u8]) -> String {
     output
 }
 
-pub(super) async fn terminal_websocket_session(
+pub(crate) async fn terminal_websocket_session(
     mut socket: WebSocket,
     session: Arc<TerminalSession>,
 ) {

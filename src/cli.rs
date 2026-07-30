@@ -43,6 +43,17 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum CliCommand {
+    /// Install or manage Latitude as an always-on Windows service.
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
+    /// Run the privileged native desktop host inside an interactive Windows session.
+    #[command(hide = true)]
+    SessionHost(SessionHostArgs),
+    /// Run user-owned workspace operations inside an interactive Windows session.
+    #[command(hide = true)]
+    WorkspaceHost(WorkspaceHostArgs),
     /// Read command API health.
     Health,
     /// Read or replace Latitude config through the command API.
@@ -75,6 +86,43 @@ pub enum CliCommand {
         #[command(subcommand)]
         command: ShareCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ServiceCommand {
+    /// Install or update the automatic Latitude Windows service.
+    Install {
+        /// Install the service without starting it.
+        #[arg(long)]
+        no_start: bool,
+    },
+    /// Remove the Latitude Windows service.
+    Uninstall,
+    /// Start the installed Latitude Windows service.
+    Start,
+    /// Stop the installed Latitude Windows service.
+    Stop,
+    /// Print the current service state.
+    Status,
+    /// Run under the Windows Service Control Manager.
+    #[command(hide = true)]
+    Run,
+}
+
+#[derive(Debug, Args)]
+pub struct SessionHostArgs {
+    #[arg(long)]
+    pub bind: SocketAddr,
+    #[arg(long)]
+    pub token: String,
+}
+
+#[derive(Debug, Args)]
+pub struct WorkspaceHostArgs {
+    #[arg(long)]
+    pub bind: SocketAddr,
+    #[arg(long)]
+    pub token: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -287,9 +335,22 @@ impl Cli {
 }
 
 pub async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
+    if let CliCommand::Service { command } = command {
+        return crate::windows_service_host::run_command(&cli.config, command);
+    }
+    if let CliCommand::SessionHost(args) = command {
+        return crate::desktop::run_native_session_host(args.bind, args.token.clone()).await;
+    }
+    if let CliCommand::WorkspaceHost(args) = command {
+        return crate::workspace::run_workspace_host(args.bind, args.token.clone()).await;
+    }
+
     let client = CommandClient::new(cli.command_api_url()?);
 
     match command {
+        CliCommand::Service { .. } | CliCommand::SessionHost(_) | CliCommand::WorkspaceHost(_) => {
+            unreachable!()
+        }
         CliCommand::Health => print_json(&client.get_json::<HealthResponse>("/health").await?),
         CliCommand::Config { command } => run_config_command(&client, command).await,
         CliCommand::Project { command } => run_project_command(&client, command).await,

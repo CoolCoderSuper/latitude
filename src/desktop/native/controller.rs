@@ -9,7 +9,8 @@ use std::{
 use tokio::sync::{Mutex, watch};
 
 use super::{
-    NativeDesktopCommand, NativeDesktopError, NativeInputState, apply_native_desktop_command,
+    InputDesktop, NativeDesktopCommand, NativeDesktopError, NativeInputState,
+    apply_native_desktop_command,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,6 +114,9 @@ impl NativeInputController {
             return Ok(false);
         }
 
+        // A SYSTEM session host can temporarily attach this non-UI worker thread to Winlogon or
+        // the UAC secure desktop before SendInput runs. Ordinary user mode remains best-effort.
+        let _input_desktop = InputDesktop::attach_current_thread().ok();
         apply_native_desktop_command(command, &mut state.input)?;
         Ok(true)
     }

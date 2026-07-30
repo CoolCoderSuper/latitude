@@ -37,7 +37,8 @@ use yuvutils_rs::{
 
 use super::peer::send_control_message;
 use crate::desktop::{
-    NativeDesktopCapture, NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry,
+    InputDesktop, NativeDesktopCapture, NativeDesktopCursor, NativeDesktopFrame,
+    NativeDesktopGeometry,
 };
 
 struct EncodedDesktopFrame {
@@ -581,6 +582,8 @@ fn capture_desktop_frames(
     settings: NativeVideoSettings,
 ) {
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps.max(1)));
+    let mut input_desktop = InputDesktop::attach_current_thread().ok();
+    let mut next_desktop_check = Instant::now();
     let mut stats_started = Instant::now();
     let mut captured_frames = 0_u64;
     let mut capture_time = Duration::ZERO;
@@ -597,6 +600,27 @@ fn capture_desktop_frames(
     loop {
         if *stop_rx.borrow() || frame_tx.is_closed() {
             break;
+        }
+        if Instant::now() >= next_desktop_check {
+            next_desktop_check = Instant::now() + Duration::from_millis(250);
+            let switched = match input_desktop.as_mut() {
+                Some(desktop) => desktop.refresh().unwrap_or(false),
+                None => {
+                    input_desktop = InputDesktop::attach_current_thread().ok();
+                    input_desktop.is_some()
+                }
+            };
+            if switched {
+                capture = match NativeDesktopCapture::new(settings.max_width, settings.max_height) {
+                    Ok(capture) => capture,
+                    Err(error) => {
+                        frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Error(
+                            error.to_string(),
+                        ))));
+                        return;
+                    }
+                };
+            }
         }
         let started = Instant::now();
         let frame = match capture.capture() {

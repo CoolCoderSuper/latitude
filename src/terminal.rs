@@ -12,7 +12,7 @@ use std::{
 
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use rand::random;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{RwLock, broadcast};
 
 const DEFAULT_TERMINAL_ROWS: u16 = 28;
@@ -25,7 +25,7 @@ pub struct TerminalSessionManager {
     sessions: RwLock<HashMap<String, Arc<TerminalSession>>>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TerminalSessionSummary {
     pub id: String,
     pub scope: String,

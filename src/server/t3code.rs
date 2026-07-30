@@ -17,7 +17,9 @@ use tokio_tungstenite::{
 use tracing::{error, info, warn};
 use url::Url;
 
-use crate::{config::T3CodeConfig, state::AppState, storage::WorktreeRecord};
+use crate::{
+    config::T3CodeConfig, state::AppState, storage::WorktreeRecord, workspace::WorkspaceExecRequest,
+};
 
 use super::{
     assets::public_asset,
@@ -81,13 +83,14 @@ pub(super) async fn open_t3code(
         error!(%message, "T3 Code server startup failed");
         return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
     }
-    let pairing_url = match create_pairing_url(&config.t3code, pairing_base_url, "Latitude").await {
-        Ok(url) => url,
-        Err(message) => {
-            error!(%message, "T3 Code pairing credential failed");
-            return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
-        }
-    };
+    let pairing_url =
+        match create_pairing_url(&state, &config.t3code, pairing_base_url, "Latitude").await {
+            Ok(url) => url,
+            Err(message) => {
+                error!(%message, "T3 Code pairing credential failed");
+                return plain_response(StatusCode::BAD_GATEWAY, format!("{message}\n"));
+            }
+        };
 
     info!("opening T3 Code");
     pairing_redirect(pairing_url)
@@ -182,7 +185,7 @@ pub(super) async fn open_project_in_t3code(
         &root_project.project_dir,
         &root_project.name,
     );
-    let output = match run_cli(&config.t3code, project_args).await {
+    let output = match run_cli(&state, &config.t3code, project_args).await {
         Ok(output) => output,
         Err(message) => {
             error!(project = %project_name, %message, "T3 Code project registration failed");
@@ -202,6 +205,7 @@ pub(super) async fn open_project_in_t3code(
     let t3code_project_id = registration.id;
 
     let mut pairing_url = match create_pairing_url(
+        &state,
         &config.t3code,
         pairing_base_url,
         &format!("Latitude: {}", project.name),
@@ -278,6 +282,7 @@ fn same_t3code_path(left: &Path, right: &Path) -> bool {
 }
 
 async fn create_pairing_url(
+    state: &AppState,
     config: &T3CodeConfig,
     base_url: String,
     label: &str,
@@ -295,7 +300,7 @@ async fn create_pairing_url(
         OsString::from("--json"),
     ];
     append_base_dir(&mut args, config);
-    let output = run_cli(config, args).await?;
+    let output = run_cli(state, config, args).await?;
     let pairing: PairingCredentialOutput = serde_json::from_slice(&output)
         .map_err(|error| format!("T3 Code returned an invalid pairing response: {error}"))?;
     Url::parse(&pairing.pair_url)
@@ -632,23 +637,36 @@ async fn ensure_server(state: &AppState, config: &T3CodeConfig) -> Result<(), St
         .port_or_known_default()
         .ok_or_else(|| "T3 Code server URL has no port".to_string())?;
 
-    let mut command = cli_command(config);
-    command
-        .arg("serve")
-        .arg("--host")
-        .arg(host)
-        .arg("--port")
-        .arg(port.to_string())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(false);
+    let mut serve_args = vec![
+        OsString::from("serve"),
+        OsString::from("--host"),
+        OsString::from(host),
+        OsString::from("--port"),
+        OsString::from(port.to_string()),
+    ];
     if let Some(base_dir) = &config.base_dir {
-        command.arg("--base-dir").arg(base_dir);
+        serve_args.push(OsString::from("--base-dir"));
+        serve_args.push(base_dir.as_os_str().to_os_string());
     }
-    command
-        .spawn()
-        .map_err(|error| format!("Latitude could not start T3 Code: {error}"))?;
+
+    if let Some(bridge) = state.workspace_bridge() {
+        let (program, args) = workspace_cli_parts(config, serve_args);
+        bridge
+            .execute(WorkspaceExecRequest::detached(program, args, None))
+            .await
+            .map_err(|error| format!("Latitude could not start T3 Code as the user: {error}"))?;
+    } else {
+        let mut command = cli_command(config);
+        command
+            .args(serve_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(false);
+        command
+            .spawn()
+            .map_err(|error| format!("Latitude could not start T3 Code: {error}"))?;
+    }
 
     for _ in 0..40 {
         sleep(Duration::from_millis(250)).await;
@@ -673,7 +691,42 @@ async fn server_is_ready(state: &AppState, config: &T3CodeConfig) -> bool {
         .is_ok()
 }
 
-async fn run_cli(config: &T3CodeConfig, args: Vec<OsString>) -> Result<Vec<u8>, String> {
+async fn run_cli(
+    state: &AppState,
+    config: &T3CodeConfig,
+    args: Vec<OsString>,
+) -> Result<Vec<u8>, String> {
+    if let Some(bridge) = state.workspace_bridge() {
+        let (program, args) = workspace_cli_parts(config, args);
+        let output = bridge
+            .execute(WorkspaceExecRequest::captured(
+                program,
+                args,
+                None,
+                Duration::from_secs(60),
+                8 * 1024 * 1024,
+            ))
+            .await
+            .map_err(|error| format!("Latitude could not run T3 Code as the user: {error}"))?;
+        if output.timed_out {
+            return Err("T3 Code timed out after 60 seconds".to_string());
+        }
+        if output.truncated {
+            return Err(
+                "T3 Code produced more output than Latitude can safely transfer".to_string(),
+            );
+        }
+        if output.status_code == Some(0) {
+            return Ok(output.stdout);
+        }
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if detail.is_empty() {
+            format!("T3 Code exited with {:?}", output.status_code)
+        } else {
+            format!("T3 Code failed: {detail}")
+        });
+    }
+
     let output = cli_command(config)
         .args(args)
         .stdin(Stdio::null())
@@ -690,6 +743,15 @@ async fn run_cli(config: &T3CodeConfig, args: Vec<OsString>) -> Result<Vec<u8>, 
     } else {
         format!("T3 Code failed: {detail}")
     })
+}
+
+fn workspace_cli_parts(config: &T3CodeConfig, args: Vec<OsString>) -> (String, Vec<String>) {
+    let mut combined = config.command_args.clone();
+    combined.extend(
+        args.into_iter()
+            .map(|argument| argument.to_string_lossy().into_owned()),
+    );
+    (config.command.to_string_lossy().into_owned(), combined)
 }
 
 fn cli_command(config: &T3CodeConfig) -> Command {

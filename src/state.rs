@@ -17,11 +17,12 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, RwLock};
 
 use crate::{
     config::{BootConfig, ConfigError},
-    desktop::ManagedDesktopManager,
+    desktop::{ManagedDesktopManager, NativeSessionBridge},
     device::current_hostname,
     server::GitStatusSummary,
     storage::CatalogStore,
     terminal::TerminalSessionManager,
+    workspace::WorkspaceBridge,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -50,6 +51,8 @@ struct AppStateInner {
     device_hostname: String,
     public_auth_secret: [u8; 32],
     desktop_manager: Arc<ManagedDesktopManager>,
+    native_session_bridge: Option<NativeSessionBridge>,
+    workspace_bridge: Option<WorkspaceBridge>,
     terminal_sessions: Arc<TerminalSessionManager>,
     file_search_pickers: Mutex<HashMap<PathBuf, SharedFilePicker>>,
     project_git_statuses: RwLock<HashMap<String, GitStatusSummary>>,
@@ -61,7 +64,18 @@ struct AppStateInner {
 }
 
 impl AppState {
+    #[cfg(test)]
     pub fn new(config_path: PathBuf, config: BootConfig, catalog: CatalogStore) -> Self {
+        Self::new_with_bridges(config_path, config, catalog, None, None)
+    }
+
+    pub fn new_with_bridges(
+        config_path: PathBuf,
+        config: BootConfig,
+        catalog: CatalogStore,
+        native_session_bridge: Option<NativeSessionBridge>,
+        workspace_bridge: Option<WorkspaceBridge>,
+    ) -> Self {
         let client = Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
@@ -76,6 +90,8 @@ impl AppState {
                 device_hostname: current_hostname(),
                 public_auth_secret: random(),
                 desktop_manager: Arc::new(ManagedDesktopManager::default()),
+                native_session_bridge,
+                workspace_bridge,
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
                 file_search_pickers: Mutex::new(HashMap::new()),
                 project_git_statuses: RwLock::new(HashMap::new()),
@@ -102,6 +118,14 @@ impl AppState {
 
     pub fn desktop_manager(&self) -> Arc<ManagedDesktopManager> {
         self.inner.desktop_manager.clone()
+    }
+
+    pub(crate) fn native_session_bridge(&self) -> Option<NativeSessionBridge> {
+        self.inner.native_session_bridge.clone()
+    }
+
+    pub(crate) fn workspace_bridge(&self) -> Option<WorkspaceBridge> {
+        self.inner.workspace_bridge.clone()
     }
 
     pub fn catalog(&self) -> &CatalogStore {

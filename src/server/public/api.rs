@@ -13,6 +13,7 @@ use crate::{
     config::{ProjectConfig, current_unix_timestamp},
     state::AppState,
     storage::WorktreeRecord,
+    workspace::WorkspaceTerminalRequest,
 };
 
 use super::{
@@ -848,6 +849,13 @@ pub(in crate::server) async fn public_api_list_root_terminal_sessions(
         return public_api_auth_challenge();
     }
 
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge.list_terminals(None).await {
+            Ok(sessions) => Json(PublicTerminalSessionListResponse { sessions }).into_response(),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
+    }
+
     Json(PublicTerminalSessionListResponse {
         sessions: state.terminal_sessions().list_root().await,
     })
@@ -861,6 +869,13 @@ pub(in crate::server) async fn public_api_create_root_terminal_session(
     let config = state.config_snapshot().await;
     if !public_request_is_authenticated(&state, &config, &req) {
         return public_api_auth_challenge();
+    }
+
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge.create_terminal(None, None).await {
+            Ok(session) => Json(session).into_response(),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
     }
 
     match state.terminal_sessions().create_root_session().await {
@@ -877,6 +892,17 @@ pub(in crate::server) async fn public_api_delete_root_terminal_session(
     let config = state.config_snapshot().await;
     if !public_request_is_authenticated(&state, &config, &req) {
         return public_api_auth_challenge();
+    }
+
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge.delete_terminal(None, &session).await {
+            Ok(true) => StatusCode::NO_CONTENT.into_response(),
+            Ok(false) => json_error(
+                StatusCode::NOT_FOUND,
+                format!("terminal session '{session}' was not found"),
+            ),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
     }
 
     if state.terminal_sessions().close_root_session(&session).await {
@@ -910,6 +936,13 @@ pub(in crate::server) async fn public_api_list_terminal_sessions(
         Err(response) => return response,
     }
 
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge.list_terminals(Some(&project)).await {
+            Ok(sessions) => Json(PublicTerminalSessionListResponse { sessions }).into_response(),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
+    }
+
     Json(PublicTerminalSessionListResponse {
         sessions: state.terminal_sessions().list_project(&project).await,
     })
@@ -936,6 +969,16 @@ pub(in crate::server) async fn public_api_create_terminal_session(
         }
         Err(response) => return response,
     };
+
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge
+            .create_terminal(Some(project), Some(project_config.project_dir.clone()))
+            .await
+        {
+            Ok(session) => Json(session).into_response(),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
+    }
 
     match state
         .terminal_sessions()
@@ -966,6 +1009,17 @@ pub(in crate::server) async fn public_api_delete_terminal_session(
             );
         }
         Err(response) => return response,
+    }
+
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge.delete_terminal(Some(&project), &session).await {
+            Ok(true) => StatusCode::NO_CONTENT.into_response(),
+            Ok(false) => json_error(
+                StatusCode::NOT_FOUND,
+                format!("terminal session '{session}' was not found"),
+            ),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
     }
 
     if state
@@ -1004,6 +1058,17 @@ pub(in crate::server) async fn public_terminal_ws(
         }
         Err(response) => return response,
     };
+
+    if let Some(bridge) = state.workspace_bridge() {
+        let request = WorkspaceTerminalRequest {
+            project: Some(project),
+            cwd: Some(project_config.project_dir),
+            session: query.session,
+        };
+        return ws.on_upgrade(move |socket| async move {
+            bridge.proxy_terminal(socket, request).await;
+        });
+    }
 
     let terminal_sessions = state.terminal_sessions();
     let session = if let Some(session_id) = query.session.as_deref() {
@@ -1071,6 +1136,17 @@ pub(in crate::server) async fn public_root_terminal_ws(
     let config = state.config_snapshot().await;
     if !public_headers_are_authenticated(&state, &config, &headers, query.token.as_deref()) {
         return public_api_auth_challenge();
+    }
+
+    if let Some(bridge) = state.workspace_bridge() {
+        let request = WorkspaceTerminalRequest {
+            project: None,
+            cwd: None,
+            session: query.session,
+        };
+        return ws.on_upgrade(move |socket| async move {
+            bridge.proxy_terminal(socket, request).await;
+        });
     }
 
     let terminal_sessions = state.terminal_sessions();

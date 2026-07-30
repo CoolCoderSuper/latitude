@@ -6,6 +6,7 @@ use serde::Serialize;
 pub(crate) struct GitDiffReport {
     pub(in crate::server) repo_dir: PathBuf,
     pub(in crate::server) status: GitStatusSummary,
+    pub(in crate::server) error: Option<String>,
     pub(in crate::server) file_changes: Vec<GitFileChange>,
 }
 

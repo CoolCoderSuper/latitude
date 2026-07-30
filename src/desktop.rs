@@ -1,6 +1,7 @@
 mod display;
 mod managed;
 mod native;
+mod session_host;
 mod vnc;
 
 use std::{net::IpAddr, path::PathBuf};
@@ -17,11 +18,12 @@ pub use display::{
 };
 pub use managed::ManagedDesktopManager;
 pub(crate) use native::{
-    NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand, NativeDesktopCursor,
-    NativeDesktopFrame, NativeDesktopGeometry, NativeInputController, fit_native_desktop_geometry,
-    native_cursor_style, native_desktop_geometry, native_input_controller,
-    scale_native_desktop_screens,
+    InputDesktop, NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand,
+    NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry, NativeInputController,
+    fit_native_desktop_geometry, native_cursor_style, native_desktop_geometry,
+    native_input_controller, scale_native_desktop_screens,
 };
+pub(crate) use session_host::{NativeSessionBridge, run_native_session_host};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DesktopInfoResponse {
@@ -38,7 +40,7 @@ pub struct DesktopInfoResponse {
     pub resolutions: Vec<DesktopResolutionResponse>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct DesktopTarget {
     pub protocol: DesktopProtocol,
     pub host: String,
@@ -51,7 +53,7 @@ pub struct DesktopTarget {
     pub native_ice_servers: Vec<DesktopIceServerConfig>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopProtocol {
     Rfb,

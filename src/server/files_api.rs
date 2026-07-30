@@ -25,7 +25,11 @@ use super::{
     render::highlight_source_lines,
     response::json_error,
 };
-use crate::{config::ProjectConfig, state::AppState};
+use crate::{
+    config::ProjectConfig,
+    state::AppState,
+    workspace::{WorkspaceFileRequest, WorkspaceFileWriteRequest},
+};
 
 #[derive(Deserialize)]
 pub(super) struct FileQuery {
@@ -105,6 +109,21 @@ pub(in crate::server) async fn public_api_get_project_files(
         Ok(p) => p,
         Err(r) => return r,
     };
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge
+            .proxy_file_get(WorkspaceFileRequest {
+                project_dir: project.project_dir,
+                path: query.path,
+                raw: query.raw,
+                search: query.search,
+                search_kind: query.search_kind,
+            })
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
+    }
     if !query.search.trim().is_empty() {
         let search_state = state.clone();
         let project_dir = project.project_dir.clone();
@@ -367,6 +386,19 @@ pub(in crate::server) async fn public_api_put_project_file(
     if payload.content.len() > MAX_FILE_EDITOR_BYTES {
         return json_error(StatusCode::PAYLOAD_TOO_LARGE, "file is too large to save");
     }
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge
+            .write_file(WorkspaceFileWriteRequest {
+                project_dir: project.project_dir,
+                path: payload.path,
+                content: payload.content,
+            })
+            .await
+        {
+            Ok(()) => Json(serde_json::json!({"ok": true})).into_response(),
+            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
+        };
+    }
     let (_, target) = match safe_target(&project, &payload.path).await {
         Ok(v) => v,
         Err(r) => return r,
@@ -414,6 +446,19 @@ pub(in crate::server) async fn public_ui_put_project_file(
     };
     if content.len() > MAX_FILE_EDITOR_BYTES {
         return file_save_fragment("File is too large to save.", true);
+    }
+    if let Some(bridge) = state.workspace_bridge() {
+        return match bridge
+            .write_file(WorkspaceFileWriteRequest {
+                project_dir: project.project_dir,
+                path,
+                content,
+            })
+            .await
+        {
+            Ok(()) => file_save_fragment("Saved", false),
+            Err(error) => file_save_fragment(&error.to_string(), true),
+        };
     }
     let (_, target) = match safe_target(&project, &path).await {
         Ok(target) => target,
