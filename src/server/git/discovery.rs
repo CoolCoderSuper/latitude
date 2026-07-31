@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::{config::ProjectConfig, state::AppState, storage::DiscoveredWorktree};
 
-use super::command::{GitCommandExecution, run_git_command_with_execution};
+use super::command::{GitCommandExecution, run_git_command};
 
 static DISCOVERY_LOCK: Mutex<()> = Mutex::const_new(());
 
@@ -41,11 +41,11 @@ pub(in crate::server) async fn discover_worktrees(
                 }
                 None => None,
             };
-            let common_git_dir = match common_git_dir(&root.project_dir, execution).await {
+            let common_git_dir = match common_git_dir(&root.project_dir).await {
                 Ok(path) => path,
                 Err(_) => return (root, Ok(None)),
             };
-            match list_git_worktrees(&root.project_dir, execution).await {
+            match list_git_worktrees(&root.project_dir).await {
                 Ok(worktrees) => (root, Ok(Some((common_git_dir, worktrees)))),
                 Err(error) => (root, Err(error)),
             }
@@ -84,11 +84,11 @@ pub(in crate::server) async fn discover_worktree_project(
     project_dir: &std::path::Path,
 ) -> Result<Option<ProjectConfig>, String> {
     let _discovery_guard = DISCOVERY_LOCK.lock().await;
-    let common_git_dir = match common_git_dir(project_dir, GitCommandExecution::Interactive).await {
+    let common_git_dir = match common_git_dir(project_dir).await {
         Ok(path) => path,
         Err(_) => return Ok(None),
     };
-    let worktrees = list_git_worktrees(project_dir, GitCommandExecution::Interactive).await?;
+    let worktrees = list_git_worktrees(project_dir).await?;
     let Some(primary_worktree) = worktrees.first() else {
         return Ok(None);
     };
@@ -139,15 +139,11 @@ fn same_path(left: &std::path::Path, right: &std::path::Path) -> bool {
         .eq_ignore_ascii_case(&canonical_or_original(right).to_string_lossy())
 }
 
-async fn common_git_dir(
-    project_dir: &std::path::Path,
-    execution: GitCommandExecution,
-) -> Result<PathBuf, String> {
-    let output = run_git_command_with_execution(
+async fn common_git_dir(project_dir: &std::path::Path) -> Result<PathBuf, String> {
+    let output = run_git_command(
         project_dir,
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
         &[0],
-        execution,
     )
     .await?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -160,13 +156,11 @@ async fn common_git_dir(
 
 async fn list_git_worktrees(
     project_dir: &std::path::Path,
-    execution: GitCommandExecution,
 ) -> Result<Vec<DiscoveredWorktree>, String> {
-    let output = run_git_command_with_execution(
+    let output = run_git_command(
         project_dir,
         &["worktree", "list", "--porcelain", "-z"],
         &[0],
-        execution,
     )
     .await?;
     Ok(parse_worktree_porcelain(&output.stdout))

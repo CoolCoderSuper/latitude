@@ -9,9 +9,7 @@ use crate::{
 };
 use tracing::{debug, warn};
 
-use super::git::{
-    GitCommandExecution, collect_project_git_status_with_execution, discover_worktrees,
-};
+use super::git::{GitCommandExecution, collect_project_git_status, discover_worktrees};
 
 const INTERACTIVE_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(500);
 const AUTO_REFRESH_GIT_SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -39,10 +37,7 @@ async fn refresh_project_git_statuses(
                 }
                 None => None,
             };
-            Some((
-                name,
-                collect_project_git_status_with_execution(&project_dir, execution).await,
-            ))
+            Some((name, collect_project_git_status(&project_dir).await))
         });
     }
 
@@ -117,16 +112,15 @@ fn git_command_execution(query: Option<&str>) -> GitCommandExecution {
 pub(super) use api::ShareUiForm;
 pub(super) use api::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
-    public_api_create_share, public_api_create_terminal_session,
-    public_api_delete_root_terminal_session, public_api_delete_share,
+    public_api_create_terminal_session, public_api_delete_root_terminal_session,
     public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
     public_api_get_project_git_commit, public_api_get_project_git_history,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
-    public_api_list_root_terminal_sessions, public_api_list_shares,
-    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
-    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
-    public_api_session, public_root_terminal_ws, public_terminal_ws, public_ui_archive_project,
-    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
+    public_api_list_root_terminal_sessions, public_api_list_terminal_sessions, public_api_login,
+    public_api_patch_project_archive, public_api_patch_project_diff,
+    public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
+    public_root_terminal_ws, public_terminal_ws, public_ui_archive_project, public_ui_create_share,
+    public_ui_delete_share, public_ui_get_shares,
 };
 pub(super) use serve::{
     public_deployment, public_home, public_not_found, public_project_diff, public_project_files,

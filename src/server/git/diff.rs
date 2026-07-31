@@ -6,10 +6,7 @@ use tokio::{
 };
 
 use super::{
-    command::{
-        GitCommandExecution, git_command_label, git_worktree_root, parse_nul_separated_paths,
-        run_git_command, run_git_command_with_execution,
-    },
+    command::{git_command_label, git_worktree_root, parse_nul_separated_paths, run_git_command},
     types::{
         GitCommit, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff, GitHistoryReport,
         GitSection, GitStatusSummary,
@@ -212,19 +209,12 @@ pub(crate) async fn file_baseline(project_dir: &Path, file: &Path) -> Option<Str
 }
 
 pub(in crate::server) async fn collect_project_git_status(project_dir: &Path) -> GitStatusSummary {
-    collect_project_git_status_with_execution(project_dir, GitCommandExecution::Interactive).await
-}
-
-pub(in crate::server) async fn collect_project_git_status_with_execution(
-    project_dir: &Path,
-    execution: GitCommandExecution,
-) -> GitStatusSummary {
     // Catalog project directories are normalized to worktree roots during discovery, so status
     // refreshes can run there directly without a separate `git rev-parse` process per project.
     let repo_dir = project_dir;
     let mut summary = GitStatusSummary::default();
 
-    let status_future = run_git_command_with_execution(
+    let status_future = run_git_command(
         repo_dir,
         &[
             "status",
@@ -234,13 +224,11 @@ pub(in crate::server) async fn collect_project_git_status_with_execution(
             "--untracked-files=normal",
         ],
         &[0],
-        execution,
     );
-    let diff_future = run_git_command_with_execution(
+    let diff_future = run_git_command(
         repo_dir,
         &["diff", "HEAD", "--numstat", "--no-renames"],
         &[0],
-        execution,
     );
     let (status, diff) = tokio::join!(status_future, diff_future);
 
@@ -248,18 +236,12 @@ pub(in crate::server) async fn collect_project_git_status_with_execution(
         Ok(output) => add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout)),
         Err(_) => {
             let (cached, unstaged) = tokio::join!(
-                run_git_command_with_execution(
+                run_git_command(
                     repo_dir,
                     &["diff", "--cached", "--numstat", "--no-renames"],
                     &[0],
-                    execution,
                 ),
-                run_git_command_with_execution(
-                    repo_dir,
-                    &["diff", "--numstat", "--no-renames", "--"],
-                    &[0],
-                    execution,
-                )
+                run_git_command(repo_dir, &["diff", "--numstat", "--no-renames", "--"], &[0],)
             );
             for output in [cached, unstaged].into_iter().flatten() {
                 add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));

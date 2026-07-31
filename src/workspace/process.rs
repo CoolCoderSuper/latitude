@@ -68,10 +68,17 @@ impl WorkspaceExecRequest {
 pub(super) async fn workspace_exec(
     State(state): State<WorkspaceHostState>,
     headers: HeaderMap,
-    Json(request): Json<WorkspaceExecRequest>,
+    Json(mut request): Json<WorkspaceExecRequest>,
 ) -> Response<Body> {
     if !workspace_is_authenticated(&headers, &state.token) {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    let cwd = request.cwd.get_or_insert_with(root_terminal_cwd);
+    if !cwd.is_absolute() {
+        return workspace_error(
+            StatusCode::BAD_REQUEST,
+            "workspace process directory must be absolute",
+        );
     }
     match execute_workspace_process(request).await {
         Ok(output) => Json(WorkspaceExecResponse {
@@ -87,27 +94,20 @@ pub(super) async fn workspace_exec(
     }
 }
 
-async fn execute_workspace_process(
+pub(crate) async fn execute_workspace_process(
     request: WorkspaceExecRequest,
 ) -> Result<WorkspaceProcessOutput> {
     if request.program.trim().is_empty() {
         return Err(anyhow!("workspace process program is required"));
     }
-    let cwd = request
-        .cwd
-        .as_deref()
-        .map(terminal_cwd)
-        .unwrap_or_else(root_terminal_cwd);
-    if !cwd.is_absolute() {
-        return Err(anyhow!("workspace process directory must be absolute"));
-    }
+    let cwd = request.cwd.as_deref().map(terminal_cwd);
 
     let started = Instant::now();
     let mut command = Command::new(&request.program);
-    command
-        .args(&request.args)
-        .current_dir(&cwd)
-        .envs(request.environment);
+    command.args(&request.args).envs(request.environment);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
 
     if request.detached {
         command

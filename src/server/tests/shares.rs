@@ -20,7 +20,9 @@ async fn public_api_manages_deployment_shares() {
             expires_at: None,
         }),
     )
-    .await;
+    .await
+    .unwrap()
+    .into_response();
     assert_eq!(response.status(), StatusCode::CREATED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -28,7 +30,10 @@ async fn public_api_manages_deployment_shares() {
     assert_eq!(created["has_password"], true);
     assert!(created.get("password").is_none());
 
-    let response = public_api_list_shares(State(state.clone())).await;
+    let response = public_api_list_shares(State(state.clone()))
+        .await
+        .unwrap()
+        .into_response();
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let shares: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -36,8 +41,10 @@ async fn public_api_manages_deployment_shares() {
     assert_eq!(shares[0]["deployment"], "website");
     assert!(shares[0].get("password").is_none());
 
-    let response =
-        public_api_delete_share(axum::extract::Path(share_token), State(state.clone())).await;
+    let response = public_api_delete_share(axum::extract::Path(share_token), State(state.clone()))
+        .await
+        .unwrap()
+        .into_response();
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert!(state.catalog().list_shares().await.unwrap().is_empty());
 }

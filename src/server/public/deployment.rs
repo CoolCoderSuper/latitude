@@ -1,4 +1,4 @@
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use axum::{
     body::Body,
@@ -11,9 +11,7 @@ use crate::{
         ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig,
         is_binary_document_media_type,
     },
-    http_stream::{
-        file_response, is_hop_by_hop_header, streaming_http_response, streaming_request_body,
-    },
+    http_stream::file_response,
     state::AppState,
     storage::PageContent,
 };
@@ -21,9 +19,8 @@ use crate::{
 use super::super::{
     constants::AUTH_COOKIE_NAME,
     page::{page_theme_from_headers, render_project_page_content},
-    paths::{
-        filtered_cookie_header, join_upstream_url, resolve_project_path, sanitized_relative_path,
-    },
+    paths::{join_upstream_url, resolve_project_path, sanitized_relative_path},
+    proxy::{HttpProxyError, proxy_http},
     response::{html_response, internal_response, json_error, plain_response},
 };
 
@@ -115,14 +112,13 @@ async fn proxy_request(
     mount_path: &str,
     extra_excluded_cookie_name: Option<&str>,
 ) -> Response<Body> {
-    let (parts, body) = req.into_parts();
     let forward_path = if strip_prefix {
         remainder.to_string()
     } else {
         format!("{}{}", mount_path.trim_end_matches('/'), remainder)
     };
 
-    let target_url = match join_upstream_url(upstream, &forward_path, parts.uri.query()) {
+    let target_url = match join_upstream_url(upstream, &forward_path, req.uri().query()) {
         Ok(url) => url,
         Err(error) => {
             return json_error(
@@ -132,34 +128,15 @@ async fn proxy_request(
         }
     };
 
-    let mut builder = state.client().request(parts.method, target_url);
-    for (name, value) in &parts.headers {
-        if is_hop_by_hop_header(name.as_str()) || *name == header::HOST {
-            continue;
-        }
-        if *name == header::COOKIE {
-            let mut excluded_cookie_names = vec![AUTH_COOKIE_NAME];
-            excluded_cookie_names.extend(extra_excluded_cookie_name);
-            if let Some(filtered_cookie) = filtered_cookie_header(value, &excluded_cookie_names) {
-                builder = builder.header(name, filtered_cookie);
-            }
-            continue;
-        }
-        builder = builder.header(name, value);
-    }
-
-    match tokio::time::timeout(
-        Duration::from_secs(60),
-        builder.body(streaming_request_body(body)).send(),
-    )
-    .await
-    {
-        Ok(Ok(response)) => streaming_http_response(response),
-        Ok(Err(error)) => json_error(
+    let mut excluded_cookie_names = vec![AUTH_COOKIE_NAME];
+    excluded_cookie_names.extend(extra_excluded_cookie_name);
+    match proxy_http(state.client(), req, target_url, &excluded_cookie_names).await {
+        Ok(response) => response,
+        Err(HttpProxyError::Request(error)) => json_error(
             StatusCode::BAD_GATEWAY,
             format!("upstream request failed: {error}"),
         ),
-        Err(_) => json_error(
+        Err(HttpProxyError::Timeout) => json_error(
             StatusCode::GATEWAY_TIMEOUT,
             "upstream did not return response headers within 60 seconds",
         ),

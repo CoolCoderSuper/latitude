@@ -1,20 +1,14 @@
 use axum::{
-    Json,
     body::Body,
     extract::{Form, Path as AxumPath, State},
-    http::{Response, StatusCode, header},
+    http::{Response, header},
     response::IntoResponse,
 };
 use serde::Deserialize;
 
 use crate::{
-    command_protocol::CreateDeploymentShareRequest,
     config::current_unix_timestamp,
-    server::{
-        command::deployment_share_response,
-        render::render_share_dialog_shell,
-        response::{ApiError, json_error},
-    },
+    server::{render::render_share_dialog_shell, response::ApiError},
     state::AppState,
 };
 
@@ -143,59 +137,4 @@ async fn render_share_ui_response(
     };
     let html = render_share_dialog_shell(project, deployment, &shares, status).into_string();
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
-}
-
-pub(in crate::server) async fn public_api_list_shares(
-    State(state): State<AppState>,
-) -> Response<Body> {
-    match state.catalog().list_shares().await {
-        Ok(shares) => {
-            let now = current_unix_timestamp();
-            Json(
-                shares
-                    .iter()
-                    .map(|share| deployment_share_response(share, now))
-                    .collect::<Vec<_>>(),
-            )
-            .into_response()
-        }
-        Err(error) => ApiError::from(error).into_response(),
-    }
-}
-
-pub(in crate::server) async fn public_api_create_share(
-    State(state): State<AppState>,
-    Json(payload): Json<CreateDeploymentShareRequest>,
-) -> Response<Body> {
-    match state
-        .catalog()
-        .create_share(
-            &payload.project,
-            &payload.deployment,
-            payload.password,
-            payload.expires_at,
-        )
-        .await
-    {
-        Ok(share) => (
-            StatusCode::CREATED,
-            Json(deployment_share_response(&share, current_unix_timestamp())),
-        )
-            .into_response(),
-        Err(error) => ApiError::from(error).into_response(),
-    }
-}
-
-pub(in crate::server) async fn public_api_delete_share(
-    AxumPath(token): AxumPath<String>,
-    State(state): State<AppState>,
-) -> Response<Body> {
-    match state.catalog().delete_share(&token).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => json_error(
-            StatusCode::NOT_FOUND,
-            format!("share link '{token}' was not found"),
-        ),
-        Err(error) => ApiError::from(error).into_response(),
-    }
 }

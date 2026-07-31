@@ -63,13 +63,10 @@ pub(in crate::server) async fn public_api_get_project_files(
             .and_then(|value| value.to_str().ok())
             .map(str::to_string),
     };
-    if let Some(bridge) = state.workspace_bridge() {
-        return match bridge.proxy_file_get(request).await {
-            Ok(response) => response,
-            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
-        };
+    match state.workspace().file_get(request).await {
+        Ok(response) => response,
+        Err(error) => error.into_response(),
     }
-    state.project_files().get(request).await
 }
 
 pub(in crate::server) async fn public_api_put_project_file(
@@ -94,13 +91,7 @@ pub(in crate::server) async fn public_api_put_project_file(
         path: payload.path,
         content: payload.content,
     };
-    if let Some(bridge) = state.workspace_bridge() {
-        return match bridge.write_file(request).await {
-            Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-            Err(error) => json_error(StatusCode::SERVICE_UNAVAILABLE, error.to_string()),
-        };
-    }
-    match state.project_files().write(request).await {
+    match state.workspace().write_file(request).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => error.into_response(),
     }
@@ -139,13 +130,7 @@ pub(in crate::server) async fn public_ui_put_project_file(
         path,
         content,
     };
-    if let Some(bridge) = state.workspace_bridge() {
-        return match bridge.write_file(request).await {
-            Ok(()) => file_save_fragment("Saved", false),
-            Err(error) => file_save_fragment(&error.to_string(), true),
-        };
-    }
-    match state.project_files().write(request).await {
+    match state.workspace().write_file(request).await {
         Ok(()) => file_save_fragment("Saved", false),
         Err(error) => file_save_fragment(&error.message, true),
     }

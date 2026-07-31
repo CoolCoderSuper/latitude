@@ -1,12 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use tokio::{process::Command, sync::Semaphore, time::timeout};
-
-use crate::workspace::{WorkspaceExecRequest, global_workspace_bridge};
+use crate::workspace::{WorkspaceExecRequest, execute_process};
 
 use super::{super::constants::GIT_COMMAND_TIMEOUT, types::GitCommandOutput};
-
-static GIT_COMMAND_CONCURRENCY: Semaphore = Semaphore::const_new(4);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::server) enum GitCommandExecution {
@@ -46,92 +42,36 @@ pub(super) async fn run_git_command<S: AsRef<str>>(
     args: &[S],
     success_codes: &[i32],
 ) -> Result<GitCommandOutput, String> {
-    run_git_command_with_execution(
-        project_dir,
-        args,
-        success_codes,
-        GitCommandExecution::Interactive,
-    )
-    .await
-}
-
-pub(super) async fn run_git_command_with_execution<S: AsRef<str>>(
-    project_dir: &Path,
-    args: &[S],
-    success_codes: &[i32],
-    execution: GitCommandExecution,
-) -> Result<GitCommandOutput, String> {
     let args = args.iter().map(AsRef::as_ref).collect::<Vec<_>>();
-    let _permit = if execution.uses_concurrency_pool() {
-        Some(
-            GIT_COMMAND_CONCURRENCY
-                .acquire()
-                .await
-                .map_err(|_| "Git command concurrency limiter closed".to_string())?,
-        )
-    } else {
-        None
-    };
     let mut command_args = vec![
         "-c".to_string(),
         format!("safe.directory={}", git_safe_directory(project_dir)),
     ];
     command_args.extend(args.iter().map(|arg| (*arg).to_string()));
 
-    let (status_code, stdout, stderr) = if let Some(bridge) = global_workspace_bridge() {
-        let output = bridge
-            .execute(WorkspaceExecRequest::captured(
-                "git",
-                command_args,
-                Some(project_dir.to_path_buf()),
-                GIT_COMMAND_TIMEOUT,
-                usize::MAX,
-            ))
-            .await
-            .map_err(|error| {
-                format!(
-                    "Could not run {} in the signed-in user workspace: {error}",
-                    git_command_label(&args)
-                )
-            })?;
-        if output.timed_out {
-            return Err(format!(
-                "{} timed out after {} seconds",
-                git_command_label(&args),
-                GIT_COMMAND_TIMEOUT.as_secs()
-            ));
-        }
-        if output.truncated {
-            return Err(format!(
-                "{} produced more workspace output than Latitude can safely transfer",
-                git_command_label(&args)
-            ));
-        }
-        (output.status_code, output.stdout, output.stderr)
-    } else {
-        let mut command = Command::new("git");
-        command
-            .args(&command_args)
-            .current_dir(project_dir)
-            .kill_on_drop(true);
-        let output = match timeout(GIT_COMMAND_TIMEOUT, command.output()).await {
-            Ok(Ok(output)) => output,
-            Ok(Err(error)) => {
-                return Err(format!(
-                    "Could not run {}: {error}",
-                    git_command_label(&args)
-                ));
-            }
-            Err(_) => {
-                return Err(format!(
-                    "{} timed out after {} seconds",
-                    git_command_label(&args),
-                    GIT_COMMAND_TIMEOUT.as_secs()
-                ));
-            }
-        };
-        (output.status.code(), output.stdout, output.stderr)
-    };
+    let output = execute_process(WorkspaceExecRequest::captured(
+        "git",
+        command_args,
+        Some(project_dir.to_path_buf()),
+        GIT_COMMAND_TIMEOUT,
+        usize::MAX,
+    ))
+    .await
+    .map_err(|error| format!("Could not run {}: {error}", git_command_label(&args)))?;
+    if output.timed_out {
+        return Err(format!(
+            "{} timed out after {} seconds",
+            git_command_label(&args),
+            GIT_COMMAND_TIMEOUT.as_secs()
+        ));
+    }
+    if output.truncated {
+        return Err(format!(
+            "{} produced more workspace output than Latitude can safely transfer",
+            git_command_label(&args)
+        ));
+    }
+    let (status_code, stdout, stderr) = (output.status_code, output.stdout, output.stderr);
 
     if status_code.is_some_and(|code| success_codes.contains(&code)) {
         return Ok(GitCommandOutput { stdout, stderr });

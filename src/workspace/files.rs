@@ -8,16 +8,45 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::project_files::{ProjectFileRequest, ProjectFileWriteRequest};
+use crate::project_files::{ProjectFileError, ProjectFileRequest, ProjectFileWriteRequest};
 
 use super::{
-    WorkspaceBridge, WorkspaceHostState,
+    WorkspaceBridge, WorkspaceHostState, WorkspaceServices,
     host::{workspace_error, workspace_is_authenticated},
 };
 
 pub(super) const WORKSPACE_FILES_PATH: &str = "/files";
 pub(super) const WORKSPACE_FILE_WRITE_PATH: &str = "/files/write";
 const MAX_INTERNAL_ERROR_BYTES: usize = 64 * 1024;
+
+impl WorkspaceServices {
+    pub(crate) async fn file_get(
+        &self,
+        request: ProjectFileRequest,
+    ) -> Result<Response<Body>, ProjectFileError> {
+        match &self.bridge {
+            Some(bridge) => bridge.proxy_file_get(request).await.map_err(unavailable),
+            None => Ok(self.files.get(request).await),
+        }
+    }
+
+    pub(crate) async fn write_file(
+        &self,
+        request: ProjectFileWriteRequest,
+    ) -> Result<(), ProjectFileError> {
+        match &self.bridge {
+            Some(bridge) => bridge.write_file(request).await.map_err(unavailable),
+            None => self.files.write(request).await,
+        }
+    }
+}
+
+fn unavailable(error: anyhow::Error) -> ProjectFileError {
+    ProjectFileError {
+        status: StatusCode::SERVICE_UNAVAILABLE,
+        message: error.to_string(),
+    }
+}
 
 impl WorkspaceBridge {
     pub(crate) async fn proxy_file_get(

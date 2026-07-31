@@ -2,10 +2,10 @@ use std::{path::Path, sync::Arc, time::Instant};
 
 use axum::extract::ws::{Message, WebSocket};
 use serde::{Deserialize, Serialize};
-use tokio::{process::Command, sync::broadcast, time::timeout};
+use tokio::sync::broadcast;
 
-use crate::terminal::{TerminalSession, TerminalSessionSummary, root_terminal_cwd, terminal_cwd};
-use crate::workspace::{WorkspaceExecRequest, global_workspace_bridge};
+use crate::terminal::{TerminalSession, TerminalSessionSummary, terminal_cwd};
+use crate::workspace::{WorkspaceExecRequest, execute_process, profile_dir};
 
 use super::{
     constants::{
@@ -109,11 +109,7 @@ pub(super) fn terminal_info_response(
 }
 
 pub(super) async fn root_terminal_info_response() -> PublicTerminalInfoResponse {
-    let root_dir = if let Some(bridge) = global_workspace_bridge() {
-        bridge.profile_dir().await.unwrap_or_else(root_terminal_cwd)
-    } else {
-        root_terminal_cwd()
-    };
+    let root_dir = profile_dir().await;
     scoped_terminal_info_response(
         &root_dir,
         PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH.to_string(),
@@ -140,126 +136,66 @@ pub(super) async fn execute_terminal_command(
 ) -> PublicTerminalCommandResponse {
     let cwd = match project_dir {
         Some(project_dir) => terminal_cwd(project_dir),
-        None => {
-            if let Some(bridge) = global_workspace_bridge() {
-                bridge.profile_dir().await.unwrap_or_else(root_terminal_cwd)
-            } else {
-                root_terminal_cwd()
-            }
-        }
+        None => profile_dir().await,
     };
 
-    if let Some(bridge) = global_workspace_bridge() {
-        let started = Instant::now();
-        let (program, args) = terminal_shell_parts(&command_text);
-        let output = bridge
-            .execute(
-                WorkspaceExecRequest::captured(
-                    program,
-                    args,
-                    Some(cwd.clone()),
-                    TERMINAL_COMMAND_TIMEOUT,
-                    MAX_TERMINAL_OUTPUT_BYTES,
-                )
-                .with_environment("NO_COLOR", "1"),
-            )
-            .await;
-        return match output {
-            Ok(output) => {
-                let mut stderr = terminal_output_text(&output.stderr);
-                if output.truncated {
-                    if !stderr.is_empty() && !stderr.ends_with('\n') {
-                        stderr.push('\n');
-                    }
-                    stderr.push_str(&format!(
-                        "[workspace output truncated after {MAX_TERMINAL_OUTPUT_BYTES} bytes]"
-                    ));
+    let started = Instant::now();
+    let (program, args) = terminal_shell_parts(&command_text);
+    let output = execute_process(
+        WorkspaceExecRequest::captured(
+            program,
+            args,
+            Some(cwd.clone()),
+            TERMINAL_COMMAND_TIMEOUT,
+            MAX_TERMINAL_OUTPUT_BYTES,
+        )
+        .with_environment("NO_COLOR", "1"),
+    )
+    .await;
+    match output {
+        Ok(output) => {
+            let mut stderr = terminal_output_text(&output.stderr);
+            if output.timed_out {
+                stderr = format!(
+                    "Command timed out after {} seconds",
+                    TERMINAL_COMMAND_TIMEOUT.as_secs()
+                );
+            } else if output.truncated {
+                if !stderr.is_empty() && !stderr.ends_with('\n') {
+                    stderr.push('\n');
                 }
-                PublicTerminalCommandResponse {
-                    command: command_text,
-                    cwd: display_path(&cwd),
-                    shell: terminal_shell_name(),
-                    exit_code: output.status_code,
-                    success: output.status_code == Some(0) && !output.timed_out,
-                    stdout: terminal_output_text(&output.stdout),
-                    stderr,
-                    duration_ms: output.duration_ms,
-                    timed_out: output.timed_out,
-                }
+                stderr.push_str(&format!(
+                    "[workspace output truncated after {MAX_TERMINAL_OUTPUT_BYTES} bytes]"
+                ));
             }
-            Err(error) => PublicTerminalCommandResponse {
+            PublicTerminalCommandResponse {
                 command: command_text,
                 cwd: display_path(&cwd),
                 shell: terminal_shell_name(),
-                exit_code: None,
-                success: false,
-                stdout: String::new(),
-                stderr: format!("Could not run terminal command in the user workspace: {error}"),
-                duration_ms: started.elapsed().as_millis(),
-                timed_out: false,
-            },
-        };
-    }
-
-    let started = Instant::now();
-    let mut command = terminal_shell_command(&command_text);
-    command
-        .current_dir(&cwd)
-        .env("NO_COLOR", "1")
-        .kill_on_drop(true);
-
-    let result = timeout(TERMINAL_COMMAND_TIMEOUT, command.output()).await;
-    let duration_ms = started.elapsed().as_millis();
-
-    match result {
-        Ok(Ok(output)) => PublicTerminalCommandResponse {
-            command: command_text,
-            cwd: display_path(&cwd),
-            shell: terminal_shell_name(),
-            exit_code: output.status.code(),
-            success: output.status.success(),
-            stdout: terminal_output_text(&output.stdout),
-            stderr: terminal_output_text(&output.stderr),
-            duration_ms,
-            timed_out: false,
-        },
-        Ok(Err(error)) => PublicTerminalCommandResponse {
+                exit_code: output.status_code,
+                success: output.status_code == Some(0) && !output.timed_out,
+                stdout: terminal_output_text(&output.stdout),
+                stderr,
+                duration_ms: output.duration_ms,
+                timed_out: output.timed_out,
+            }
+        }
+        Err(error) => PublicTerminalCommandResponse {
             command: command_text,
             cwd: display_path(&cwd),
             shell: terminal_shell_name(),
             exit_code: None,
             success: false,
             stdout: String::new(),
-            stderr: format!("Could not run terminal shell: {error}"),
-            duration_ms,
+            stderr: format!("Could not run terminal command: {error}"),
+            duration_ms: started.elapsed().as_millis(),
             timed_out: false,
-        },
-        Err(_) => PublicTerminalCommandResponse {
-            command: command_text,
-            cwd: display_path(&cwd),
-            shell: terminal_shell_name(),
-            exit_code: None,
-            success: false,
-            stdout: String::new(),
-            stderr: format!(
-                "Command timed out after {} seconds",
-                TERMINAL_COMMAND_TIMEOUT.as_secs()
-            ),
-            duration_ms,
-            timed_out: true,
         },
     }
 }
 
 fn terminal_shell_name() -> &'static str {
     if cfg!(windows) { "powershell" } else { "sh" }
-}
-
-fn terminal_shell_command(command_text: &str) -> Command {
-    let (program, args) = terminal_shell_parts(command_text);
-    let mut command = Command::new(program);
-    command.args(args);
-    command
 }
 
 fn terminal_shell_parts(command_text: &str) -> (&'static str, Vec<String>) {

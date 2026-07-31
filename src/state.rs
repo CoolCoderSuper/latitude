@@ -1,10 +1,7 @@
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,18 +9,16 @@ use hmac::{Hmac, Mac};
 use rand::random;
 use reqwest::Client;
 use sha2::Sha256;
-use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, RwLock};
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
 
 use crate::{
     config::{BootConfig, ConfigError},
     desktop::NativeSessionBridge,
     device::current_hostname,
-    project_files::ProjectFileService,
     server::GitStatusSummary,
     storage::CatalogStore,
-    terminal::TerminalSessionManager,
     util::{decode_hex, encode_hex},
-    workspace::WorkspaceBridge,
+    workspace::{WorkspaceBridge, WorkspaceServices},
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -39,9 +34,14 @@ pub(crate) enum GitRefreshAccess {
 }
 
 pub(crate) struct GitRefreshPermit {
-    state: AppState,
     fetch_remote: bool,
-    _guard: OwnedMutexGuard<()>,
+    state: OwnedMutexGuard<GitRefreshState>,
+}
+
+#[derive(Default)]
+struct GitRefreshState {
+    completed_at: Option<Instant>,
+    remote_fetch_completed_at: Option<Instant>,
 }
 
 struct AppStateInner {
@@ -52,15 +52,9 @@ struct AppStateInner {
     device_hostname: String,
     public_auth_secret: [u8; 32],
     native_session_bridge: Option<NativeSessionBridge>,
-    workspace_bridge: Option<WorkspaceBridge>,
-    terminal_sessions: Arc<TerminalSessionManager>,
-    project_files: ProjectFileService,
+    workspace: WorkspaceServices,
     project_git_statuses: RwLock<HashMap<String, GitStatusSummary>>,
-    git_refresh_lock: Arc<AsyncMutex<()>>,
-    git_refresh_generation: AtomicU64,
-    git_remote_fetch_generation: AtomicU64,
-    git_refresh_completed_at: Mutex<Option<Instant>>,
-    git_remote_fetch_completed_at: Mutex<Option<Instant>>,
+    git_refresh: Arc<Mutex<GitRefreshState>>,
 }
 
 impl AppState {
@@ -90,15 +84,9 @@ impl AppState {
                 device_hostname: current_hostname(),
                 public_auth_secret: random(),
                 native_session_bridge,
-                workspace_bridge,
-                terminal_sessions: Arc::new(TerminalSessionManager::default()),
-                project_files: ProjectFileService::default(),
+                workspace: WorkspaceServices::new(workspace_bridge),
                 project_git_statuses: RwLock::new(HashMap::new()),
-                git_refresh_lock: Arc::new(AsyncMutex::new(())),
-                git_refresh_generation: AtomicU64::new(0),
-                git_remote_fetch_generation: AtomicU64::new(0),
-                git_refresh_completed_at: Mutex::new(None),
-                git_remote_fetch_completed_at: Mutex::new(None),
+                git_refresh: Arc::new(Mutex::new(GitRefreshState::default())),
             }),
         }
     }
@@ -111,24 +99,16 @@ impl AppState {
         &self.inner.device_hostname
     }
 
-    pub(crate) fn terminal_sessions(&self) -> Arc<TerminalSessionManager> {
-        self.inner.terminal_sessions.clone()
-    }
-
     pub(crate) fn native_session_bridge(&self) -> Option<NativeSessionBridge> {
         self.inner.native_session_bridge.clone()
     }
 
-    pub(crate) fn workspace_bridge(&self) -> Option<WorkspaceBridge> {
-        self.inner.workspace_bridge.clone()
+    pub(crate) fn workspace(&self) -> &WorkspaceServices {
+        &self.inner.workspace
     }
 
     pub(crate) fn catalog(&self) -> &CatalogStore {
         &self.inner.catalog
-    }
-
-    pub(crate) fn project_files(&self) -> &ProjectFileService {
-        &self.inner.project_files
     }
 
     pub(crate) fn public_auth_cookie_value(&self, password: &str) -> String {
@@ -164,28 +144,21 @@ impl AppState {
         fetch_remote: bool,
         max_snapshot_age: Duration,
     ) -> GitRefreshAccess {
-        let observed_generation = self.inner.git_refresh_generation.load(Ordering::Acquire);
-        let guard = self.inner.git_refresh_lock.clone().lock_owned().await;
-        let completed_generation = self.inner.git_refresh_generation.load(Ordering::Acquire);
-        let remote_fetch_generation = self
-            .inner
-            .git_remote_fetch_generation
-            .load(Ordering::Acquire);
-        let local_snapshot_is_recent =
-            completed_recently(&self.inner.git_refresh_completed_at, max_snapshot_age);
-        let remote_fetch_is_recent =
-            completed_recently(&self.inner.git_remote_fetch_completed_at, max_snapshot_age);
-        if (completed_generation > observed_generation || local_snapshot_is_recent)
+        let requested_at = Instant::now();
+        let state = self.inner.git_refresh.clone().lock_owned().await;
+        if completed_since_or_recent(state.completed_at, requested_at, max_snapshot_age)
             && (!fetch_remote
-                || remote_fetch_generation > observed_generation
-                || remote_fetch_is_recent)
+                || completed_since_or_recent(
+                    state.remote_fetch_completed_at,
+                    requested_at,
+                    max_snapshot_age,
+                ))
         {
             return GitRefreshAccess::Reused;
         }
         GitRefreshAccess::Leader(GitRefreshPermit {
-            state: self.clone(),
             fetch_remote,
-            _guard: guard,
+            state,
         })
     }
 
@@ -198,32 +171,22 @@ impl AppState {
 }
 
 impl GitRefreshPermit {
-    pub(crate) fn complete(self) {
-        if let Ok(mut completed_at) = self.state.inner.git_refresh_completed_at.lock() {
-            *completed_at = Some(Instant::now());
-        }
-        let generation = self
-            .state
-            .inner
-            .git_refresh_generation
-            .fetch_add(1, Ordering::AcqRel)
-            + 1;
+    pub(crate) fn complete(mut self) {
+        let completed_at = Instant::now();
+        self.state.completed_at = Some(completed_at);
         if self.fetch_remote {
-            if let Ok(mut completed_at) = self.state.inner.git_remote_fetch_completed_at.lock() {
-                *completed_at = Some(Instant::now());
-            }
-            self.state
-                .inner
-                .git_remote_fetch_generation
-                .store(generation, Ordering::Release);
+            self.state.remote_fetch_completed_at = Some(completed_at);
         }
     }
 }
 
-fn completed_recently(completed_at: &Mutex<Option<Instant>>, max_age: Duration) -> bool {
-    completed_at.lock().is_ok_and(|completed_at| {
-        completed_at.is_some_and(|completed| completed.elapsed() <= max_age)
-    })
+fn completed_since_or_recent(
+    completed_at: Option<Instant>,
+    requested_at: Instant,
+    max_age: Duration,
+) -> bool {
+    completed_at
+        .is_some_and(|completed| completed >= requested_at || completed.elapsed() <= max_age)
 }
 
 fn public_auth_tag(secret: &[u8], password: &str) -> impl AsRef<[u8]> {

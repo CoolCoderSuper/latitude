@@ -27,7 +27,7 @@ use crate::{
 };
 
 use super::{
-    WorkspaceBridge, WorkspaceHostState, WorkspaceTerminalRequest,
+    WorkspaceBridge, WorkspaceHostState, WorkspaceServices, WorkspaceTerminalRequest,
     bridge::workspace_success_response,
     host::{workspace_error, workspace_is_authenticated},
 };
@@ -35,9 +35,92 @@ use super::{
 pub(super) const WORKSPACE_TERMINALS_PATH: &str = "/terminals";
 pub(super) const WORKSPACE_TERMINAL_PATH: &str = "/terminal";
 
+pub(crate) enum WorkspaceTerminalConnection {
+    Local(Arc<TerminalSession>),
+    Remote(WorkspaceBridge, WorkspaceTerminalRequest),
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub(super) struct WorkspaceTerminalQuery {
     project: Option<String>,
+}
+
+impl WorkspaceServices {
+    pub(crate) async fn list_terminals(
+        &self,
+        project: Option<&str>,
+    ) -> Result<Vec<TerminalSessionSummary>, (StatusCode, String)> {
+        match &self.bridge {
+            Some(bridge) => bridge
+                .list_terminals(project)
+                .await
+                .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string())),
+            None => Ok(match project {
+                Some(project) => self.terminals.list_project(project).await,
+                None => self.terminals.list_root().await,
+            }),
+        }
+    }
+
+    pub(crate) async fn create_terminal(
+        &self,
+        request: WorkspaceTerminalRequest,
+    ) -> Result<TerminalSessionSummary, (StatusCode, String)> {
+        match &self.bridge {
+            Some(bridge) => bridge
+                .create_terminal(request.project, request.cwd)
+                .await
+                .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string())),
+            None => create_workspace_terminal(&self.terminals, &request)
+                .await
+                .map(|session| session.summary())
+                .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error)),
+        }
+    }
+
+    pub(crate) async fn delete_terminal(
+        &self,
+        project: Option<&str>,
+        session: &str,
+    ) -> Result<bool, (StatusCode, String)> {
+        match &self.bridge {
+            Some(bridge) => bridge
+                .delete_terminal(project, session)
+                .await
+                .map_err(|error| (StatusCode::SERVICE_UNAVAILABLE, error.to_string())),
+            None => Ok(match project {
+                Some(project) => self.terminals.close_project_session(project, session).await,
+                None => self.terminals.close_root_session(session).await,
+            }),
+        }
+    }
+
+    pub(crate) async fn open_terminal(
+        &self,
+        request: WorkspaceTerminalRequest,
+    ) -> Result<WorkspaceTerminalConnection, String> {
+        if let Some(bridge) = &self.bridge {
+            return Ok(WorkspaceTerminalConnection::Remote(bridge.clone(), request));
+        }
+        let session = match request.session.as_deref() {
+            Some(session) => match request.project.as_deref() {
+                Some(project) => self.terminals.get_project_session(project, session).await,
+                None => self.terminals.get_root_session(session).await,
+            }
+            .ok_or_else(|| format!("terminal session '{session}' was not found"))?,
+            None => create_workspace_terminal(&self.terminals, &request).await?,
+        };
+        Ok(WorkspaceTerminalConnection::Local(session))
+    }
+}
+
+impl WorkspaceTerminalConnection {
+    pub(crate) async fn run(self, socket: WebSocket) {
+        match self {
+            Self::Local(session) => terminal_websocket_session(socket, session).await,
+            Self::Remote(bridge, request) => bridge.proxy_terminal(socket, request).await,
+        }
+    }
 }
 
 impl WorkspaceBridge {

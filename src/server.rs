@@ -9,6 +9,7 @@ mod html;
 mod page;
 mod paths;
 mod presentation;
+mod proxy;
 mod public;
 mod render;
 mod response;
@@ -75,18 +76,17 @@ use files_api::{
 };
 use public::{
     get_public_login, post_public_login, public_api_create_root_terminal_session,
-    public_api_create_share, public_api_create_terminal_session,
-    public_api_delete_root_terminal_session, public_api_delete_share,
+    public_api_create_terminal_session, public_api_delete_root_terminal_session,
     public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
     public_api_get_project_git_commit, public_api_get_project_git_history,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
-    public_api_list_root_terminal_sessions, public_api_list_shares,
-    public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
-    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
-    public_api_session, public_deployment, public_home, public_not_found, public_project_diff,
-    public_project_files, public_project_home, public_project_terminal, public_root_desktop,
-    public_root_terminal, public_root_terminal_ws, public_share, public_share_not_found,
-    public_terminal_ws, public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
+    public_api_list_root_terminal_sessions, public_api_list_terminal_sessions, public_api_login,
+    public_api_patch_project_archive, public_api_patch_project_diff,
+    public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
+    public_deployment, public_home, public_not_found, public_project_diff, public_project_files,
+    public_project_home, public_project_terminal, public_root_desktop, public_root_terminal,
+    public_root_terminal_ws, public_share, public_share_not_found, public_terminal_ws,
+    public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
     public_ui_get_shares,
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
@@ -203,9 +203,9 @@ fn protected_public_router(state: AppState) -> Router<AppState> {
         .route(PUBLIC_API_PROJECTS_PATH, get(public_api_list_projects))
         .route(
             PUBLIC_API_SHARES_PATH,
-            get(public_api_list_shares).post(public_api_create_share),
+            get(list_deployment_shares).post(create_deployment_share),
         )
-        .route(PUBLIC_API_SHARE_PATH, delete(public_api_delete_share))
+        .route(PUBLIC_API_SHARE_PATH, delete(delete_deployment_share))
         .route(
             "/__latitude/ui/shares/{project}/{deployment}",
             get(public_ui_get_shares).post(public_ui_create_share),

@@ -41,7 +41,6 @@ use super::{
 };
 
 pub(in crate::server) use shares::{
-    public_api_create_share, public_api_delete_share, public_api_list_shares,
     public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
 };
 pub(in crate::server) use terminals::{

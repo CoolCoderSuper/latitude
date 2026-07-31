@@ -32,8 +32,10 @@ use super::{
         public_request_is_authenticated,
     },
     command::{
-        T3CodeEmbedSessionRequest, create_project, create_t3code_embed_session, get_config,
-        get_project_deployment, get_project_page_content,
+        T3CodeEmbedSessionRequest, create_deployment_share as public_api_create_share,
+        create_project, create_t3code_embed_session,
+        delete_deployment_share as public_api_delete_share, get_config, get_project_deployment,
+        get_project_page_content, list_deployment_shares as public_api_list_shares,
     },
     constants::{
         AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, PUBLIC_API_SHARES_PATH,
@@ -54,8 +56,7 @@ use super::{
         sanitized_relative_path,
     },
     public::{
-        ShareUiForm, public_api_create_share, public_api_delete_share, public_api_list_shares,
-        public_project_detail, public_ui_create_share, public_ui_delete_share,
+        ShareUiForm, public_project_detail, public_ui_create_share, public_ui_delete_share,
         public_ui_get_shares,
     },
     public_router,
