@@ -7,8 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use axum::{
     Json,
     body::Body,
-    extract::State,
-    http::{HeaderMap, Response, StatusCode},
+    http::{Response, StatusCode},
     response::IntoResponse,
 };
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
@@ -17,8 +16,7 @@ use tokio::{process::Command, time::timeout};
 use crate::terminal::{root_terminal_cwd, terminal_cwd};
 
 use super::{
-    WorkspaceExecRequest, WorkspaceExecResponse, WorkspaceHostState, WorkspaceProcessOutput,
-    host::{workspace_error, workspace_is_authenticated},
+    WorkspaceExecRequest, WorkspaceExecResponse, WorkspaceProcessOutput, host::workspace_error,
 };
 
 pub(super) const WORKSPACE_EXEC_PATH: &str = "/exec";
@@ -66,13 +64,8 @@ impl WorkspaceExecRequest {
 }
 
 pub(super) async fn workspace_exec(
-    State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Json(mut request): Json<WorkspaceExecRequest>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     let cwd = request.cwd.get_or_insert_with(root_terminal_cwd);
     if !cwd.is_absolute() {
         return workspace_error(

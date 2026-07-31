@@ -4,14 +4,16 @@ use anyhow::{Context, Result, anyhow};
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, Response, StatusCode, header},
+    extract::DefaultBodyLimit,
+    http::{Response, StatusCode},
+    middleware,
     response::IntoResponse,
     routing::{delete, get, post},
 };
 use tokio::net::TcpListener;
 use tracing::info;
 
+use crate::internal_host::require_bearer_auth;
 use crate::project_files::ProjectFileService;
 use crate::terminal::{TerminalSessionManager, root_terminal_cwd};
 
@@ -42,8 +44,8 @@ pub(crate) async fn run_workspace_host(address: SocketAddr, token: String) -> Re
         ));
     }
 
+    let auth_token = Arc::from(token);
     let state = WorkspaceHostState {
-        token: Arc::from(token),
         terminals: Arc::new(TerminalSessionManager::default()),
         files: ProjectFileService::default(),
     };
@@ -62,6 +64,10 @@ pub(crate) async fn run_workspace_host(address: SocketAddr, token: String) -> Re
         .route(WORKSPACE_FILES_PATH, post(workspace_files))
         .route(WORKSPACE_FILE_WRITE_PATH, post(workspace_file_write))
         .layer(DefaultBodyLimit::max(MAX_INTERNAL_REQUEST_BYTES))
+        .route_layer(middleware::from_fn_with_state(
+            auth_token,
+            require_bearer_auth,
+        ))
         .with_state(state);
     let listener = TcpListener::bind(address)
         .await
@@ -75,13 +81,7 @@ pub(crate) async fn run_workspace_host(address: SocketAddr, token: String) -> Re
     Ok(())
 }
 
-async fn workspace_health(
-    State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
-) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
+async fn workspace_health() -> Response<Body> {
     Json(WorkspaceHealth {
         identity: workspace_identity(),
         profile_dir: root_terminal_cwd(),
@@ -95,14 +95,6 @@ fn workspace_identity() -> String {
         .ok()
         .filter(|domain| !domain.is_empty())
         .map_or(user.clone(), |domain| format!("{domain}\\{user}"))
-}
-
-pub(super) fn workspace_is_authenticated(headers: &HeaderMap, expected: &str) -> bool {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|provided| provided == expected)
 }
 
 pub(super) fn workspace_error(status: StatusCode, message: impl Into<String>) -> Response<Body> {

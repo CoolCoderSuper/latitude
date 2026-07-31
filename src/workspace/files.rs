@@ -3,17 +3,14 @@ use axum::{
     Json,
     body::Body,
     extract::State,
-    http::{HeaderMap, Response, StatusCode, header},
+    http::{Response, StatusCode, header},
     response::IntoResponse,
 };
 use serde::Serialize;
 
 use crate::project_files::{ProjectFileError, ProjectFileRequest, ProjectFileWriteRequest};
 
-use super::{
-    WorkspaceBridge, WorkspaceHostState, WorkspaceServices,
-    host::{workspace_error, workspace_is_authenticated},
-};
+use super::{WorkspaceBridge, WorkspaceHostState, WorkspaceServices, host::workspace_error};
 
 pub(super) const WORKSPACE_FILES_PATH: &str = "/files";
 pub(super) const WORKSPACE_FILE_WRITE_PATH: &str = "/files/write";
@@ -111,23 +108,15 @@ impl WorkspaceBridge {
 
 pub(super) async fn workspace_files(
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Json(request): Json<ProjectFileRequest>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     state.files.get(request).await
 }
 
 pub(super) async fn workspace_file_write(
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Json(request): Json<ProjectFileWriteRequest>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     match state.files.write(request).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(error) => workspace_error(error.status, error.message),

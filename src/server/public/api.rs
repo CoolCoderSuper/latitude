@@ -158,7 +158,7 @@ pub(in crate::server) async fn public_api_login(
 pub(in crate::server) async fn public_api_list_projects(
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     let config = state.config_snapshot().await;
     super::refresh_git_snapshot(
         &state,
@@ -167,10 +167,7 @@ pub(in crate::server) async fn public_api_list_projects(
         super::git_command_execution(req.uri().query()),
     )
     .await;
-    let catalog_projects = match list_catalog_projects_or_response(&state).await {
-        Ok(projects) => projects,
-        Err(response) => return response,
-    };
+    let catalog_projects = list_catalog_projects(&state).await?;
     let worktrees = match state.catalog().list_worktrees().await {
         Ok(worktrees) => worktrees,
         Err(error) => {
@@ -200,13 +197,12 @@ pub(in crate::server) async fn public_api_list_projects(
         })
         .collect();
 
-    Json(PublicProjectListResponse {
+    Ok(Json(PublicProjectListResponse {
         device_hostname: state.device_hostname().to_string(),
         root_terminal: public_root_terminal_link(),
         root_desktop: public_root_desktop_link(&config.desktop),
         projects,
-    })
-    .into_response()
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -218,31 +214,28 @@ pub(in crate::server) async fn public_api_patch_project_archive(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let body = match to_bytes(req.into_body(), MAX_LOGIN_PAYLOAD_BYTES).await {
-        Ok(body) => body,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
-    };
-    let payload: WorktreeArchivePayload = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let body = to_bytes(req.into_body(), MAX_LOGIN_PAYLOAD_BYTES)
+        .await
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error.to_string()))?;
+    let payload: WorktreeArchivePayload = serde_json::from_slice(&body)
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error.to_string()))?;
     match state
         .catalog()
         .set_worktree_archived(&project, payload.archived)
         .await
     {
-        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Ok(false) => json_error(
+        Ok(true) => Ok(Json(serde_json::json!({ "ok": true }))),
+        Ok(false) => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             format!("worktree project '{project}' was not found"),
-        ),
+        )),
         Err(error) => {
             error!(%error, project = %project, "worktree archive update failed");
-            json_error(
+            Err(ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "archive state could not be updated",
-            )
+            ))
         }
     }
 }
@@ -325,7 +318,7 @@ pub(in crate::server) async fn public_api_get_project(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     super::refresh_project_git_snapshot(
         &state,
         &project,
@@ -333,22 +326,18 @@ pub(in crate::server) async fn public_api_get_project(
         super::git_command_execution(req.uri().query()),
     )
     .await;
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+    let project_config = enabled_project(&state, &project).await?;
 
     let git_status = state
         .project_git_statuses()
         .await
         .remove(&project_config.name)
         .unwrap_or_default();
-    Json(public_project_detail(
+    Ok(Json(public_project_detail(
         &project_config,
         &git_status,
         state.device_hostname(),
-    ))
-    .into_response()
+    )))
 }
 
 fn request_fetches_remote(req: &Request<Body>) -> bool {
@@ -374,53 +363,40 @@ fn project_is_in_refresh_scope(project: &str, requested_project: Option<&str>) -
 pub(in crate::server) async fn public_api_get_project_diff(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
 
     let report = collect_project_diff(&project_config.project_dir).await;
-    Json(public_diff_response(report)).into_response()
+    Ok(Json(public_diff_response(report)))
 }
 
 pub(in crate::server) async fn public_api_get_project_git_history(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    Json(public_history_response(
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
+    Ok(Json(public_history_response(
         collect_project_git_history(&project_config.project_dir).await,
-    ))
-    .into_response()
+    )))
 }
 
 pub(in crate::server) async fn public_api_get_project_git_commit(
     AxumPath((project, hash)): AxumPath<(String, String)>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let Some(report) = collect_project_git_commit(&project_config.project_dir, &hash).await else {
-        return json_error(StatusCode::NOT_FOUND, "commit was not found");
-    };
-    Json(public_commit_response(report)).into_response()
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
+    let report = collect_project_git_commit(&project_config.project_dir, &hash)
+        .await
+        .ok_or_else(|| ApiError::not_found("commit was not found"))?;
+    Ok(Json(public_commit_response(report)))
 }
 
 pub(in crate::server) async fn public_api_patch_project_diff(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
 
     let content_type = req
         .headers()
@@ -428,19 +404,16 @@ pub(in crate::server) async fn public_api_patch_project_diff(
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
     let (_parts, body) = req.into_parts();
-    let body = match to_bytes(body, MAX_DIFF_ACTION_PAYLOAD_BYTES).await {
-        Ok(body) => body,
-        Err(error) => {
-            return json_error(
+    let body = to_bytes(body, MAX_DIFF_ACTION_PAYLOAD_BYTES)
+        .await
+        .map_err(|error| {
+            ApiError::new(
                 StatusCode::BAD_REQUEST,
                 format!("action payload could not be read: {error}"),
-            );
-        }
-    };
-    let action = match parse_public_git_action_payload(content_type.as_deref(), &body) {
-        Ok(action) => action,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
-    };
+            )
+        })?;
+    let action = parse_public_git_action_payload(content_type.as_deref(), &body)
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error))?;
 
     let action_result = execute_git_action(&project_config.project_dir, action).await;
     if let Err(error) = &action_result {
@@ -448,39 +421,36 @@ pub(in crate::server) async fn public_api_patch_project_diff(
     }
 
     let diff = collect_project_diff(&project_config.project_dir).await;
-    Json(PublicGitActionResponse {
+    Ok(Json(PublicGitActionResponse {
         ok: action_result.is_ok(),
         error: action_result.err(),
         diff: public_diff_response(diff),
-    })
-    .into_response()
+    }))
 }
 
-async fn list_catalog_projects_or_response(
-    state: &AppState,
-) -> Result<Vec<ProjectConfig>, Response<Body>> {
+async fn list_catalog_projects(state: &AppState) -> Result<Vec<ProjectConfig>, ApiError> {
     state.catalog().list_projects().await.map_err(|error| {
         error!(%error, "project list failed");
-        json_error(
+        ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "catalog could not be read",
         )
     })
 }
 
-pub(super) async fn enabled_project_or_response(
+pub(in crate::server) async fn enabled_project(
     state: &AppState,
     project: &str,
-) -> Result<ProjectConfig, Response<Body>> {
+) -> Result<ProjectConfig, ApiError> {
     match state.catalog().get_project(project).await {
         Ok(Some(project)) if project.enabled => Ok(project),
-        Ok(_) => Err(json_error(
+        Ok(_) => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             format!("project '{project}' was not found"),
         )),
         Err(error) => {
             error!(%error, project, "project lookup failed");
-            Err(json_error(
+            Err(ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "catalog could not be read",
             ))

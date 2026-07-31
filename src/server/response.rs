@@ -7,7 +7,7 @@ use axum::{
 use serde::Serialize;
 use tracing::error;
 
-use crate::{config::ConfigError, storage::StorageError};
+use crate::{config::ConfigError, project_files::ProjectFileError, storage::StorageError};
 
 #[derive(Debug)]
 pub(super) struct ApiError {
@@ -60,6 +60,18 @@ impl From<StorageError> for ApiError {
                 Self::new(StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
             }
         }
+    }
+}
+
+impl From<ProjectFileError> for ApiError {
+    fn from(error: ProjectFileError) -> Self {
+        Self::new(error.status, error.message)
+    }
+}
+
+impl From<(StatusCode, String)> for ApiError {
+    fn from((status, message): (StatusCode, String)) -> Self {
+        Self::new(status, message)
     }
 }
 

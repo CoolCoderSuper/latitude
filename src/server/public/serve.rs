@@ -705,7 +705,7 @@ async fn serve_root_desktop(
     }
 
     if method == Method::PATCH {
-        return execute_desktop_action_request(req).await;
+        return execute_desktop_action_request(req).await.into_response();
     }
 
     if let Err(error) = crate::desktop::DesktopSessionConfig::try_from(&config.desktop) {

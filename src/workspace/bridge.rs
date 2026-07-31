@@ -2,6 +2,8 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use reqwest::Method;
+use serde::de::DeserializeOwned;
 
 use super::{
     WorkspaceBridge, WorkspaceEndpoint, WorkspaceExecRequest, WorkspaceExecResponse,
@@ -50,21 +52,11 @@ impl WorkspaceBridge {
         &self,
         request: WorkspaceExecRequest,
     ) -> Result<WorkspaceProcessOutput> {
-        let endpoint = self.endpoint().await?;
-        let url = format!("http://{}{}", endpoint.address, WORKSPACE_EXEC_PATH);
-        let response = self
-            .client
-            .post(url)
-            .bearer_auth(&endpoint.token)
-            .json(&request)
-            .send()
-            .await
-            .context("workspace process host is unavailable")?;
-        let response = workspace_success_response(response).await?;
-        let response: WorkspaceExecResponse = response
-            .json()
-            .await
-            .context("workspace process response was invalid")?;
+        let response: WorkspaceExecResponse = self
+            .request_json(Method::POST, WORKSPACE_EXEC_PATH, |builder| {
+                builder.json(&request)
+            })
+            .await?;
         Ok(WorkspaceProcessOutput {
             status_code: response.status_code,
             stdout: BASE64
@@ -77,6 +69,31 @@ impl WorkspaceBridge {
             timed_out: response.timed_out,
             truncated: response.truncated,
         })
+    }
+
+    pub(super) async fn request_json<T>(
+        &self,
+        method: Method,
+        path: &str,
+        configure: impl FnOnce(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> Result<T>
+    where
+        T: DeserializeOwned,
+    {
+        let endpoint = self.endpoint().await?;
+        let response = configure(
+            self.client
+                .request(method, format!("http://{}{path}", endpoint.address))
+                .bearer_auth(&endpoint.token),
+        )
+        .send()
+        .await
+        .context("workspace host is unavailable")?;
+        workspace_success_response(response)
+            .await?
+            .json()
+            .await
+            .context("workspace host returned invalid JSON")
     }
 }
 

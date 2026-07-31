@@ -8,9 +8,8 @@ use axum::{
 use maud::html;
 use serde::Deserialize;
 
-use super::{render::highlight_source_lines, response::json_error};
+use super::{public::enabled_project, render::highlight_source_lines, response::ApiError};
 use crate::{
-    config::ProjectConfig,
     project_files::{
         MAX_FILE_EDITOR_BYTES, ProjectFileRequest, ProjectFileWriteRequest, resolve_project_target,
     },
@@ -46,11 +45,8 @@ pub(in crate::server) async fn public_api_get_project_files(
     Query(query): Query<FileQuery>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let project = match enabled_project(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<Response<Body>, ApiError> {
+    let project = enabled_project(&state, &project).await?;
     let request = ProjectFileRequest {
         project_dir: project.project_dir,
         path: query.path,
@@ -63,38 +59,27 @@ pub(in crate::server) async fn public_api_get_project_files(
             .and_then(|value| value.to_str().ok())
             .map(str::to_string),
     };
-    match state.workspace().file_get(request).await {
-        Ok(response) => response,
-        Err(error) => error.into_response(),
-    }
+    Ok(state.workspace().file_get(request).await?)
 }
 
 pub(in crate::server) async fn public_api_put_project_file(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let project = match enabled_project(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let body = match to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES + 4096).await {
-        Ok(body) => body,
-        Err(_) => return json_error(StatusCode::PAYLOAD_TOO_LARGE, "file is too large to save"),
-    };
-    let payload: SavePayload = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let project = enabled_project(&state, &project).await?;
+    let body = to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES + 4096)
+        .await
+        .map_err(|_| ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "file is too large to save"))?;
+    let payload: SavePayload = serde_json::from_slice(&body)
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error.to_string()))?;
     let request = ProjectFileWriteRequest {
         project_dir: project.project_dir,
         path: payload.path,
         content: payload.content,
     };
-    match state.workspace().write_file(request).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
-        Err(error) => error.into_response(),
-    }
+    state.workspace().write_file(request).await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub(in crate::server) async fn public_ui_put_project_file(
@@ -104,7 +89,7 @@ pub(in crate::server) async fn public_ui_put_project_file(
 ) -> Response<Body> {
     let project = match enabled_project(&state, &project).await {
         Ok(project) => project,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let body = match to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES * 3 + 4096).await {
         Ok(body) => body,
@@ -151,44 +136,28 @@ pub(in crate::server) async fn public_api_highlight_project_file(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let project = match enabled_project(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let body = match to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES + 4096).await {
-        Ok(body) => body,
-        Err(_) => {
-            return json_error(
+) -> Result<impl IntoResponse, ApiError> {
+    let project = enabled_project(&state, &project).await?;
+    let body = to_bytes(req.into_body(), MAX_FILE_EDITOR_BYTES + 4096)
+        .await
+        .map_err(|_| {
+            ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "file is too large to highlight",
-            );
-        }
-    };
-    let payload: HighlightPayload = match serde_json::from_slice(&body) {
-        Ok(payload) => payload,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error.to_string()),
-    };
+            )
+        })?;
+    let payload: HighlightPayload = serde_json::from_slice(&body)
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error.to_string()))?;
     if payload.content.len() > MAX_FILE_EDITOR_BYTES {
-        return json_error(
+        return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "file is too large to highlight",
-        );
+        ));
     }
-    if let Err(error) = resolve_project_target(&project.project_dir, &payload.path).await {
-        return error.into_response();
-    }
+    resolve_project_target(&project.project_dir, &payload.path).await?;
 
-    Json(highlight_source_lines(&payload.content, &payload.path)).into_response()
-}
-
-async fn enabled_project(state: &AppState, name: &str) -> Result<ProjectConfig, Response<Body>> {
-    match state.catalog().get_project(name).await {
-        Ok(Some(project)) if project.enabled => Ok(project),
-        Ok(_) => Err(json_error(StatusCode::NOT_FOUND, "project was not found")),
-        Err(error) => Err(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error.to_string(),
-        )),
-    }
+    Ok(Json(highlight_source_lines(
+        &payload.content,
+        &payload.path,
+    )))
 }

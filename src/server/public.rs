@@ -111,7 +111,7 @@ fn git_command_execution(query: Option<&str>) -> GitCommandExecution {
 #[cfg(test)]
 pub(super) use api::ShareUiForm;
 pub(super) use api::{
-    get_public_login, post_public_login, public_api_create_root_terminal_session,
+    enabled_project, get_public_login, post_public_login, public_api_create_root_terminal_session,
     public_api_create_terminal_session, public_api_delete_root_terminal_session,
     public_api_delete_terminal_session, public_api_get_project, public_api_get_project_diff,
     public_api_get_project_git_commit, public_api_get_project_git_history,

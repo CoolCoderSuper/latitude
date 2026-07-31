@@ -7,9 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use axum::{
     Router,
     body::Body,
-    extract::{State, ws::WebSocketUpgrade},
-    http::{HeaderMap, Response, StatusCode, header},
-    response::IntoResponse,
+    extract::ws::WebSocketUpgrade,
+    http::{Response, StatusCode, header},
+    middleware,
     routing::get,
 };
 use futures_util::SinkExt;
@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info, warn};
 
-use crate::websocket_bridge::forward_websocket;
+use crate::{internal_host::require_bearer_auth, websocket_bridge::forward_websocket};
 
 use super::DesktopSessionConfig;
 
@@ -44,11 +44,6 @@ struct NativeSessionRequest {
     session_config: DesktopSessionConfig,
     view_only: bool,
     peer_ip: Option<IpAddr>,
-}
-
-#[derive(Clone)]
-struct SessionHostState {
-    token: Arc<str>,
 }
 
 impl NativeSessionBridge {
@@ -149,13 +144,13 @@ pub(crate) async fn run_native_session_host(address: SocketAddr, token: String) 
         ));
     }
 
-    let state = SessionHostState {
-        token: Arc::from(token),
-    };
     let router = Router::new()
         .route(SESSION_HOST_HEALTH_PATH, get(session_host_health))
         .route(SESSION_HOST_DESKTOP_PATH, get(session_host_desktop))
-        .with_state(state);
+        .route_layer(middleware::from_fn_with_state(
+            Arc::from(token),
+            require_bearer_auth,
+        ));
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("native desktop session host could not bind {address}"))?;
@@ -167,25 +162,11 @@ pub(crate) async fn run_native_session_host(address: SocketAddr, token: String) 
     Ok(())
 }
 
-async fn session_host_health(
-    State(state): State<SessionHostState>,
-    headers: HeaderMap,
-) -> Response<Body> {
-    if !session_host_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    StatusCode::NO_CONTENT.into_response()
+async fn session_host_health() -> StatusCode {
+    StatusCode::NO_CONTENT
 }
 
-async fn session_host_desktop(
-    State(state): State<SessionHostState>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
-) -> Response<Body> {
-    if !session_host_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-
+async fn session_host_desktop(ws: WebSocketUpgrade) -> Response<Body> {
     ws.on_upgrade(|mut socket| async move {
         let request = match socket.recv().await {
             Some(Ok(axum::extract::ws::Message::Text(message))) => {
@@ -215,12 +196,4 @@ async fn session_host_desktop(
         )
         .await;
     })
-}
-
-fn session_host_is_authenticated(headers: &HeaderMap, expected: &str) -> bool {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|provided| provided == expected)
 }

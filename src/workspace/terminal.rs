@@ -8,7 +8,7 @@ use axum::{
         Path as AxumPath, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, Response, StatusCode, header},
+    http::{Response, StatusCode, header},
     response::IntoResponse,
 };
 use futures_util::SinkExt;
@@ -28,8 +28,7 @@ use crate::{
 
 use super::{
     WorkspaceBridge, WorkspaceHostState, WorkspaceServices, WorkspaceTerminalRequest,
-    bridge::workspace_success_response,
-    host::{workspace_error, workspace_is_authenticated},
+    bridge::workspace_success_response, host::workspace_error,
 };
 
 pub(super) const WORKSPACE_TERMINALS_PATH: &str = "/terminals";
@@ -128,23 +127,12 @@ impl WorkspaceBridge {
         &self,
         project: Option<&str>,
     ) -> Result<Vec<TerminalSessionSummary>> {
-        let endpoint = self.endpoint().await?;
-        let url = format!("http://{}{}", endpoint.address, WORKSPACE_TERMINALS_PATH);
-        let response = self
-            .client
-            .get(url)
-            .bearer_auth(&endpoint.token)
-            .query(&WorkspaceTerminalQuery {
+        self.request_json(Method::GET, WORKSPACE_TERMINALS_PATH, |builder| {
+            builder.query(&WorkspaceTerminalQuery {
                 project: project.map(str::to_string),
             })
-            .send()
-            .await
-            .context("workspace terminal host is unavailable")?;
-        workspace_success_response(response)
-            .await?
-            .json()
-            .await
-            .context("workspace terminal list was invalid")
+        })
+        .await
     }
 
     pub(crate) async fn create_terminal(
@@ -152,25 +140,14 @@ impl WorkspaceBridge {
         project: Option<String>,
         cwd: Option<PathBuf>,
     ) -> Result<TerminalSessionSummary> {
-        let endpoint = self.endpoint().await?;
-        let url = format!("http://{}{}", endpoint.address, WORKSPACE_TERMINALS_PATH);
-        let response = self
-            .client
-            .post(url)
-            .bearer_auth(&endpoint.token)
-            .json(&WorkspaceTerminalRequest {
+        self.request_json(Method::POST, WORKSPACE_TERMINALS_PATH, |builder| {
+            builder.json(&WorkspaceTerminalRequest {
                 project,
                 cwd,
                 session: None,
             })
-            .send()
-            .await
-            .context("workspace terminal host is unavailable")?;
-        workspace_success_response(response)
-            .await?
-            .json()
-            .await
-            .context("workspace terminal response was invalid")
+        })
+        .await
     }
 
     pub(crate) async fn delete_terminal(
@@ -249,12 +226,8 @@ impl WorkspaceBridge {
 
 pub(super) async fn workspace_list_terminals(
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Query(query): Query<WorkspaceTerminalQuery>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     let sessions = if let Some(project) = query.project {
         state.terminals.list_project(&project).await
     } else {
@@ -265,12 +238,8 @@ pub(super) async fn workspace_list_terminals(
 
 pub(super) async fn workspace_create_terminal(
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Json(request): Json<WorkspaceTerminalRequest>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     match create_workspace_terminal(&state.terminals, &request).await {
         Ok(session) => Json(session.summary()).into_response(),
         Err(error) => workspace_error(StatusCode::BAD_REQUEST, error),
@@ -280,12 +249,8 @@ pub(super) async fn workspace_create_terminal(
 pub(super) async fn workspace_delete_terminal(
     AxumPath(session): AxumPath<String>,
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     Query(query): Query<WorkspaceTerminalQuery>,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     let removed = if let Some(project) = query.project {
         state
             .terminals
@@ -303,12 +268,8 @@ pub(super) async fn workspace_delete_terminal(
 
 pub(super) async fn workspace_terminal(
     State(state): State<WorkspaceHostState>,
-    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response<Body> {
-    if !workspace_is_authenticated(&headers, &state.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
     ws.on_upgrade(move |mut socket| async move {
         let request = match socket.recv().await {
             Some(Ok(Message::Text(message))) => {

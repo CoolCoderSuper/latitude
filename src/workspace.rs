@@ -45,7 +45,6 @@ pub(crate) struct WorkspaceServices {
 
 #[derive(Clone)]
 struct WorkspaceHostState {
-    token: Arc<str>,
     terminals: Arc<TerminalSessionManager>,
     files: ProjectFileService,
 }

@@ -19,7 +19,7 @@ use crate::{
 use super::{
     auth::public_headers_are_authenticated,
     constants::{MAX_DESKTOP_ACTION_PAYLOAD_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH},
-    response::json_error,
+    response::{ApiError, json_error},
 };
 
 #[derive(Debug, Deserialize)]
@@ -37,77 +37,80 @@ struct DesktopActionPayload {
 
 pub(in crate::server) async fn public_api_get_root_desktop(
     State(state): State<AppState>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     let config = state.config_snapshot().await;
     if !config.desktop.enabled {
-        return json_error(StatusCode::NOT_FOUND, "desktop is not enabled");
+        return Err(ApiError::not_found("desktop is not enabled"));
     }
 
-    if let Err(error) = DesktopSessionConfig::try_from(&config.desktop) {
-        return json_error(
+    DesktopSessionConfig::try_from(&config.desktop).map_err(|error| {
+        ApiError::new(
             StatusCode::BAD_GATEWAY,
             format!("desktop session could not be prepared: {error}"),
-        );
-    }
+        )
+    })?;
 
-    Json(desktop_info_response(
+    Ok(Json(desktop_info_response(
         &config.desktop,
         PUBLIC_ROOT_DESKTOP_WS_PATH.to_string(),
-    ))
-    .into_response()
+    )))
 }
 
-pub(in crate::server) async fn public_api_patch_root_desktop(req: Request<Body>) -> Response<Body> {
+pub(in crate::server) async fn public_api_patch_root_desktop(
+    req: Request<Body>,
+) -> Result<impl IntoResponse, ApiError> {
     execute_desktop_action_request(req).await
 }
 
 pub(in crate::server) async fn execute_desktop_action_request(
     req: Request<Body>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .map(str::to_string);
     let (_parts, body) = req.into_parts();
-    let body = match to_bytes(body, MAX_DESKTOP_ACTION_PAYLOAD_BYTES).await {
-        Ok(body) => body,
-        Err(error) => {
-            return json_error(
+    let body = to_bytes(body, MAX_DESKTOP_ACTION_PAYLOAD_BYTES)
+        .await
+        .map_err(|error| {
+            ApiError::new(
                 StatusCode::BAD_REQUEST,
                 format!("desktop action payload could not be read: {error}"),
-            );
-        }
-    };
+            )
+        })?;
 
-    let action = match parse_desktop_action_payload(content_type.as_deref(), &body) {
-        Ok(action) => action,
-        Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
-    };
+    let action = parse_desktop_action_payload(content_type.as_deref(), &body)
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error))?;
 
-    match set_desktop_resolution(action.screen_id.as_deref(), action.width, action.height) {
-        Ok(response) => Json(response).into_response(),
-        Err(DesktopResolutionError::UnsupportedPlatform) => json_error(
+    set_desktop_resolution(action.screen_id.as_deref(), action.width, action.height)
+        .map(Json)
+        .map_err(desktop_resolution_error)
+}
+
+fn desktop_resolution_error(error: DesktopResolutionError) -> ApiError {
+    match error {
+        DesktopResolutionError::UnsupportedPlatform => ApiError::new(
             StatusCode::NOT_IMPLEMENTED,
             "desktop resolution changes are only supported on Windows",
         ),
-        Err(DesktopResolutionError::InvalidDimensions) => json_error(
+        DesktopResolutionError::InvalidDimensions => ApiError::new(
             StatusCode::BAD_REQUEST,
             "desktop resolution must be between 640x480 and 7680x4320",
         ),
-        Err(DesktopResolutionError::InvalidScreenId(screen_id)) => json_error(
+        DesktopResolutionError::InvalidScreenId(screen_id) => ApiError::new(
             StatusCode::BAD_REQUEST,
             format!("desktop screen '{screen_id}' is not available for resolution changes"),
         ),
-        Err(DesktopResolutionError::CurrentSettingsUnavailable) => json_error(
+        DesktopResolutionError::CurrentSettingsUnavailable => ApiError::new(
             StatusCode::BAD_GATEWAY,
             "current display settings could not be read",
         ),
-        Err(DesktopResolutionError::ChangeFailed {
+        DesktopResolutionError::ChangeFailed {
             width,
             height,
             code,
-        }) => json_error(
+        } => ApiError::new(
             StatusCode::BAD_REQUEST,
             format!("Windows rejected resolution {width}x{height} with display code {code}"),
         ),

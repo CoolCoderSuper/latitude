@@ -8,6 +8,7 @@ mod desktop;
 mod desktop_webrtc;
 mod device;
 mod http_stream;
+mod internal_host;
 mod project_files;
 mod server;
 mod state;

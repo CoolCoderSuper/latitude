@@ -11,64 +11,57 @@ use crate::{
     server::{
         auth::{public_api_auth_challenge, public_headers_are_authenticated},
         constants::MAX_TERMINAL_COMMAND_BYTES,
-        response::json_error,
+        response::ApiError,
         terminal_api::{
             PublicTerminalSessionListResponse, TerminalWsQuery, execute_terminal_command,
             parse_terminal_command_payload, root_terminal_info_response, terminal_info_response,
         },
     },
     state::AppState,
+    terminal::TerminalSessionSummary,
     workspace::WorkspaceTerminalRequest,
 };
 
-use super::enabled_project_or_response;
+use super::enabled_project;
 
 pub(in crate::server) async fn public_api_get_project_terminal(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
 
-    Json(terminal_info_response(
+    Ok(Json(terminal_info_response(
         &project,
         &project_config.project_dir,
-    ))
-    .into_response()
+    )))
 }
 
 pub(in crate::server) async fn public_api_post_project_terminal(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
     req: Request<Body>,
-) -> Response<Body> {
-    let project_config = match enabled_project_or_response(&state, &project).await {
-        Ok(project) => project,
-        Err(response) => return response,
-    };
-    let command = match terminal_command(req).await {
-        Ok(command) => command,
-        Err(response) => return response,
-    };
+) -> Result<impl IntoResponse, ApiError> {
+    let project_config = enabled_project(&state, &project).await?;
+    let command = terminal_command(req).await?;
 
-    Json(execute_terminal_command(Some(&project_config.project_dir), command).await).into_response()
+    Ok(Json(
+        execute_terminal_command(Some(&project_config.project_dir), command).await,
+    ))
 }
 
 pub(in crate::server) async fn public_api_get_root_terminal() -> Response<Body> {
     Json(root_terminal_info_response().await).into_response()
 }
 
-pub(in crate::server) async fn public_api_post_root_terminal(req: Request<Body>) -> Response<Body> {
-    let command = match terminal_command(req).await {
-        Ok(command) => command,
-        Err(response) => return response,
-    };
-    Json(execute_terminal_command(None, command).await).into_response()
+pub(in crate::server) async fn public_api_post_root_terminal(
+    req: Request<Body>,
+) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(
+        execute_terminal_command(None, terminal_command(req).await?).await,
+    ))
 }
 
-async fn terminal_command(req: Request<Body>) -> Result<String, Response<Body>> {
+async fn terminal_command(req: Request<Body>) -> Result<String, ApiError> {
     let content_type = req
         .headers()
         .get(header::CONTENT_TYPE)
@@ -77,65 +70,53 @@ async fn terminal_command(req: Request<Body>) -> Result<String, Response<Body>> 
     let body = to_bytes(req.into_body(), MAX_TERMINAL_COMMAND_BYTES + 1024)
         .await
         .map_err(|error| {
-            json_error(
+            ApiError::new(
                 StatusCode::BAD_REQUEST,
                 format!("terminal payload could not be read: {error}"),
             )
         })?;
     parse_terminal_command_payload(content_type.as_deref(), &body)
-        .map_err(|error| json_error(StatusCode::BAD_REQUEST, error))
+        .map_err(|error| ApiError::new(StatusCode::BAD_REQUEST, error))
 }
 
 pub(in crate::server) async fn public_api_list_root_terminal_sessions(
     State(state): State<AppState>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     list_terminal_sessions(&state, TerminalTarget::root()).await
 }
 
 pub(in crate::server) async fn public_api_create_root_terminal_session(
     State(state): State<AppState>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     create_terminal_session(&state, TerminalTarget::root()).await
 }
 
 pub(in crate::server) async fn public_api_delete_root_terminal_session(
     AxumPath(session): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
+) -> Result<impl IntoResponse, ApiError> {
     delete_terminal_session(&state, TerminalTarget::root(), &session).await
 }
 
 pub(in crate::server) async fn public_api_list_terminal_sessions(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let target = match project_target(&state, project).await {
-        Ok(target) => target,
-        Err(response) => return response,
-    };
-    list_terminal_sessions(&state, target).await
+) -> Result<impl IntoResponse, ApiError> {
+    list_terminal_sessions(&state, project_target(&state, project).await?).await
 }
 
 pub(in crate::server) async fn public_api_create_terminal_session(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let target = match project_target(&state, project).await {
-        Ok(target) => target,
-        Err(response) => return response,
-    };
-    create_terminal_session(&state, target).await
+) -> Result<impl IntoResponse, ApiError> {
+    create_terminal_session(&state, project_target(&state, project).await?).await
 }
 
 pub(in crate::server) async fn public_api_delete_terminal_session(
     AxumPath((project, session)): AxumPath<(String, String)>,
     State(state): State<AppState>,
-) -> Response<Body> {
-    let target = match project_target(&state, project).await {
-        Ok(target) => target,
-        Err(response) => return response,
-    };
-    delete_terminal_session(&state, target, &session).await
+) -> Result<impl IntoResponse, ApiError> {
+    delete_terminal_session(&state, project_target(&state, project).await?, &session).await
 }
 
 struct TerminalTarget {
@@ -152,57 +133,51 @@ impl TerminalTarget {
     }
 }
 
-async fn project_target(
-    state: &AppState,
-    project: String,
-) -> Result<TerminalTarget, Response<Body>> {
-    let config = enabled_project_or_response(state, &project).await?;
+async fn project_target(state: &AppState, project: String) -> Result<TerminalTarget, ApiError> {
+    let config = enabled_project(state, &project).await?;
     Ok(TerminalTarget {
         project: Some(project),
         config: Some(config),
     })
 }
 
-async fn list_terminal_sessions(state: &AppState, target: TerminalTarget) -> Response<Body> {
+async fn list_terminal_sessions(
+    state: &AppState,
+    target: TerminalTarget,
+) -> Result<Json<PublicTerminalSessionListResponse>, ApiError> {
     let project = target.project.as_deref();
-    let sessions = match state.workspace().list_terminals(project).await {
-        Ok(sessions) => sessions,
-        Err((status, error)) => return json_error(status, error),
-    };
-    Json(PublicTerminalSessionListResponse { sessions }).into_response()
+    let sessions = state.workspace().list_terminals(project).await?;
+    Ok(Json(PublicTerminalSessionListResponse { sessions }))
 }
 
-async fn create_terminal_session(state: &AppState, target: TerminalTarget) -> Response<Body> {
+async fn create_terminal_session(
+    state: &AppState,
+    target: TerminalTarget,
+) -> Result<Json<TerminalSessionSummary>, ApiError> {
     let request = WorkspaceTerminalRequest {
         project: target.project,
         cwd: target.config.map(|config| config.project_dir),
         session: None,
     };
-    match state.workspace().create_terminal(request).await {
-        Ok(session) => Json(session).into_response(),
-        Err((status, error)) => json_error(status, error),
-    }
+    Ok(Json(state.workspace().create_terminal(request).await?))
 }
 
 async fn delete_terminal_session(
     state: &AppState,
     target: TerminalTarget,
     session: &str,
-) -> Response<Body> {
+) -> Result<StatusCode, ApiError> {
     let project = target.project.as_deref();
-    let deleted = match state.workspace().delete_terminal(project, session).await {
-        Ok(deleted) => deleted,
-        Err((status, error)) => return json_error(status, error),
-    };
+    let deleted = state.workspace().delete_terminal(project, session).await?;
     if deleted {
-        StatusCode::NO_CONTENT.into_response()
+        Ok(StatusCode::NO_CONTENT)
     } else {
-        terminal_not_found(session)
+        Err(terminal_not_found(session))
     }
 }
 
-fn terminal_not_found(session: &str) -> Response<Body> {
-    json_error(
+fn terminal_not_found(session: &str) -> ApiError {
+    ApiError::new(
         StatusCode::NOT_FOUND,
         format!("terminal session '{session}' was not found"),
     )
@@ -242,7 +217,7 @@ async fn terminal_websocket(
     let target = match project {
         Some(project) => match project_target(&state, project).await {
             Ok(target) => target,
-            Err(response) => return response,
+            Err(error) => return error.into_response(),
         },
         None => TerminalTarget::root(),
     };
@@ -255,9 +230,12 @@ async fn terminal_websocket(
     let connection = match state.workspace().open_terminal(request).await {
         Ok(connection) => connection,
         Err(_) if query.session.is_some() => {
-            return terminal_not_found(query.session.as_deref().unwrap_or_default());
+            return terminal_not_found(query.session.as_deref().unwrap_or_default())
+                .into_response();
         }
-        Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Err(error) => {
+            return ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error).into_response();
+        }
     };
     ws.on_upgrade(move |socket| connection.run(socket))
 }
