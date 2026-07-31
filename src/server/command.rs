@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    command_protocol::{CreateDeploymentShareRequest, DeploymentShareResponse, HealthResponse},
     config::{ApplicationConfig, BootConfig, DeploymentShareConfig, current_unix_timestamp},
     state::AppState,
     storage::PageContent,
@@ -18,37 +19,6 @@ use super::{
     page::parse_page_payload,
     response::{ApiError, internal_response},
 };
-
-#[derive(Debug, Serialize)]
-pub(super) struct HealthResponse {
-    status: &'static str,
-    public_bind: String,
-    command_bind: String,
-    project_count: usize,
-    deployment_count: usize,
-    share_link_count: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub(in crate::server) struct CreateDeploymentShareRequest {
-    pub(in crate::server) project: String,
-    pub(in crate::server) deployment: String,
-    #[serde(default)]
-    pub(in crate::server) password: Option<String>,
-    #[serde(default)]
-    pub(in crate::server) expires_at: Option<u64>,
-}
-
-#[derive(Debug, Serialize)]
-pub(in crate::server) struct DeploymentShareResponse {
-    token: String,
-    project: String,
-    deployment: String,
-    href: String,
-    has_password: bool,
-    expires_at: Option<u64>,
-    expired: bool,
-}
 
 #[derive(Debug, Deserialize)]
 pub(super) struct T3CodeEmbedSessionRequest {
@@ -105,7 +75,7 @@ pub(super) async fn command_health(
     let config = state.config_snapshot().await;
     let counts = state.catalog().counts().await?;
     Ok(Json(HealthResponse {
-        status: "ok",
+        status: "ok".to_string(),
         public_bind: config.public_bind,
         command_bind: config.command_bind,
         project_count: counts.project_count,

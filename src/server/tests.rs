@@ -1,3 +1,5 @@
+mod shares;
+
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -9,8 +11,10 @@ use axum::{
     http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::IntoResponse,
 };
+use tower::ServiceExt;
 
 use crate::{
+    command_protocol::CreateDeploymentShareRequest,
     config::{
         ApplicationConfig, ApplicationTarget, BootConfig, CatalogSeed, DeploymentShareConfig,
         DesktopConfig, PageFormat, ProjectConfig, SeedApplicationConfig, SeedApplicationTarget,
@@ -28,10 +32,13 @@ use super::{
         public_request_is_authenticated,
     },
     command::{
-        CreateDeploymentShareRequest, T3CodeEmbedSessionRequest, create_project,
-        create_t3code_embed_session, get_config, get_project_deployment, get_project_page_content,
+        T3CodeEmbedSessionRequest, create_project, create_t3code_embed_session, get_config,
+        get_project_deployment, get_project_page_content,
     },
-    constants::{AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, T3CODE_EMBED_COOKIE},
+    constants::{
+        AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, PUBLIC_API_SHARES_PATH,
+        T3CODE_EMBED_COOKIE,
+    },
     files_api::public_ui_put_project_file,
     git::{
         GitAction, GitDiffReport, GitFileChange, GitFileDiff, GitStatusSummary,
@@ -51,6 +58,7 @@ use super::{
         public_entry, public_project_detail, public_ui_create_share, public_ui_delete_share,
         public_ui_get_shares,
     },
+    public_router,
     render::{
         diff_line_class, highlight_diff_lines, render_diff_code_output, render_diff_file_update,
         render_diff_workspace_fragment, render_project_diff, render_project_files,
@@ -310,169 +318,6 @@ async fn t3code_session_cookie_does_not_hide_open_action_from_normal_pages() {
     assert!(rendered.contains("data-t3code-open"));
 }
 
-#[tokio::test]
-async fn authenticated_public_api_manages_deployment_shares() {
-    let config = BootConfig::default();
-    let state = test_state_with_seed(
-        config.clone(),
-        demo_seed(vec![seed_static(
-            "website",
-            PathBuf::from("."),
-            "index.html",
-        )]),
-    )
-    .await;
-    let token = state.public_auth_cookie_value(&config.public_password);
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-    );
-
-    let response = public_api_create_share(
-        State(state.clone()),
-        headers,
-        axum::Json(CreateDeploymentShareRequest {
-            project: "demo".to_string(),
-            deployment: "website".to_string(),
-            password: Some("review-only".to_string()),
-            expires_at: None,
-        }),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let created: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let share_token = created["token"].as_str().unwrap().to_string();
-    assert_eq!(created["has_password"], true);
-    assert!(created.get("password").is_none());
-
-    let request = Request::builder()
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let response = public_api_list_shares(State(state.clone()), request).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let shares: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(shares.as_array().unwrap().len(), 1);
-    assert_eq!(shares[0]["deployment"], "website");
-    assert!(shares[0].get("password").is_none());
-
-    let request = Request::builder()
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::empty())
-        .unwrap();
-    let response = public_api_delete_share(
-        axum::extract::Path(share_token),
-        State(state.clone()),
-        request,
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(state.catalog().list_shares().await.unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn authenticated_share_ui_exchanges_html_fragments() {
-    let config = BootConfig::default();
-    let state = test_state_with_seed(
-        config.clone(),
-        demo_seed(vec![seed_static(
-            "website",
-            PathBuf::from("."),
-            "index.html",
-        )]),
-    )
-    .await;
-    let token = state.public_auth_cookie_value(&config.public_password);
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::AUTHORIZATION,
-        HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
-    );
-
-    let response = public_ui_get_shares(
-        axum::extract::Path(("demo".to_string(), "website".to_string())),
-        State(state.clone()),
-        headers.clone(),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok()),
-        Some("text/html; charset=utf-8")
-    );
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-    assert!(rendered.contains("hx-post=\"/__latitude/ui/shares/demo/website\""));
-    assert!(rendered.contains("No links yet"));
-
-    let response = public_ui_create_share(
-        axum::extract::Path(("demo".to_string(), "website".to_string())),
-        State(state.clone()),
-        headers.clone(),
-        axum::extract::Form(ShareUiForm {
-            password: Some("review-only".to_string()),
-            expiry: Some(3600),
-        }),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-    assert!(rendered.contains("Share link created."));
-    assert!(rendered.contains("Password protected"));
-    assert!(rendered.contains("hx-delete="));
-
-    let shares = state.catalog().list_shares().await.unwrap();
-    assert_eq!(shares.len(), 1);
-    let share_token = shares[0].token.clone();
-    let response = public_ui_delete_share(
-        axum::extract::Path(("demo".to_string(), "website".to_string(), share_token)),
-        State(state.clone()),
-        headers,
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-    assert!(rendered.contains("Share link revoked."));
-    assert!(state.catalog().list_shares().await.unwrap().is_empty());
-}
-
-#[test]
-fn renders_share_dialog_as_htmx_controls() {
-    let shares = vec![DeploymentShareConfig {
-        token: "open123".to_string(),
-        project: "demo".to_string(),
-        deployment: "website".to_string(),
-        password: None,
-        expires_at: None,
-    }];
-
-    let rendered = render_share_dialog_shell("demo", "website", &shares, None).into_string();
-
-    assert!(rendered.contains("data-share-dialog-shell"));
-    assert!(rendered.contains("hx-post=\"/__latitude/ui/shares/demo/website\""));
-    assert!(rendered.contains("hx-delete=\"/__latitude/ui/shares/demo/website/open123\""));
-    assert!(rendered.contains("data-share-url=\"/__latitude/share/open123/\""));
-    assert!(!rendered.contains("fetch("));
-}
-
-#[tokio::test]
-async fn public_share_management_requires_authentication() {
-    let state = test_state(BootConfig::default()).await;
-    let request = Request::builder().body(Body::empty()).unwrap();
-
-    let response = public_api_list_shares(State(state), request).await;
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
 #[test]
 fn cleans_public_login_next_paths() {
     assert_eq!(
@@ -584,7 +429,7 @@ fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
 
 #[tokio::test]
 async fn serves_embedded_assets_with_cache_validation() {
-    assert!(embedded_asset_names().contains(&"htmx.min.js"));
+    assert!(embedded_asset_names().any(|name| name == "htmx.min.js"));
     let response = public_asset(
         axum::extract::Path("htmx.min.js".to_string()),
         HeaderMap::new(),
@@ -1259,136 +1104,6 @@ async fn serves_static_site_without_document_shell() {
     assert!(!rendered.contains("Back to project"));
 
     let _ = std::fs::remove_dir_all(root);
-}
-
-#[tokio::test]
-async fn serves_unprotected_deployment_share_without_public_auth() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
-            "report",
-            "# Shared Report",
-            PageFormat::Markdown,
-            None,
-            None,
-        )],
-        vec![DeploymentShareConfig {
-            token: "open123".to_string(),
-            project: "demo".to_string(),
-            deployment: "report".to_string(),
-            password: None,
-            expires_at: None,
-        }],
-    );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
-    let req = Request::builder()
-        .uri("/__latitude/share/open123/")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = public_entry(State(state), req).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-
-    assert!(rendered.contains("<h1>Shared Report</h1>"));
-    assert!(!rendered.contains("Sign in to"));
-}
-
-#[tokio::test]
-async fn password_protected_deployment_share_sets_scoped_cookie() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
-            "report",
-            "# Locked Report",
-            PageFormat::Markdown,
-            None,
-            None,
-        )],
-        vec![DeploymentShareConfig {
-            token: "locked123".to_string(),
-            project: "demo".to_string(),
-            deployment: "report".to_string(),
-            password: Some("secret".to_string()),
-            expires_at: None,
-        }],
-    );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
-    let req = Request::builder()
-        .uri("/__latitude/share/locked123/")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = public_entry(State(state.clone()), req).await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-    assert!(rendered.contains("Open shared deployment"));
-
-    let req = Request::builder()
-        .method("POST")
-        .uri("/__latitude/share/locked123/")
-        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .body(Body::from(
-            "password=secret&next=%2F__latitude%2Fshare%2Flocked123%2F",
-        ))
-        .unwrap();
-    let response = public_entry(State(state.clone()), req).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::LOCATION)
-            .and_then(|value| value.to_str().ok()),
-        Some("/__latitude/share/locked123/")
-    );
-    let cookie = response
-        .headers()
-        .get(header::SET_COOKIE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap()
-        .to_string();
-    assert!(cookie.starts_with("latitude_share_locked123="));
-    assert!(cookie.contains("Path=/__latitude/share/locked123"));
-
-    let req = Request::builder()
-        .uri("/__latitude/share/locked123/")
-        .header(header::COOKIE, cookie)
-        .body(Body::empty())
-        .unwrap();
-    let response = public_entry(State(state), req).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    let rendered = String::from_utf8(body.to_vec()).unwrap();
-
-    assert!(rendered.contains("<h1>Locked Report</h1>"));
-}
-
-#[tokio::test]
-async fn expired_deployment_share_returns_gone() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
-            "report",
-            "# Old Report",
-            PageFormat::Markdown,
-            None,
-            None,
-        )],
-        vec![DeploymentShareConfig {
-            token: "expired123".to_string(),
-            project: "demo".to_string(),
-            deployment: "report".to_string(),
-            password: None,
-            expires_at: Some(1),
-        }],
-    );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
-    let req = Request::builder()
-        .uri("/__latitude/share/expired123/")
-        .body(Body::empty())
-        .unwrap();
-
-    let response = public_entry(State(state), req).await;
-    assert_eq!(response.status(), StatusCode::GONE);
 }
 
 #[test]

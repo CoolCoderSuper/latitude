@@ -2,7 +2,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct DesktopScreenResponse {
+pub(crate) struct DesktopScreenResponse {
     pub id: String,
     pub label: String,
     pub title: String,
@@ -14,14 +14,14 @@ pub struct DesktopScreenResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct DesktopResolutionResponse {
+pub(crate) struct DesktopResolutionResponse {
     pub width: u32,
     pub height: u32,
     pub current: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct DesktopResolutionChangeResponse {
+pub(crate) struct DesktopResolutionChangeResponse {
     pub ok: bool,
     pub width: u32,
     pub height: u32,
@@ -30,7 +30,7 @@ pub struct DesktopResolutionChangeResponse {
 }
 
 #[derive(Debug, Error)]
-pub enum DesktopResolutionError {
+pub(crate) enum DesktopResolutionError {
     #[error("changing desktop resolution is only supported on Windows")]
     #[cfg_attr(windows, allow(dead_code))]
     UnsupportedPlatform,
@@ -54,15 +54,15 @@ struct RawDesktopScreen {
     primary: bool,
 }
 
-pub fn detect_desktop_screens() -> Vec<DesktopScreenResponse> {
+pub(crate) fn detect_desktop_screens() -> Vec<DesktopScreenResponse> {
     platform_desktop_screens()
 }
 
-pub fn detect_desktop_resolutions() -> Vec<DesktopResolutionResponse> {
+pub(crate) fn detect_desktop_resolutions() -> Vec<DesktopResolutionResponse> {
     platform_desktop_resolutions(None)
 }
 
-pub fn set_desktop_resolution(
+pub(crate) fn set_desktop_resolution(
     screen_id: Option<&str>,
     width: u32,
     height: u32,

@@ -24,7 +24,7 @@ const SERVICE_TYPE: windows_service::service::ServiceType =
     windows_service::service::ServiceType::OWN_PROCESS;
 
 #[cfg(windows)]
-pub fn run_command(config_path: &Path, command: &ServiceCommand) -> Result<()> {
+pub(crate) fn run_command(config_path: &Path, command: &ServiceCommand) -> Result<()> {
     match command {
         ServiceCommand::Install { no_start } => management::install(config_path, !no_start),
         ServiceCommand::Uninstall => management::uninstall(),
@@ -36,7 +36,7 @@ pub fn run_command(config_path: &Path, command: &ServiceCommand) -> Result<()> {
 }
 
 #[cfg(windows)]
-pub fn dispatch(config_path: std::path::PathBuf) -> Result<()> {
+pub(crate) fn dispatch(config_path: std::path::PathBuf) -> Result<()> {
     runtime::dispatch(config_path)
 }
 

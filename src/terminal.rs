@@ -21,12 +21,12 @@ const TERMINAL_HISTORY_BYTES: usize = 512 * 1024;
 const ROOT_TERMINAL_SCOPE: &str = "root";
 
 #[derive(Default)]
-pub struct TerminalSessionManager {
+pub(crate) struct TerminalSessionManager {
     sessions: RwLock<HashMap<String, Arc<TerminalSession>>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct TerminalSessionSummary {
+pub(crate) struct TerminalSessionSummary {
     pub id: String,
     pub scope: String,
     pub project: Option<String>,
@@ -37,7 +37,7 @@ pub struct TerminalSessionSummary {
     pub alive: bool,
 }
 
-pub struct TerminalSession {
+pub(crate) struct TerminalSession {
     id: String,
     scope: String,
     project: Option<String>,
@@ -60,11 +60,11 @@ struct TerminalHistory {
 }
 
 impl TerminalSessionManager {
-    pub async fn list_root(&self) -> Vec<TerminalSessionSummary> {
+    pub(crate) async fn list_root(&self) -> Vec<TerminalSessionSummary> {
         self.list_scope(ROOT_TERMINAL_SCOPE).await
     }
 
-    pub async fn list_project(&self, project: &str) -> Vec<TerminalSessionSummary> {
+    pub(crate) async fn list_project(&self, project: &str) -> Vec<TerminalSessionSummary> {
         self.list_scope(&project_terminal_scope(project)).await
     }
 
@@ -79,11 +79,11 @@ impl TerminalSessionManager {
         summaries
     }
 
-    pub async fn get_root_session(&self, id: &str) -> Option<Arc<TerminalSession>> {
+    pub(crate) async fn get_root_session(&self, id: &str) -> Option<Arc<TerminalSession>> {
         self.get_scope_session(ROOT_TERMINAL_SCOPE, id).await
     }
 
-    pub async fn get_project_session(
+    pub(crate) async fn get_project_session(
         &self,
         project: &str,
         id: &str,
@@ -100,7 +100,7 @@ impl TerminalSessionManager {
             .cloned()
     }
 
-    pub async fn create_root_session(&self) -> Result<Arc<TerminalSession>, String> {
+    pub(crate) async fn create_root_session(&self) -> Result<Arc<TerminalSession>, String> {
         self.create_scoped_session(
             ROOT_TERMINAL_SCOPE.to_string(),
             None,
@@ -110,7 +110,7 @@ impl TerminalSessionManager {
         .await
     }
 
-    pub async fn create_session(
+    pub(crate) async fn create_session(
         &self,
         project: &str,
         project_dir: &Path,
@@ -148,11 +148,11 @@ impl TerminalSessionManager {
         Ok(session)
     }
 
-    pub async fn close_root_session(&self, id: &str) -> bool {
+    pub(crate) async fn close_root_session(&self, id: &str) -> bool {
         self.close_scope_session(ROOT_TERMINAL_SCOPE, id).await
     }
 
-    pub async fn close_project_session(&self, project: &str, id: &str) -> bool {
+    pub(crate) async fn close_project_session(&self, project: &str, id: &str) -> bool {
         self.close_scope_session(&project_terminal_scope(project), id)
             .await
     }
@@ -241,7 +241,7 @@ impl TerminalSession {
         Ok(session)
     }
 
-    pub fn summary(&self) -> TerminalSessionSummary {
+    pub(crate) fn summary(&self) -> TerminalSessionSummary {
         TerminalSessionSummary {
             id: self.id.clone(),
             scope: self.scope.clone(),
@@ -254,33 +254,33 @@ impl TerminalSession {
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
         self.output_tx.subscribe()
     }
 
-    pub fn history(&self) -> Vec<Vec<u8>> {
+    pub(crate) fn history(&self) -> Vec<Vec<u8>> {
         self.history
             .lock()
             .map(|history| history.chunks.iter().cloned().collect())
             .unwrap_or_default()
     }
 
-    pub fn attach_client(&self) {
+    pub(crate) fn attach_client(&self) {
         self.connected_clients.fetch_add(1, Ordering::SeqCst);
     }
 
-    pub fn detach_client(&self) {
+    pub(crate) fn detach_client(&self) {
         self.connected_clients.fetch_sub(1, Ordering::SeqCst);
     }
 
-    pub fn write_input(&self, data: &str) {
+    pub(crate) fn write_input(&self, data: &str) {
         if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.write_all(data.as_bytes());
             let _ = writer.flush();
         }
     }
 
-    pub fn resize(&self, cols: u16, rows: u16) {
+    pub(crate) fn resize(&self, cols: u16, rows: u16) {
         let cols = cols.clamp(20, 500);
         let rows = rows.clamp(5, 200);
         if let Ok(master) = self.master.lock() {
@@ -293,7 +293,7 @@ impl TerminalSession {
         }
     }
 
-    pub fn kill(&self) {
+    pub(crate) fn kill(&self) {
         self.alive.store(false, Ordering::SeqCst);
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
@@ -333,11 +333,11 @@ impl TerminalSession {
     }
 }
 
-pub fn root_terminal_cwd() -> PathBuf {
+pub(crate) fn root_terminal_cwd() -> PathBuf {
     terminal_cwd(&user_home_dir())
 }
 
-pub fn terminal_cwd(project_dir: &Path) -> PathBuf {
+pub(crate) fn terminal_cwd(project_dir: &Path) -> PathBuf {
     let cwd = std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
     strip_windows_extended_path_prefix(cwd)
 }

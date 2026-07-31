@@ -81,16 +81,13 @@ pub(super) async fn serve_deployment_target(
                 .get_page_content(&target.project.name, &target.deployment.name)
                 .await
             {
-                Ok(Some(content)) => {
-                    serve_page(
-                        req,
-                        &target.project.name,
-                        content,
-                        target.remainder,
-                        target.device_hostname,
-                    )
-                    .await
-                }
+                Ok(Some(content)) => serve_page(
+                    req,
+                    &target.project.name,
+                    content,
+                    target.remainder,
+                    target.device_hostname,
+                ),
                 Ok(None) => plain_response(
                     StatusCode::NOT_FOUND,
                     format!(
@@ -289,7 +286,7 @@ async fn serve_static(req: Request<Body>, target: StaticDeployment<'_>) -> Respo
     }
 }
 
-async fn serve_page(
+fn serve_page(
     req: Request<Body>,
     project_name: &str,
     content: PageContent,

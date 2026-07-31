@@ -28,16 +28,16 @@ use crate::{
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Clone)]
-pub struct AppState {
+pub(crate) struct AppState {
     inner: Arc<AppStateInner>,
 }
 
-pub enum GitRefreshAccess {
+pub(crate) enum GitRefreshAccess {
     Leader(GitRefreshPermit),
     Reused,
 }
 
-pub struct GitRefreshPermit {
+pub(crate) struct GitRefreshPermit {
     state: AppState,
     fetch_remote: bool,
     _guard: OwnedMutexGuard<()>,
@@ -64,11 +64,11 @@ struct AppStateInner {
 
 impl AppState {
     #[cfg(test)]
-    pub fn new(config_path: PathBuf, config: BootConfig, catalog: CatalogStore) -> Self {
+    pub(crate) fn new(config_path: PathBuf, config: BootConfig, catalog: CatalogStore) -> Self {
         Self::new_with_bridges(config_path, config, catalog, None, None)
     }
 
-    pub fn new_with_bridges(
+    pub(crate) fn new_with_bridges(
         config_path: PathBuf,
         config: BootConfig,
         catalog: CatalogStore,
@@ -102,15 +102,15 @@ impl AppState {
         }
     }
 
-    pub fn client(&self) -> &Client {
+    pub(crate) fn client(&self) -> &Client {
         &self.inner.client
     }
 
-    pub fn device_hostname(&self) -> &str {
+    pub(crate) fn device_hostname(&self) -> &str {
         &self.inner.device_hostname
     }
 
-    pub fn terminal_sessions(&self) -> Arc<TerminalSessionManager> {
+    pub(crate) fn terminal_sessions(&self) -> Arc<TerminalSessionManager> {
         self.inner.terminal_sessions.clone()
     }
 
@@ -122,7 +122,7 @@ impl AppState {
         self.inner.workspace_bridge.clone()
     }
 
-    pub fn catalog(&self) -> &CatalogStore {
+    pub(crate) fn catalog(&self) -> &CatalogStore {
         &self.inner.catalog
     }
 
@@ -130,11 +130,11 @@ impl AppState {
         &self.inner.project_files
     }
 
-    pub fn public_auth_cookie_value(&self, password: &str) -> String {
+    pub(crate) fn public_auth_cookie_value(&self, password: &str) -> String {
         encode_hex(public_auth_tag(&self.inner.public_auth_secret, password))
     }
 
-    pub fn verify_public_auth_cookie(&self, password: &str, cookie_value: &str) -> bool {
+    pub(crate) fn verify_public_auth_cookie(&self, password: &str, cookie_value: &str) -> bool {
         let Some(tag) = decode_hex(cookie_value) else {
             return false;
         };
@@ -142,15 +142,15 @@ impl AppState {
         mac.verify_slice(&tag).is_ok()
     }
 
-    pub async fn config_snapshot(&self) -> BootConfig {
+    pub(crate) async fn config_snapshot(&self) -> BootConfig {
         self.inner.config.read().await.clone()
     }
 
-    pub async fn project_git_statuses(&self) -> HashMap<String, GitStatusSummary> {
+    pub(crate) async fn project_git_statuses(&self) -> HashMap<String, GitStatusSummary> {
         self.inner.project_git_statuses.read().await.clone()
     }
 
-    pub async fn set_project_git_status(&self, project: String, status: GitStatusSummary) {
+    pub(crate) async fn set_project_git_status(&self, project: String, status: GitStatusSummary) {
         self.inner
             .project_git_statuses
             .write()
@@ -158,7 +158,7 @@ impl AppState {
             .insert(project, status);
     }
 
-    pub async fn acquire_git_refresh(
+    pub(crate) async fn acquire_git_refresh(
         &self,
         fetch_remote: bool,
         max_snapshot_age: Duration,
@@ -188,7 +188,7 @@ impl AppState {
         })
     }
 
-    pub async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {
+    pub(crate) async fn replace_config(&self, config: BootConfig) -> Result<(), ConfigError> {
         config.validate()?;
         config.save_to(&self.inner.config_path).await?;
         *self.inner.config.write().await = config;
@@ -197,7 +197,7 @@ impl AppState {
 }
 
 impl GitRefreshPermit {
-    pub fn complete(self) {
+    pub(crate) fn complete(self) {
         if let Ok(mut completed_at) = self.state.inner.git_refresh_completed_at.lock() {
             *completed_at = Some(Instant::now());
         }

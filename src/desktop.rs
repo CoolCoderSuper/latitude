@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::config::{DesktopConfig, DesktopIceServerConfig};
 
-pub use display::{
+pub(crate) use display::{
     DesktopResolutionError, DesktopResolutionResponse, DesktopScreenResponse,
     detect_desktop_resolutions, detect_desktop_screens, set_desktop_resolution,
 };
@@ -23,7 +23,7 @@ pub(crate) use native::{
 pub(crate) use session_host::{NativeSessionBridge, run_native_session_host};
 
 #[derive(Clone, Debug, Serialize)]
-pub struct DesktopInfoResponse {
+pub(crate) struct DesktopInfoResponse {
     pub label: String,
     pub view_only: bool,
     pub websocket_href: String,
@@ -32,7 +32,7 @@ pub struct DesktopInfoResponse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
-pub struct DesktopSessionConfig {
+pub(crate) struct DesktopSessionConfig {
     pub max_fps: u16,
     pub bitrate_kbps: u32,
     pub max_width: u32,
@@ -41,7 +41,7 @@ pub struct DesktopSessionConfig {
 }
 
 #[derive(Debug, Error)]
-pub enum DesktopError {
+pub(crate) enum DesktopError {
     #[error("desktop streaming is only supported on Windows")]
     UnsupportedPlatform,
 }
@@ -64,7 +64,7 @@ impl TryFrom<&DesktopConfig> for DesktopSessionConfig {
     }
 }
 
-pub fn desktop_info_response(
+pub(crate) fn desktop_info_response(
     config: &DesktopConfig,
     websocket_href: String,
 ) -> DesktopInfoResponse {
@@ -86,7 +86,7 @@ pub(crate) fn desktop_screens(config: &DesktopConfig) -> Vec<DesktopScreenRespon
     scale_native_desktop_screens(screens, source, output)
 }
 
-pub async fn desktop_websocket_session(
+pub(crate) async fn desktop_websocket_session(
     socket: WebSocket,
     session_config: DesktopSessionConfig,
     view_only: bool,

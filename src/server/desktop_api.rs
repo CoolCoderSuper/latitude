@@ -17,7 +17,7 @@ use crate::{
 };
 
 use super::{
-    auth::{public_headers_are_authenticated, public_request_is_authenticated},
+    auth::public_headers_are_authenticated,
     constants::{MAX_DESKTOP_ACTION_PAYLOAD_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH},
     response::json_error,
 };
@@ -37,13 +37,8 @@ struct DesktopActionPayload {
 
 pub(in crate::server) async fn public_api_get_root_desktop(
     State(state): State<AppState>,
-    req: axum::http::Request<Body>,
 ) -> Response<Body> {
     let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return super::auth::public_api_auth_challenge();
-    }
-
     if !config.desktop.enabled {
         return json_error(StatusCode::NOT_FOUND, "desktop is not enabled");
     }
@@ -62,15 +57,7 @@ pub(in crate::server) async fn public_api_get_root_desktop(
     .into_response()
 }
 
-pub(in crate::server) async fn public_api_patch_root_desktop(
-    State(state): State<AppState>,
-    req: Request<Body>,
-) -> Response<Body> {
-    let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return super::auth::public_api_auth_challenge();
-    }
-
+pub(in crate::server) async fn public_api_patch_root_desktop(req: Request<Body>) -> Response<Body> {
     execute_desktop_action_request(req).await
 }
 

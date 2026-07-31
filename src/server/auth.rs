@@ -2,6 +2,7 @@ use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, Method, Request, Response, StatusCode, header},
+    middleware::Next,
 };
 
 use crate::{config::BootConfig, state::AppState};
@@ -49,6 +50,19 @@ pub(super) fn public_headers_are_authenticated(
 
 pub(super) fn public_api_auth_challenge() -> Response<Body> {
     json_error(StatusCode::UNAUTHORIZED, "authentication required")
+}
+
+pub(super) async fn require_public_api_auth(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if public_request_is_authenticated(&state, &config, &req) {
+        next.run(req).await
+    } else {
+        public_api_auth_challenge()
+    }
 }
 
 pub(super) fn public_auth_challenge(

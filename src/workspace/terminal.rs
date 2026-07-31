@@ -23,6 +23,7 @@ use tracing::{debug, warn};
 use crate::{
     server::terminal_websocket_session,
     terminal::{TerminalSession, TerminalSessionManager, TerminalSessionSummary},
+    websocket_bridge::{to_axum, to_tungstenite},
 };
 
 use super::{
@@ -165,12 +166,11 @@ impl WorkspaceBridge {
                         break;
                     };
                     let message = message.context("browser terminal WebSocket failed")?;
-                    if let Some(message) = browser_to_worker_message(message) {
-                        let closes = matches!(message, tungstenite::Message::Close(_));
-                        worker.send(message).await.context("terminal message could not be forwarded to the workspace host")?;
-                        if closes {
-                            break;
-                        }
+                    let message = to_tungstenite(message);
+                    let closes = matches!(message, tungstenite::Message::Close(_));
+                    worker.send(message).await.context("terminal message could not be forwarded to the workspace host")?;
+                    if closes {
+                        break;
                     }
                 }
                 message = worker.next() => {
@@ -178,7 +178,7 @@ impl WorkspaceBridge {
                         break;
                     };
                     let message = message.context("workspace terminal WebSocket failed")?;
-                    if let Some(message) = worker_to_browser_message(message) {
+                    if let Some(message) = to_axum(message) {
                         let closes = matches!(message, Message::Close(_));
                         browser.send(message).await.context("workspace terminal output could not be forwarded")?;
                         if closes {
@@ -312,26 +312,5 @@ async fn create_workspace_terminal(
         terminals.create_session(project, cwd).await
     } else {
         terminals.create_root_session().await
-    }
-}
-
-fn browser_to_worker_message(message: Message) -> Option<tungstenite::Message> {
-    Some(match message {
-        Message::Text(text) => tungstenite::Message::Text(text.to_string().into()),
-        Message::Binary(bytes) => tungstenite::Message::Binary(bytes.to_vec().into()),
-        Message::Ping(bytes) => tungstenite::Message::Ping(bytes.to_vec().into()),
-        Message::Pong(bytes) => tungstenite::Message::Pong(bytes.to_vec().into()),
-        Message::Close(_) => tungstenite::Message::Close(None),
-    })
-}
-
-fn worker_to_browser_message(message: tungstenite::Message) -> Option<Message> {
-    match message {
-        tungstenite::Message::Text(text) => Some(Message::Text(text.to_string().into())),
-        tungstenite::Message::Binary(bytes) => Some(Message::Binary(bytes.to_vec().into())),
-        tungstenite::Message::Ping(bytes) => Some(Message::Ping(bytes.to_vec().into())),
-        tungstenite::Message::Pong(bytes) => Some(Message::Pong(bytes.to_vec().into())),
-        tungstenite::Message::Close(_) => Some(Message::Close(None)),
-        tungstenite::Message::Frame(_) => None,
     }
 }

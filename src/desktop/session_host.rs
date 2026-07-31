@@ -21,6 +21,8 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info, warn};
 
+use crate::websocket_bridge::{to_axum, to_tungstenite};
+
 use super::DesktopSessionConfig;
 
 const SESSION_HOST_DESKTOP_PATH: &str = "/desktop";
@@ -137,12 +139,11 @@ impl NativeSessionBridge {
                         break;
                     };
                     let message = message.context("browser desktop WebSocket failed")?;
-                    if let Some(message) = browser_to_worker_message(message) {
-                        let closes = matches!(message, tungstenite::Message::Close(_));
-                        worker.send(message).await.context("desktop message could not be forwarded to the session host")?;
-                        if closes {
-                            break;
-                        }
+                    let message = to_tungstenite(message);
+                    let closes = matches!(message, tungstenite::Message::Close(_));
+                    worker.send(message).await.context("desktop message could not be forwarded to the session host")?;
+                    if closes {
+                        break;
                     }
                 }
                 message = worker.next() => {
@@ -150,7 +151,7 @@ impl NativeSessionBridge {
                         break;
                     };
                     let message = message.context("desktop session-host WebSocket failed")?;
-                    if let Some(message) = worker_to_browser_message(message) {
+                    if let Some(message) = to_axum(message) {
                         let closes = matches!(message, axum::extract::ws::Message::Close(_));
                         browser.send(message).await.context("desktop message could not be forwarded to the browser")?;
                         if closes {
@@ -163,31 +164,6 @@ impl NativeSessionBridge {
 
         debug!("native desktop session-host proxy closed");
         Ok(())
-    }
-}
-
-fn browser_to_worker_message(message: axum::extract::ws::Message) -> Option<tungstenite::Message> {
-    use axum::extract::ws::Message;
-
-    Some(match message {
-        Message::Text(text) => tungstenite::Message::Text(text.to_string().into()),
-        Message::Binary(bytes) => tungstenite::Message::Binary(bytes.to_vec().into()),
-        Message::Ping(bytes) => tungstenite::Message::Ping(bytes.to_vec().into()),
-        Message::Pong(bytes) => tungstenite::Message::Pong(bytes.to_vec().into()),
-        Message::Close(_) => tungstenite::Message::Close(None),
-    })
-}
-
-fn worker_to_browser_message(message: tungstenite::Message) -> Option<axum::extract::ws::Message> {
-    use axum::extract::ws::Message;
-
-    match message {
-        tungstenite::Message::Text(text) => Some(Message::Text(text.to_string().into())),
-        tungstenite::Message::Binary(bytes) => Some(Message::Binary(bytes.to_vec().into())),
-        tungstenite::Message::Ping(bytes) => Some(Message::Ping(bytes.to_vec().into())),
-        tungstenite::Message::Pong(bytes) => Some(Message::Pong(bytes.to_vec().into())),
-        tungstenite::Message::Close(_) => Some(Message::Close(None)),
-        tungstenite::Message::Frame(_) => None,
     }
 }
 

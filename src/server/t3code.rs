@@ -62,9 +62,6 @@ pub(super) async fn open_t3code(
     req: Request<Body>,
 ) -> Response<Body> {
     let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     if !config.t3code.enabled {
         return plain_response(
             StatusCode::NOT_FOUND,
@@ -102,9 +99,6 @@ pub(super) async fn open_project_in_t3code(
     req: Request<Body>,
 ) -> Response<Body> {
     let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     if !config.t3code.enabled {
         return plain_response(
             StatusCode::NOT_FOUND,

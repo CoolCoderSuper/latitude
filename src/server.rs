@@ -21,20 +21,32 @@ mod tests;
 use std::net::SocketAddr;
 
 use axum::{
-    Router,
+    Router, middleware,
     routing::{delete, get, post},
 };
 use tokio::net::TcpListener;
 use tracing::info;
 
-use crate::state::AppState;
+use crate::{
+    command_protocol::{
+        CONFIG_PATH as COMMAND_CONFIG_PATH, HEALTH_PATH as COMMAND_HEALTH_PATH,
+        PROJECT_DEPLOYMENT_PATH as COMMAND_PROJECT_DEPLOYMENT_PATH,
+        PROJECT_DEPLOYMENTS_PATH as COMMAND_PROJECT_DEPLOYMENTS_PATH,
+        PROJECT_PAGE_CONTENT_PATH as COMMAND_PROJECT_PAGE_CONTENT_PATH,
+        PROJECT_PAGE_PATH as COMMAND_PROJECT_PAGE_PATH, PROJECT_PATH as COMMAND_PROJECT_PATH,
+        PROJECTS_PATH as COMMAND_PROJECTS_PATH, SHARE_PATH as COMMAND_SHARE_PATH,
+        SHARES_PATH as COMMAND_SHARES_PATH,
+        T3CODE_EMBED_SESSION_PATH as COMMAND_T3CODE_EMBED_SESSION_PATH,
+    },
+    state::AppState,
+};
 
 pub(crate) use git::GitStatusSummary;
 pub(crate) use git::file_baseline;
 pub(crate) use terminal_api::terminal_websocket_session;
 
 use assets::{ASSET_BASE_PATH, public_asset};
-use auth::open_t3code_embed;
+use auth::{open_t3code_embed, require_public_api_auth};
 use command::{
     command_health, create_deployment_share, create_project, create_project_deployment,
     create_t3code_embed_session, delete_deployment_share, delete_project,
@@ -77,7 +89,7 @@ use public::{
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
 
-pub async fn run(state: AppState) -> anyhow::Result<()> {
+pub(crate) async fn run(state: AppState) -> anyhow::Result<()> {
     let config = state.config_snapshot().await;
     let public_bind = config.public_bind.clone();
     let command_bind = config.command_bind.clone();
@@ -123,13 +135,23 @@ fn public_router(state: AppState) -> Router {
     Router::new()
         .route(&format!("{ASSET_BASE_PATH}/{{name}}"), get(public_asset))
         .route(LOGIN_PATH, get(get_public_login).post(post_public_login))
-        .route("/__latitude/t3code", get(open_t3code))
-        .route("/__latitude/t3code/{project}", get(open_project_in_t3code))
         .route(T3CODE_EMBED_PATH, get(open_t3code_embed))
         .route(
             PUBLIC_API_SESSION_PATH,
             get(public_api_session).post(public_api_login),
         )
+        .route(PUBLIC_ROOT_TERMINAL_WS_PATH, get(public_root_terminal_ws))
+        .route(PUBLIC_ROOT_DESKTOP_WS_PATH, get(public_root_desktop_ws))
+        .route(PUBLIC_TERMINAL_WS_PATH, get(public_terminal_ws))
+        .merge(protected_public_router(state.clone()))
+        .fallback(public_entry)
+        .with_state(state)
+}
+
+fn protected_public_router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/__latitude/t3code", get(open_t3code))
+        .route("/__latitude/t3code/{project}", get(open_project_in_t3code))
         .route(PUBLIC_API_PROJECTS_PATH, get(public_api_list_projects))
         .route(
             PUBLIC_API_SHARES_PATH,
@@ -204,51 +226,53 @@ fn public_router(state: AppState) -> Router {
             PUBLIC_API_PROJECT_TERMINAL_SESSION_PATH,
             delete(public_api_delete_terminal_session),
         )
-        .route(PUBLIC_ROOT_TERMINAL_WS_PATH, get(public_root_terminal_ws))
-        .route(PUBLIC_ROOT_DESKTOP_WS_PATH, get(public_root_desktop_ws))
-        .route(PUBLIC_TERMINAL_WS_PATH, get(public_terminal_ws))
-        .fallback(public_entry)
-        .with_state(state)
+        .route_layer(middleware::from_fn_with_state(
+            state,
+            require_public_api_auth,
+        ))
 }
 
 fn command_router(state: AppState) -> Router {
-    let api = Router::new()
-        .route("/config", get(get_config).put(put_config))
-        .route("/projects", get(list_projects).post(create_project))
-        .route("/t3code/embed-session", post(create_t3code_embed_session))
+    Router::new()
+        .route(COMMAND_CONFIG_PATH, get(get_config).put(put_config))
         .route(
-            "/projects/{project}",
+            COMMAND_PROJECTS_PATH,
+            get(list_projects).post(create_project),
+        )
+        .route(
+            COMMAND_T3CODE_EMBED_SESSION_PATH,
+            post(create_t3code_embed_session),
+        )
+        .route(
+            COMMAND_PROJECT_PATH,
             get(get_project).put(replace_project).delete(delete_project),
         )
         .route(
-            "/projects/{project}/deployments",
+            COMMAND_PROJECT_DEPLOYMENTS_PATH,
             get(list_project_deployments).post(create_project_deployment),
         )
         .route(
-            "/projects/{project}/deployments/{name}",
+            COMMAND_PROJECT_DEPLOYMENT_PATH,
             get(get_project_deployment)
                 .put(replace_project_deployment)
                 .delete(delete_project_deployment),
         )
         .route(
-            "/projects/{project}/pages/{name}",
+            COMMAND_PROJECT_PAGE_PATH,
             post(upsert_project_page).put(upsert_project_page),
         )
         .route(
-            "/projects/{project}/pages/{name}/content",
+            COMMAND_PROJECT_PAGE_CONTENT_PATH,
             get(get_project_page_content),
         )
         .route(
-            "/shares",
+            COMMAND_SHARES_PATH,
             get(list_deployment_shares).post(create_deployment_share),
         )
         .route(
-            "/shares/{token}",
+            COMMAND_SHARE_PATH,
             get(get_deployment_share).delete(delete_deployment_share),
-        );
-
-    Router::new()
-        .route("/health", get(command_health))
-        .nest("/api", api)
+        )
+        .route(COMMAND_HEALTH_PATH, get(command_health))
         .with_state(state)
 }

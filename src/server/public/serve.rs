@@ -549,7 +549,7 @@ async fn serve_project_terminal(
     }
 
     let websocket_token = request_bearer_token(&req);
-    let info = terminal_info_response(&project.name, &project.project_dir).await;
+    let info = terminal_info_response(&project.name, &project.project_dir);
     html_response(
         &method,
         render_project_terminal(project, &info, websocket_token.as_deref(), device_hostname),

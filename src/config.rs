@@ -11,14 +11,14 @@ use thiserror::Error;
 use tokio::fs;
 use url::Url;
 
-pub const MAX_PAGE_CONTENT_BYTES: usize = 2 * 1024 * 1024;
-pub const MAX_PAGE_BINARY_CONTENT_BYTES: usize = 25 * 1024 * 1024;
-pub const MAX_PAGE_TITLE_CHARS: usize = 160;
-pub const DEFAULT_PUBLIC_PASSWORD: &str = "test";
+pub(crate) const MAX_PAGE_CONTENT_BYTES: usize = 2 * 1024 * 1024;
+pub(crate) const MAX_PAGE_BINARY_CONTENT_BYTES: usize = 25 * 1024 * 1024;
+pub(crate) const MAX_PAGE_TITLE_CHARS: usize = 160;
+pub(crate) const DEFAULT_PUBLIC_PASSWORD: &str = "test";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BootConfig {
+pub(crate) struct BootConfig {
     #[serde(default = "default_public_bind")]
     pub public_bind: String,
     #[serde(default = "default_command_bind")]
@@ -34,13 +34,13 @@ pub struct BootConfig {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct CatalogSeed {
+pub(crate) struct CatalogSeed {
     pub share_links: Vec<DeploymentShareConfig>,
     pub projects: Vec<SeedProjectConfig>,
 }
 
 #[derive(Clone, Debug)]
-pub struct LoadedConfig {
+pub(crate) struct LoadedConfig {
     pub boot: BootConfig,
     pub catalog_seed: CatalogSeed,
 }
@@ -68,7 +68,7 @@ struct ConfigFile {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DesktopConfig {
+pub(crate) struct DesktopConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_desktop_label")]
@@ -89,7 +89,7 @@ pub struct DesktopConfig {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DesktopIceServerConfig {
+pub(crate) struct DesktopIceServerConfig {
     pub urls: Vec<String>,
     #[serde(default)]
     pub username: String,
@@ -99,7 +99,7 @@ pub struct DesktopIceServerConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct T3CodeConfig {
+pub(crate) struct T3CodeConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default = "default_t3code_base_url")]
@@ -120,7 +120,7 @@ pub struct T3CodeConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ProjectConfig {
+pub(crate) struct ProjectConfig {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -130,7 +130,7 @@ pub struct ProjectConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ApplicationConfig {
+pub(crate) struct ApplicationConfig {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -140,7 +140,7 @@ pub struct ApplicationConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct DeploymentShareConfig {
+pub(crate) struct DeploymentShareConfig {
     pub token: String,
     pub project: String,
     pub deployment: String,
@@ -152,7 +152,7 @@ pub struct DeploymentShareConfig {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ApplicationTarget {
+pub(crate) enum ApplicationTarget {
     ReverseProxy {
         upstream: String,
         #[serde(default = "default_true")]
@@ -177,7 +177,7 @@ pub enum ApplicationTarget {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct SeedProjectConfig {
+pub(crate) struct SeedProjectConfig {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -187,7 +187,7 @@ pub struct SeedProjectConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct SeedApplicationConfig {
+pub(crate) struct SeedApplicationConfig {
     pub name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -197,7 +197,7 @@ pub struct SeedApplicationConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SeedApplicationTarget {
+pub(crate) enum SeedApplicationTarget {
     ReverseProxy {
         upstream: String,
         #[serde(default = "default_true")]
@@ -224,7 +224,7 @@ pub enum SeedApplicationTarget {
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PageFormat {
+pub(crate) enum PageFormat {
     #[default]
     Html,
     Markdown,
@@ -232,7 +232,7 @@ pub enum PageFormat {
 }
 
 #[derive(Debug, Error)]
-pub enum ConfigError {
+pub(crate) enum ConfigError {
     #[error("failed to read or write config: {0}")]
     Io(#[from] std::io::Error),
     #[error("config file is not valid JSON: {0}")]
@@ -379,7 +379,7 @@ impl Default for T3CodeConfig {
 }
 
 impl LoadedConfig {
-    pub async fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
+    pub(crate) async fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
         match fs::read(path).await {
             Ok(bytes) => Ok(serde_json::from_slice::<ConfigFile>(&bytes)?.into_loaded()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -389,24 +389,24 @@ impl LoadedConfig {
         }
     }
 
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         self.boot.validate()?;
         self.catalog_seed.validate()
     }
 }
 
 impl CatalogSeed {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.projects.is_empty() && self.share_links.is_empty()
     }
 
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         validate_catalog(&self.projects, &self.share_links)
     }
 }
 
 impl BootConfig {
-    pub async fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
+    pub(crate) async fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -419,7 +419,7 @@ impl BootConfig {
         Ok(())
     }
 
-    pub fn resolved_data_dir(&self, config_path: &Path) -> Result<PathBuf, ConfigError> {
+    pub(crate) fn resolved_data_dir(&self, config_path: &Path) -> Result<PathBuf, ConfigError> {
         let config_path = absolute_path(config_path)?;
         let base = config_path
             .parent()
@@ -433,7 +433,7 @@ impl BootConfig {
         })
     }
 
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         self.public_bind
             .parse::<SocketAddr>()
             .map_err(|error| ConfigError::Invalid(format!("public_bind is not valid: {error}")))?;
@@ -503,7 +503,7 @@ fn validate_catalog(
 }
 
 impl DesktopConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !self.enabled {
             return Ok(());
         }
@@ -546,7 +546,7 @@ impl DesktopConfig {
 }
 
 impl T3CodeConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !self.enabled {
             return Ok(());
         }
@@ -621,7 +621,7 @@ impl T3CodeConfig {
 }
 
 impl DeploymentShareConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_url_segment(&self.token) {
             return Err(ConfigError::Invalid(format!(
                 "share link token '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -664,13 +664,13 @@ impl DeploymentShareConfig {
         Ok(())
     }
 
-    pub fn is_expired(&self, now: u64) -> bool {
+    pub(crate) fn is_expired(&self, now: u64) -> bool {
         self.expires_at.is_some_and(|expires_at| expires_at <= now)
     }
 }
 
 impl ProjectConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_url_segment(&self.name) {
             return Err(ConfigError::Invalid(format!(
                 "project name '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -701,7 +701,7 @@ impl ProjectConfig {
 }
 
 impl ApplicationConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_url_segment(&self.name) {
             return Err(ConfigError::Invalid(format!(
                 "application name '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -814,7 +814,7 @@ fn validate_page_content(name: &str, content: &str, format: PageFormat) -> Resul
 }
 
 impl SeedProjectConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_url_segment(&self.name) {
             return Err(ConfigError::Invalid(format!(
                 "project name '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -845,7 +845,7 @@ impl SeedProjectConfig {
 }
 
 impl SeedApplicationConfig {
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
         if !is_valid_url_segment(&self.name) {
             return Err(ConfigError::Invalid(format!(
                 "application name '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -887,7 +887,7 @@ fn is_valid_url_segment(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
-pub fn is_binary_document_media_type(media_type: &str) -> bool {
+pub(crate) fn is_binary_document_media_type(media_type: &str) -> bool {
     let media_type = media_type
         .split(';')
         .next()
@@ -898,15 +898,15 @@ pub fn is_binary_document_media_type(media_type: &str) -> bool {
     media_type.starts_with("image/") || media_type.starts_with("video/")
 }
 
-pub fn encode_page_binary_content(bytes: &[u8]) -> String {
+pub(crate) fn encode_page_binary_content(bytes: &[u8]) -> String {
     BASE64_STANDARD.encode(bytes)
 }
 
-pub fn decode_page_binary_content(content: &str) -> Result<Vec<u8>, base64::DecodeError> {
+pub(crate) fn decode_page_binary_content(content: &str) -> Result<Vec<u8>, base64::DecodeError> {
     BASE64_STANDARD.decode(content)
 }
 
-pub fn current_unix_timestamp() -> u64 {
+pub(crate) fn current_unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())

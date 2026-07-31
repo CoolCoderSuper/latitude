@@ -11,9 +11,16 @@ use reqwest::{Client as HttpClient, Method, Response, StatusCode, Url, header};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::config::{
-    ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig, encode_page_binary_content,
-    is_binary_document_media_type,
+use crate::{
+    command_protocol::{
+        CONFIG_PATH, CreateDeploymentShareRequest, DeploymentShareResponse, HEALTH_PATH,
+        HealthResponse, PROJECTS_PATH, SHARES_PATH, project_deployment_path,
+        project_deployments_path, project_page_path, project_path, share_path,
+    },
+    config::{
+        ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig,
+        encode_page_binary_content, is_binary_document_media_type,
+    },
 };
 
 const DEFAULT_COMMAND_URL: &str = "http://127.0.0.1:7600";
@@ -24,7 +31,7 @@ const DEFAULT_COMMAND_URL: &str = "http://127.0.0.1:7600";
     version,
     about = "Latitude path-based proxy and static-site gateway"
 )]
-pub struct Cli {
+pub(crate) struct Cli {
     #[arg(long, env = "LATITUDE_CONFIG", default_value = "latitude.json")]
     pub config: PathBuf,
 
@@ -42,7 +49,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum CliCommand {
+pub(crate) enum CliCommand {
     /// Install or manage Latitude as an always-on Windows service.
     Service {
         #[command(subcommand)]
@@ -89,7 +96,7 @@ pub enum CliCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ServiceCommand {
+pub(crate) enum ServiceCommand {
     /// Install or update the automatic Latitude Windows service.
     Install {
         /// Install the service without starting it.
@@ -110,7 +117,7 @@ pub enum ServiceCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct SessionHostArgs {
+pub(crate) struct SessionHostArgs {
     #[arg(long)]
     pub bind: SocketAddr,
     #[arg(long)]
@@ -118,7 +125,7 @@ pub struct SessionHostArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct WorkspaceHostArgs {
+pub(crate) struct WorkspaceHostArgs {
     #[arg(long)]
     pub bind: SocketAddr,
     #[arg(long)]
@@ -126,7 +133,7 @@ pub struct WorkspaceHostArgs {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ConfigCommand {
+pub(crate) enum ConfigCommand {
     /// Print the active Latitude config as JSON.
     Get,
     /// Replace the active Latitude config from a JSON file.
@@ -134,7 +141,7 @@ pub enum ConfigCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ProjectCommand {
+pub(crate) enum ProjectCommand {
     /// List projects.
     List,
     /// Print one configured project as JSON.
@@ -144,7 +151,7 @@ pub enum ProjectCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct ProjectEnsureArgs {
+pub(crate) struct ProjectEnsureArgs {
     pub name: String,
     #[arg(long, value_name = "DIR")]
     pub project_dir: PathBuf,
@@ -153,13 +160,13 @@ pub struct ProjectEnsureArgs {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum PublishCommand {
+pub(crate) enum PublishCommand {
     /// Publish a Markdown, HTML, image, or video document.
     Page(PublishPageArgs),
 }
 
 #[derive(Debug, Args)]
-pub struct PublishPageArgs {
+pub(crate) struct PublishPageArgs {
     pub project: String,
     pub name: String,
     #[arg(short, long, value_name = "FILE")]
@@ -173,14 +180,14 @@ pub struct PublishPageArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub enum PageInputFormat {
+pub(crate) enum PageInputFormat {
     Auto,
     Html,
     Markdown,
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DeployCommand {
+pub(crate) enum DeployCommand {
     /// Register a static file deployment.
     Static(DeployStaticArgs),
     /// Register a reverse proxy deployment.
@@ -188,7 +195,7 @@ pub enum DeployCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct DeployStaticArgs {
+pub(crate) struct DeployStaticArgs {
     pub project: String,
     pub name: String,
     #[arg(long, value_name = "DIR")]
@@ -204,7 +211,7 @@ pub struct DeployStaticArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct DeployProxyArgs {
+pub(crate) struct DeployProxyArgs {
     pub project: String,
     pub name: String,
     #[arg(long)]
@@ -218,7 +225,7 @@ pub struct DeployProxyArgs {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum DeploymentCommand {
+pub(crate) enum DeploymentCommand {
     /// List deployments in one project.
     List { project: String },
     /// Print one deployment as JSON.
@@ -228,7 +235,7 @@ pub enum DeploymentCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ShareCommand {
+pub(crate) enum ShareCommand {
     /// List deployment share links.
     List,
     /// Create a deployment share link.
@@ -240,7 +247,7 @@ pub enum ShareCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct ShareCreateArgs {
+pub(crate) struct ShareCreateArgs {
     pub project: String,
     pub deployment: String,
     #[arg(long)]
@@ -249,16 +256,6 @@ pub struct ShareCreateArgs {
     pub expires_in: Option<String>,
     #[arg(long, value_name = "UNIX_SECONDS")]
     pub expires_at: Option<u64>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct HealthResponse {
-    status: String,
-    public_bind: String,
-    command_bind: String,
-    project_count: usize,
-    deployment_count: usize,
-    share_link_count: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -283,31 +280,10 @@ struct DeploymentResult<T> {
     deployment: T,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct DeploymentShareSummary {
-    token: String,
-    project: String,
-    deployment: String,
-    href: String,
-    has_password: bool,
-    expires_at: Option<u64>,
-    expired: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct CreateSharePayload<'a> {
-    project: &'a str,
-    deployment: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    password: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    expires_at: Option<u64>,
-}
-
 #[derive(Debug, Serialize)]
 struct ShareResult {
     share_url: Option<String>,
-    share: DeploymentShareSummary,
+    share: DeploymentShareResponse,
 }
 
 #[derive(Debug, Serialize)]
@@ -321,7 +297,7 @@ struct CommandClient {
 }
 
 impl Cli {
-    pub fn command_api_url(&self) -> Result<Url> {
+    pub(crate) fn command_api_url(&self) -> Result<Url> {
         let url = if let Some(command_url) = &self.command_url {
             command_url.clone()
         } else if let Some(command_bind) = &self.command_bind {
@@ -334,7 +310,7 @@ impl Cli {
     }
 }
 
-pub async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
+pub(crate) async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
     if let CliCommand::Service { command } = command {
         return crate::windows_service_host::run_command(&cli.config, command);
     }
@@ -351,7 +327,7 @@ pub async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
         CliCommand::Service { .. } | CliCommand::SessionHost(_) | CliCommand::WorkspaceHost(_) => {
             unreachable!()
         }
-        CliCommand::Health => print_json(&client.get_json::<HealthResponse>("/health").await?),
+        CliCommand::Health => print_json(&client.get_json::<HealthResponse>(HEALTH_PATH).await?),
         CliCommand::Config { command } => run_config_command(&client, command).await,
         CliCommand::Project { command } => run_project_command(&client, command).await,
         CliCommand::Publish { command } => run_publish_command(&client, command).await,
@@ -363,13 +339,13 @@ pub async fn run_command(cli: &Cli, command: &CliCommand) -> Result<()> {
 
 async fn run_config_command(client: &CommandClient, command: &ConfigCommand) -> Result<()> {
     match command {
-        ConfigCommand::Get => print_json(&client.get_json::<Value>("/api/config").await?),
+        ConfigCommand::Get => print_json(&client.get_json::<Value>(CONFIG_PATH).await?),
         ConfigCommand::Put { file } => {
             let bytes = tokio::fs::read(file)
                 .await
                 .with_context(|| format!("failed to read config file {}", file.display()))?;
             let value = client
-                .send_raw_json::<Value>(Method::PUT, "/api/config", bytes)
+                .send_raw_json::<Value>(Method::PUT, CONFIG_PATH, bytes)
                 .await?;
             print_json(&value)
         }
@@ -378,12 +354,10 @@ async fn run_config_command(client: &CommandClient, command: &ConfigCommand) -> 
 
 async fn run_project_command(client: &CommandClient, command: &ProjectCommand) -> Result<()> {
     match command {
-        ProjectCommand::List => print_json(&client.get_json::<Value>("/api/projects").await?),
-        ProjectCommand::Get { name } => print_json(
-            &client
-                .get_json::<Value>(&format!("/api/projects/{name}"))
-                .await?,
-        ),
+        ProjectCommand::List => print_json(&client.get_json::<Value>(PROJECTS_PATH).await?),
+        ProjectCommand::Get { name } => {
+            print_json(&client.get_json::<Value>(&project_path(name)).await?)
+        }
         ProjectCommand::Ensure(args) => {
             let project =
                 ensure_project_exists(client, &args.name, &args.project_dir, !args.disabled)
@@ -410,17 +384,17 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
     match command {
         DeploymentCommand::List { project } => print_json(
             &client
-                .get_json::<Value>(&format!("/api/projects/{project}/deployments"))
+                .get_json::<Value>(&project_deployments_path(project))
                 .await?,
         ),
         DeploymentCommand::Get { project, name } => print_json(
             &client
-                .get_json::<Value>(&format!("/api/projects/{project}/deployments/{name}"))
+                .get_json::<Value>(&project_deployment_path(project, name))
                 .await?,
         ),
         DeploymentCommand::Delete { project, name } => {
             client
-                .delete(&format!("/api/projects/{project}/deployments/{name}"))
+                .delete(&project_deployment_path(project, name))
                 .await?;
             print_json(&DeleteResult { deleted: true })
         }
@@ -429,15 +403,13 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
 
 async fn run_share_command(client: &CommandClient, command: &ShareCommand) -> Result<()> {
     match command {
-        ShareCommand::List => print_json(&client.get_json::<Value>("/api/shares").await?),
+        ShareCommand::List => print_json(&client.get_json::<Value>(SHARES_PATH).await?),
         ShareCommand::Create(args) => create_share(client, args).await,
-        ShareCommand::Get { token } => print_json(
-            &client
-                .get_json::<Value>(&format!("/api/shares/{token}"))
-                .await?,
-        ),
+        ShareCommand::Get { token } => {
+            print_json(&client.get_json::<Value>(&share_path(token)).await?)
+        }
         ShareCommand::Delete { token } => {
-            client.delete(&format!("/api/shares/{token}")).await?;
+            client.delete(&share_path(token)).await?;
             print_json(&DeleteResult { deleted: true })
         }
     }
@@ -445,14 +417,14 @@ async fn run_share_command(client: &CommandClient, command: &ShareCommand) -> Re
 
 async fn create_share(client: &CommandClient, args: &ShareCreateArgs) -> Result<()> {
     let expires_at = share_expires_at(args)?;
-    let payload = CreateSharePayload {
-        project: &args.project,
-        deployment: &args.deployment,
-        password: args.password.as_deref(),
+    let payload = CreateDeploymentShareRequest {
+        project: args.project.clone(),
+        deployment: args.deployment.clone(),
+        password: args.password.clone(),
         expires_at,
     };
-    let share: DeploymentShareSummary = client
-        .send_json(Method::POST, "/api/shares", &payload)
+    let share: DeploymentShareResponse = client
+        .send_json(Method::POST, SHARES_PATH, &payload)
         .await?;
     let share_url = client.public_share_url(&share.token).await;
 
@@ -472,7 +444,7 @@ async fn publish_page(client: &CommandClient, args: &PublishPageArgs) -> Result<
     let is_binary_document = media_type
         .as_deref()
         .is_some_and(is_binary_document_media_type);
-    let path = format!("/api/projects/{}/pages/{}", args.project, args.name);
+    let path = project_page_path(&args.project, &args.name);
     let deployment: ApplicationConfig = if is_binary_document {
         if args.title.is_some() {
             let encoded_content = encode_page_binary_content(&input);
@@ -529,7 +501,7 @@ async fn deploy_static(client: &CommandClient, args: &DeployStaticArgs) -> Resul
             spa_fallback: args.spa_fallback,
         },
     };
-    let path = format!("/api/projects/{}/deployments/{}", args.project, args.name);
+    let path = project_deployment_path(&args.project, &args.name);
     let deployment: ApplicationConfig = client.send_json(Method::PUT, &path, &app).await?;
     let public_url = client.public_url(&args.project, &args.name).await;
 
@@ -550,7 +522,7 @@ async fn deploy_proxy(client: &CommandClient, args: &DeployProxyArgs) -> Result<
             strip_prefix: !args.no_strip_prefix,
         },
     };
-    let path = format!("/api/projects/{}/deployments/{}", args.project, args.name);
+    let path = project_deployment_path(&args.project, &args.name);
     let deployment: ApplicationConfig = client.send_json(Method::PUT, &path, &app).await?;
     let public_url = client.public_url(&args.project, &args.name).await;
 
@@ -577,7 +549,7 @@ async fn ensure_project_exists(
     project_dir: &Path,
     enabled: bool,
 ) -> Result<ProjectConfig> {
-    let path = format!("/api/projects/{name}");
+    let path = project_path(name);
     let response = client.get(&path).await?;
 
     match response.status() {
@@ -682,12 +654,12 @@ impl CommandClient {
     }
 
     async fn public_url(&self, project: &str, deployment: &str) -> Option<String> {
-        let health = self.get_json::<HealthResponse>("/health").await.ok()?;
+        let health = self.get_json::<HealthResponse>(HEALTH_PATH).await.ok()?;
         local_public_url(&health.public_bind, project, deployment)
     }
 
     async fn public_share_url(&self, token: &str) -> Option<String> {
-        let health = self.get_json::<HealthResponse>("/health").await.ok()?;
+        let health = self.get_json::<HealthResponse>(HEALTH_PATH).await.ok()?;
         local_public_share_url(&health.public_bind, token)
     }
 

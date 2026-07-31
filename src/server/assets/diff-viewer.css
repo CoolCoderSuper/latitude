@@ -200,11 +200,6 @@ input {
   text-align: right;
 }
 
-.history-diff {
-  border-top: 1px solid #d7dde8;
-  overflow-x: auto;
-}
-
 .commit-file-list {
   display: grid;
   gap: 6px;
@@ -659,10 +654,6 @@ pre {
 
 :root[data-latitude-theme="dark"] .history-summary span {
   color: #aeb9c7;
-}
-
-:root[data-latitude-theme="dark"] .history-diff {
-  border-color: #2f3a4a;
 }
 
 :root[data-latitude-theme="dark"] .file-content,

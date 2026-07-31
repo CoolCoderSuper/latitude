@@ -8,11 +8,7 @@ use axum::{
 use maud::html;
 use serde::Deserialize;
 
-use super::{
-    auth::{public_api_auth_challenge, public_request_is_authenticated},
-    render::highlight_source_lines,
-    response::json_error,
-};
+use super::{render::highlight_source_lines, response::json_error};
 use crate::{
     config::ProjectConfig,
     project_files::{
@@ -51,10 +47,6 @@ pub(in crate::server) async fn public_api_get_project_files(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> Response<Body> {
-    let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     let project = match enabled_project(&state, &project).await {
         Ok(project) => project,
         Err(response) => return response,
@@ -85,10 +77,6 @@ pub(in crate::server) async fn public_api_put_project_file(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> Response<Body> {
-    let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     let project = match enabled_project(&state, &project).await {
         Ok(project) => project,
         Err(response) => return response,
@@ -123,10 +111,6 @@ pub(in crate::server) async fn public_ui_put_project_file(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> Response<Body> {
-    let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     let project = match enabled_project(&state, &project).await {
         Ok(project) => project,
         Err(response) => return response,
@@ -183,10 +167,6 @@ pub(in crate::server) async fn public_api_highlight_project_file(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> Response<Body> {
-    let config = state.config_snapshot().await;
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_api_auth_challenge();
-    }
     let project = match enabled_project(&state, &project).await {
         Ok(project) => project,
         Err(response) => return response,

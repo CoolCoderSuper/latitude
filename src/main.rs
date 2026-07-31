@@ -1,4 +1,8 @@
+#![warn(unreachable_pub)]
+#![warn(clippy::unused_async)]
+
 mod cli;
+mod command_protocol;
 mod config;
 mod desktop;
 mod desktop_webrtc;
@@ -9,6 +13,7 @@ mod server;
 mod state;
 mod storage;
 mod terminal;
+mod websocket_bridge;
 mod windows_service_host;
 mod workspace;
 

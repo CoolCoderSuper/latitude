@@ -32,9 +32,43 @@ pub(super) const DESKTOP_VIEWER_SCRIPT_SRC: &str = "/__latitude/assets/desktop-v
 pub(super) const PAGE_STYLE_HREF: &str = asset_href!("page.css");
 
 struct EmbeddedAsset {
+    name: &'static str,
     content_type: &'static str,
     bytes: &'static [u8],
 }
+
+macro_rules! embedded_assets {
+    ($(($name:literal, $content_type:literal)),+ $(,)?) => {
+        const EMBEDDED_ASSETS: &[EmbeddedAsset] = &[
+            $(EmbeddedAsset {
+                name: $name,
+                content_type: $content_type,
+                bytes: include_bytes!(concat!("assets/", $name)),
+            }),+
+        ];
+    };
+}
+
+embedded_assets!(
+    ("common-theme.css", "text/css; charset=utf-8"),
+    ("theme-bootstrap.js", "text/javascript; charset=utf-8"),
+    ("theme-toggle.js", "text/javascript; charset=utf-8"),
+    ("htmx.min.js", "text/javascript; charset=utf-8"),
+    ("auth.css", "text/css; charset=utf-8"),
+    ("project-home.css", "text/css; charset=utf-8"),
+    ("project-home.js", "text/javascript; charset=utf-8"),
+    ("diff-viewer.css", "text/css; charset=utf-8"),
+    ("diff-viewer.js", "text/javascript; charset=utf-8"),
+    ("file-viewer.css", "text/css; charset=utf-8"),
+    ("file-viewer.js", "text/javascript; charset=utf-8"),
+    ("terminal-viewer.css", "text/css; charset=utf-8"),
+    ("terminal-viewer.js", "text/javascript; charset=utf-8"),
+    ("desktop-viewer.css", "text/css; charset=utf-8"),
+    ("desktop-viewer.js", "text/javascript; charset=utf-8"),
+    ("desktop-input.js", "text/javascript; charset=utf-8"),
+    ("desktop-peer.js", "text/javascript; charset=utf-8"),
+    ("page.css", "text/css; charset=utf-8"),
+);
 
 pub(super) async fn public_asset(
     AxumPath(name): AxumPath<String>,
@@ -69,102 +103,11 @@ pub(super) async fn public_asset(
     }
 }
 
-fn embedded_asset(name: &str) -> Option<EmbeddedAsset> {
-    let (content_type, bytes): (&str, &[u8]) = match name {
-        "common-theme.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/common-theme.css"),
-        ),
-        "theme-bootstrap.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/theme-bootstrap.js"),
-        ),
-        "theme-toggle.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/theme-toggle.js"),
-        ),
-        "htmx.min.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/htmx.min.js"),
-        ),
-        "auth.css" => ("text/css; charset=utf-8", include_bytes!("assets/auth.css")),
-        "project-home.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/project-home.css"),
-        ),
-        "project-home.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/project-home.js"),
-        ),
-        "diff-viewer.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/diff-viewer.css"),
-        ),
-        "diff-viewer.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/diff-viewer.js"),
-        ),
-        "file-viewer.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/file-viewer.css"),
-        ),
-        "file-viewer.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/file-viewer.js"),
-        ),
-        "terminal-viewer.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/terminal-viewer.css"),
-        ),
-        "terminal-viewer.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/terminal-viewer.js"),
-        ),
-        "desktop-viewer.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("assets/desktop-viewer.css"),
-        ),
-        "desktop-viewer.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/desktop-viewer.js"),
-        ),
-        "desktop-input.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/desktop-input.js"),
-        ),
-        "desktop-peer.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("assets/desktop-peer.js"),
-        ),
-        "page.css" => ("text/css; charset=utf-8", include_bytes!("assets/page.css")),
-        _ => return None,
-    };
-    Some(EmbeddedAsset {
-        content_type,
-        bytes,
-    })
+fn embedded_asset(name: &str) -> Option<&'static EmbeddedAsset> {
+    EMBEDDED_ASSETS.iter().find(|asset| asset.name == name)
 }
 
 #[cfg(test)]
-pub(super) fn embedded_asset_names() -> &'static [&'static str] {
-    &[
-        "common-theme.css",
-        "theme-bootstrap.js",
-        "theme-toggle.js",
-        "htmx.min.js",
-        "auth.css",
-        "project-home.css",
-        "project-home.js",
-        "diff-viewer.css",
-        "diff-viewer.js",
-        "file-viewer.css",
-        "file-viewer.js",
-        "terminal-viewer.css",
-        "terminal-viewer.js",
-        "desktop-viewer.css",
-        "desktop-viewer.js",
-        "desktop-input.js",
-        "desktop-peer.js",
-        "page.css",
-    ]
+pub(super) fn embedded_asset_names() -> impl Iterator<Item = &'static str> {
+    EMBEDDED_ASSETS.iter().map(|asset| asset.name)
 }

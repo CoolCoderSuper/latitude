@@ -98,7 +98,7 @@ fn clean_terminal_command(command: String) -> Result<String, String> {
     Ok(command)
 }
 
-pub(super) async fn terminal_info_response(
+pub(super) fn terminal_info_response(
     project: &str,
     project_dir: &Path,
 ) -> PublicTerminalInfoResponse {
@@ -106,7 +106,6 @@ pub(super) async fn terminal_info_response(
         project_dir,
         format!("{PUBLIC_API_PROJECTS_PATH}/{project}/terminal/sessions"),
     )
-    .await
 }
 
 pub(super) async fn root_terminal_info_response() -> PublicTerminalInfoResponse {
@@ -119,10 +118,9 @@ pub(super) async fn root_terminal_info_response() -> PublicTerminalInfoResponse 
         &root_dir,
         PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH.to_string(),
     )
-    .await
 }
 
-async fn scoped_terminal_info_response(
+fn scoped_terminal_info_response(
     terminal_dir: &Path,
     sessions_href: String,
 ) -> PublicTerminalInfoResponse {
