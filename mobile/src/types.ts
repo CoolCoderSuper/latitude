@@ -96,7 +96,6 @@ export type TerminalLink = {
 export type ProjectTerminalLink = TerminalLink;
 export type RootTerminalLink = TerminalLink;
 export type RootDesktopLink = TerminalLink & {
-  protocol: 'rfb' | 'latitude_native';
   view_only: boolean;
   screens?: DesktopScreen[];
 };
@@ -246,12 +245,6 @@ export type TerminalInfoResponse = {
 
 export type DesktopInfoResponse = {
   label: string;
-  enabled: boolean;
-  mode: 'external' | 'managed' | 'native';
-  protocol: 'rfb' | 'latitude_native';
-  managed: boolean;
-  host: string;
-  port: number;
   view_only: boolean;
   websocket_href: string;
   screens: DesktopScreen[];

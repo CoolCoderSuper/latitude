@@ -75,7 +75,7 @@ pub(in crate::server) async fn public_entry(
     }
 
     if let Some(remainder) = root_desktop_remainder(&original_path) {
-        return serve_root_desktop(req, &state, &config, remainder, &device_hostname).await;
+        return serve_root_desktop(req, &config, remainder, &device_hostname).await;
     }
 
     let Some(public_path) = split_project_path(&original_path) else {
@@ -610,7 +610,6 @@ async fn serve_root_terminal(
 
 async fn serve_root_desktop(
     req: Request<Body>,
-    state: &AppState,
     config: &BootConfig,
     remainder: &str,
     device_hostname: &str,
@@ -638,22 +637,15 @@ async fn serve_root_desktop(
         return execute_desktop_action_request(req).await;
     }
 
-    let target = match state.desktop_manager().target_for(&config.desktop).await {
-        Ok(target) => target,
-        Err(error) => {
-            return plain_response(
-                StatusCode::BAD_GATEWAY,
-                format!("desktop target could not be prepared: {error}\n"),
-            );
-        }
-    };
+    if let Err(error) = crate::desktop::DesktopSessionConfig::try_from(&config.desktop) {
+        return plain_response(
+            StatusCode::BAD_GATEWAY,
+            format!("desktop session could not be prepared: {error}\n"),
+        );
+    }
 
     let websocket_token = request_bearer_token(&req);
-    let info = desktop_info_response(
-        &config.desktop,
-        &target,
-        PUBLIC_ROOT_DESKTOP_WS_PATH.to_string(),
-    );
+    let info = desktop_info_response(&config.desktop, PUBLIC_ROOT_DESKTOP_WS_PATH.to_string());
     html_response(
         &method,
         render_root_desktop(&info, websocket_token.as_deref(), device_hostname),

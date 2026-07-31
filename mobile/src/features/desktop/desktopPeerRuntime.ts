@@ -1,4 +1,4 @@
-export const nativeDesktopPeerRuntime = String.raw`
+export const desktopPeerRuntime = String.raw`
     let offerSent = false;
     const pendingLocalCandidates = [];
     const pendingRemoteCandidates = [];
@@ -81,7 +81,7 @@ export const nativeDesktopPeerRuntime = String.raw`
       channel.onopen = () => {
         if (controlChannel !== channel) return;
         reconnectDelay = 1000;
-        updateNativeState({ connected: true });
+        updateViewerState({ connected: true });
         setConnectedStatus();
       };
       channel.onmessage = handleControlMessage;
@@ -110,12 +110,12 @@ export const nativeDesktopPeerRuntime = String.raw`
       peer.onconnectionstatechange = () => {
         if (peerConnection !== peer) return;
         if (peer.connectionState === 'connected') {
-          updateNativeState({ connected: true });
+          updateViewerState({ connected: true });
           setConnectedStatus();
         } else if (peer.connectionState === 'connecting') {
           setStatus('Connecting media');
         } else if (peer.connectionState === 'failed') {
-          updateNativeState({ connected: false });
+          updateViewerState({ connected: false });
           setStatus('WebRTC connection failed', true);
           socket?.close();
         }
@@ -155,7 +155,7 @@ export const nativeDesktopPeerRuntime = String.raw`
       nextSocket.onopen = () => {
         if (socket !== nextSocket) return;
         reconnectDelay = 1000;
-        updateNativeState({ connected: false });
+        updateViewerState({ connected: false });
         setStatus('Negotiating');
       };
       nextSocket.onmessage = async (event) => {
@@ -212,9 +212,9 @@ export const nativeDesktopPeerRuntime = String.raw`
         pressedModifiers.clear();
         controlGranted = false;
         updateModifiers();
-        updateNativeState({ controlGranted });
+        updateViewerState({ controlGranted });
         closePeerConnection();
-        updateNativeState({ connected: false });
+        updateViewerState({ connected: false });
         scheduleReconnect();
       };
     };

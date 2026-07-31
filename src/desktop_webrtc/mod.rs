@@ -23,7 +23,7 @@ use self::{
     video::{NativeVideoSettings, h264_profile_level_id, start_video_pipeline},
 };
 use crate::desktop::{
-    DesktopProtocol, DesktopTarget, detect_desktop_screens, fit_native_desktop_geometry,
+    DesktopSessionConfig, detect_desktop_screens, fit_native_desktop_geometry,
     native_desktop_geometry, native_input_controller, scale_native_desktop_screens,
 };
 
@@ -36,14 +36,14 @@ enum NativeWebRtcSignal {
     Candidate { candidate: RTCIceCandidateInit },
 }
 
-pub(crate) async fn native_desktop_websocket_session(
+pub(crate) async fn desktop_websocket_session(
     mut socket: WebSocket,
-    target: DesktopTarget,
+    session_config: DesktopSessionConfig,
     view_only: bool,
     peer_ip: Option<IpAddr>,
 ) {
-    if let Err(error) = run_native_desktop_session(&mut socket, target, view_only, peer_ip).await {
-        warn!(%error, "native WebRTC desktop session failed");
+    if let Err(error) = run_desktop_session(&mut socket, session_config, view_only, peer_ip).await {
+        warn!(%error, "WebRTC desktop session failed");
         let message = serde_json::json!({
             "type": "error",
             "message": error.to_string(),
@@ -52,9 +52,9 @@ pub(crate) async fn native_desktop_websocket_session(
     }
 }
 
-async fn run_native_desktop_session(
+async fn run_desktop_session(
     socket: &mut WebSocket,
-    target: DesktopTarget,
+    session_config: DesktopSessionConfig,
     view_only: bool,
     peer_ip: Option<IpAddr>,
 ) -> Result<()> {
@@ -62,19 +62,18 @@ async fn run_native_desktop_session(
     let source_geometry = native_desktop_geometry().map_err(|error| anyhow!(error.to_string()))?;
     let geometry = fit_native_desktop_geometry(
         source_geometry,
-        target.native_max_width,
-        target.native_max_height,
+        session_config.max_width,
+        session_config.max_height,
     );
     let screens = scale_native_desktop_screens(detect_desktop_screens(), source_geometry, geometry);
     let h264_profile_level_id = h264_profile_level_id(
-        target.native_max_width,
-        target.native_max_height,
-        target.native_max_fps,
-        target.native_bitrate_kbps,
+        session_config.max_width,
+        session_config.max_height,
+        session_config.max_fps,
+        session_config.bitrate_kbps,
     );
     let hello = serde_json::json!({
         "type": "hello",
-        "protocol": DesktopProtocol::LatitudeNative,
         "transport": "webrtc",
         "codec": "h264",
         "origin_x": geometry.origin_x,
@@ -85,7 +84,7 @@ async fn run_native_desktop_session(
         "source_height": source_geometry.height,
         "screens": screens,
         "view_only": view_only,
-        "ice_servers": target.native_ice_servers,
+        "ice_servers": session_config.ice_servers,
         "h264_profile_level_id": h264_profile_level_id,
     });
     socket
@@ -102,7 +101,7 @@ async fn run_native_desktop_session(
             "resolved browser mDNS candidates from the authenticated WebSocket peer"
         );
     }
-    let mut peer_session = create_session(&target, view_only, offer).await?;
+    let mut peer_session = create_session(&session_config, view_only, offer).await?;
     let mut pipeline = None;
     let session_result: Result<()> = async {
         let answer = peer_session
@@ -135,10 +134,10 @@ async fn run_native_desktop_session(
                                 Arc::clone(&peer_session.track),
                                 Arc::clone(&peer_session.control_channel),
                                 NativeVideoSettings::new(
-                                    target.native_max_fps,
-                                    target.native_bitrate_kbps,
-                                    target.native_max_width,
-                                    target.native_max_height,
+                                    session_config.max_fps,
+                                    session_config.bitrate_kbps,
+                                    session_config.max_width,
+                                    session_config.max_height,
                                 ),
                             ).await?);
                         }

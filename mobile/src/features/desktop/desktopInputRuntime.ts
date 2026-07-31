@@ -1,4 +1,4 @@
-export const nativeDesktopInputRuntime = String.raw`
+export const desktopInputRuntime = String.raw`
     const keyDefinitions = {
       backspace: { vk: 8 },
       tab: { vk: 9 },
@@ -38,7 +38,7 @@ export const nativeDesktopInputRuntime = String.raw`
     };
 
     const updateModifiers = () => {
-      updateNativeState({ pressedModifiers: Array.from(pressedModifiers) });
+      updateViewerState({ pressedModifiers: Array.from(pressedModifiers) });
     };
 
     const releaseModifiers = () => {
@@ -56,7 +56,7 @@ export const nativeDesktopInputRuntime = String.raw`
       if (shouldRelease) {
         send({ type: 'release_input' });
       }
-      updateNativeState({
+      updateViewerState({
         dragLocked,
         pressedModifiers: [],
       });
@@ -283,11 +283,11 @@ export const nativeDesktopInputRuntime = String.raw`
       );
     }
 
-    const handleNativeCommand = (command) => {
+    const handleDesktopCommand = (command) => {
       if (!command || typeof command !== 'object') return;
       const type = command.type || command.action;
       if (type === 'requestState') {
-        flushNativeState();
+        flushViewerState();
       } else if (type === 'toggleScale') {
         if (zoomLevel > 1 || !autoScale) {
           zoomLevel = 1;
@@ -297,7 +297,7 @@ export const nativeDesktopInputRuntime = String.raw`
         } else {
           autoScale = false;
         }
-        updateNativeState({ autoScale, zoomLevel });
+        updateViewerState({ autoScale, zoomLevel });
         layoutCanvas();
       } else if (type === 'zoomIn' || type === 'zoomOut') {
         const factor = type === 'zoomIn' ? zoomStep : 1 / zoomStep;
@@ -316,21 +316,21 @@ export const nativeDesktopInputRuntime = String.raw`
           pointerX = screen.width / 2;
           pointerY = screen.height / 2;
         }
-        updateNativeState({ selectedScreenId });
+        updateViewerState({ selectedScreenId });
         renderFrame();
       } else if (type === 'setPointerMode' && pointerModeValues.has(command.mode)) {
         pointerMode = command.mode;
-        updateNativeState({ pointerMode });
+        updateViewerState({ pointerMode });
         updateTouchCursor();
       } else if (type === 'setMouseButton') {
         const mask = Number(command.buttonMask);
         activeMouseButton = [0x1, 0x2, 0x4].includes(mask) ? mask : 0x1;
         if (dragLocked) sendPointer(activeMouseButton);
-        updateNativeState({ activeMouseButton });
+        updateViewerState({ activeMouseButton });
       } else if (type === 'toggleDragLock') {
         dragLocked = !dragLocked;
         sendPointer(dragLocked ? activeMouseButton : 0);
-        updateNativeState({ dragLocked });
+        updateViewerState({ dragLocked });
       } else if (type === 'pressKey') {
         pressKey(keyDefinitions[command.key]);
       } else if (type === 'toggleModifier') {

@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info, warn};
 
-use super::DesktopTarget;
+use super::DesktopSessionConfig;
 
 const SESSION_HOST_DESKTOP_PATH: &str = "/desktop";
 const SESSION_HOST_HEALTH_PATH: &str = "/health";
@@ -39,7 +39,7 @@ pub(crate) struct NativeSessionBridge {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct NativeSessionRequest {
-    target: DesktopTarget,
+    session_config: DesktopSessionConfig,
     view_only: bool,
     peer_ip: Option<IpAddr>,
 }
@@ -72,12 +72,12 @@ impl NativeSessionBridge {
     pub(crate) async fn proxy(
         &self,
         mut browser: axum::extract::ws::WebSocket,
-        target: DesktopTarget,
+        session_config: DesktopSessionConfig,
         view_only: bool,
         peer_ip: Option<IpAddr>,
     ) {
         if let Err(error) = self
-            .run_proxy(&mut browser, target, view_only, peer_ip)
+            .run_proxy(&mut browser, session_config, view_only, peer_ip)
             .await
         {
             warn!(%error, "native desktop session-host proxy failed");
@@ -94,7 +94,7 @@ impl NativeSessionBridge {
     async fn run_proxy(
         &self,
         browser: &mut axum::extract::ws::WebSocket,
-        target: DesktopTarget,
+        session_config: DesktopSessionConfig,
         view_only: bool,
         peer_ip: Option<IpAddr>,
     ) -> Result<()> {
@@ -120,7 +120,7 @@ impl NativeSessionBridge {
         worker
             .send(tungstenite::Message::Text(
                 serde_json::to_string(&NativeSessionRequest {
-                    target,
+                    session_config,
                     view_only,
                     peer_ip,
                 })?
@@ -261,9 +261,9 @@ async fn session_host_desktop(
             }
         };
 
-        crate::desktop_webrtc::native_desktop_websocket_session(
+        crate::desktop_webrtc::desktop_websocket_session(
             socket,
-            request.target,
+            request.session_config,
             request.view_only,
             request.peer_ip,
         )

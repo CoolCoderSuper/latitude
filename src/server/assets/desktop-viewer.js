@@ -1,4 +1,9 @@
-import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.7.0/core/rfb.js';
+import {
+  isExtendedKey,
+  pointerButtonMask,
+  virtualKeyFor,
+} from './desktop-input.js?v=1';
+import { DesktopPeer } from './desktop-peer.js?v=1';
 
 const workspace = document.querySelector('[data-desktop-workspace]');
 
@@ -9,1006 +14,649 @@ if (workspace) {
   const resolutionSelect = workspace.querySelector('[data-desktop-resolution]');
   const scaleButton = workspace.querySelector('[data-desktop-scale]');
   const fullscreenButton = workspace.querySelector('[data-desktop-fullscreen]');
-  const credentials = workspace.querySelector('[data-desktop-credentials]');
-  const credentialUser = workspace.querySelector('[data-desktop-credential-user]');
-  const credentialPassword = workspace.querySelector('[data-desktop-credential-password]');
-  const credentialTarget = workspace.querySelector('[data-desktop-credential-target]');
   const viewOnly = workspace.dataset.viewOnly !== 'false';
-  let rfb = null;
+  const actionPath = workspace.dataset.actionPath || '/_desktop';
+  let configuredScreens = parseArray(workspace.dataset.screenLayout);
+  let resolutionOptions = parseArray(workspace.dataset.resolutionOptions);
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { alpha: false });
+  const video = document.createElement('video');
+  let socket = null;
+  let peerSession = null;
   let reconnectTimer = null;
   let reconnectDelay = 1000;
   let reconnectEnabled = true;
+  let frameWidth = 0;
+  let frameHeight = 0;
+  let videoFrameCallback = null;
+  let pointerMoveFrame = null;
+  let pendingPointerMove = null;
   let selectedScreenId = 'all';
-  let screenOptions = [];
-  let screenRefreshTimer = null;
-  let resizeObserver = null;
   let autoScale = true;
-  let lastAppliedViewport = '';
-  let layoutRetryTimers = [];
-  let fullRefreshTimer = null;
-  let configuredScreens = [];
-  let resolutionOptions = [];
+  let pointerButtons = 0;
+  const pressedKeys = new Map();
   let resolutionChanging = false;
-  let lastSentClipboardText = null;
-  let interceptedPasteKey = false;
-  let suppressPasteKeyUp = false;
-  let pasteFocusTarget = null;
+  let controlState = viewOnly ? 'disabled' : 'pending';
+  const cursorStyles = new Set([
+    'default',
+    'text',
+    'pointer',
+    'wait',
+    'progress',
+    'crosshair',
+    'help',
+    'not-allowed',
+    'move',
+    'ns-resize',
+    'ew-resize',
+    'nwse-resize',
+    'nesw-resize',
+    'n-resize',
+    'none',
+  ]);
 
-  const setStatus = (message, isError = false) => {
-    if (!status) {
-      return;
+  canvas.className = 'desktop-canvas';
+  canvas.tabIndex = 0;
+  canvas.setAttribute('aria-label', 'Remote desktop');
+  video.autoplay = true;
+  video.muted = true;
+  video.playsInline = true;
+  video.hidden = true;
+  target.replaceChildren(canvas, video);
+
+  function parseArray(value) {
+    try {
+      const parsed = JSON.parse(value || '[]');
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
     }
+  }
 
+  function setStatus(message, isError = false) {
     status.textContent = message;
     status.classList.toggle('error', Boolean(isError));
-  };
+  }
 
-  const writeLocalClipboard = async (text) => {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return;
+  function hasControl() {
+    return !viewOnly && controlState === 'granted';
+  }
+
+  function setConnectedStatus() {
+    if (!viewOnly && controlState === 'waiting') {
+      setStatus('Connected · waiting for control');
+    } else if (!viewOnly && controlState === 'pending') {
+      setStatus('Connected · checking control');
+    } else {
+      setStatus('Connected');
     }
+  }
 
-    const activeElement = document.activeElement;
-    const bridge = document.createElement('textarea');
-    bridge.className = 'desktop-clipboard-bridge';
-    bridge.tabIndex = -1;
-    bridge.setAttribute('aria-hidden', 'true');
-    bridge.value = text;
-    document.body.appendChild(bridge);
-    bridge.focus({ preventScroll: true });
-    bridge.select();
-    bridge.setSelectionRange(0, bridge.value.length);
-    const copied = Boolean(document.execCommand?.('copy'));
-    bridge.remove();
-    activeElement?.focus?.({ preventScroll: true });
-    if (!copied) {
-      throw new Error('Clipboard access is unavailable; select and copy the text manually.');
-    }
-  };
-
-  const sendRemoteClipboard = (text) => {
-    if (viewOnly || !rfb || typeof rfb.clipboardPasteFrom !== 'function') {
-      return false;
-    }
-
-    rfb.clipboardPasteFrom(text);
-    lastSentClipboardText = text;
-    return true;
-  };
-
-  const sendRemotePasteShortcut = () => {
-    if (viewOnly || !rfb || typeof rfb.sendKey !== 'function') {
-      return;
-    }
-
-    rfb.sendKey(0xffe3, 'ControlLeft', true);
-    rfb.sendKey(0x0076, 'KeyV', true);
-    rfb.sendKey(0x0076, 'KeyV', false);
-    rfb.sendKey(0xffe3, 'ControlLeft', false);
-  };
-
-  const syncLocalClipboardToRemote = async () => {
-    if (viewOnly || !rfb || !navigator.clipboard?.readText) {
-      return;
-    }
-
-    try {
-      const text = await navigator.clipboard.readText();
-      if (text !== lastSentClipboardText) {
-        sendRemoteClipboard(text);
-      }
-    } catch (_) {
-      // Browsers can reject background clipboard reads. A paste event or the
-      // explicit clipboard panel remains available in that case.
-    }
-  };
-
-  const buildSocketUrl = () => {
-    const url = new URL(workspace.dataset.wsPath || `${window.location.pathname.replace(/\/$/, '')}/ws`, window.location.href);
+  function buildSocketUrl() {
+    const fallback = `${window.location.pathname.replace(/\/$/, '')}/ws`;
+    const url = new URL(workspace.dataset.wsPath || fallback, window.location.href);
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     if (workspace.dataset.wsToken) {
       url.searchParams.set('token', workspace.dataset.wsToken);
     }
     return url;
-  };
+  }
 
-  const clearReconnectTimer = () => {
-    if (reconnectTimer) {
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
-  };
-
-  const hideCredentials = () => {
-    if (credentials) {
-      credentials.hidden = true;
-    }
-  };
-
-  const showCredentials = (types) => {
-    if (!credentials) {
-      return;
-    }
-
-    const required = new Set(types || ['password']);
-    credentialUser.hidden = !required.has('username');
-    credentialPassword.hidden = !required.has('password');
-    credentialTarget.hidden = !required.has('target');
-    credentials.hidden = false;
-    const firstInput = credentials.querySelector('label:not([hidden]) input');
-    if (firstInput) {
-      firstInput.focus();
-    }
-  };
-
-  const collectCredentials = () => {
-    const payload = {};
-    const username = credentialUser?.querySelector('input')?.value || '';
-    const password = credentialPassword?.querySelector('input')?.value || '';
-    const targetValue = credentialTarget?.querySelector('input')?.value || '';
-    if (username) {
-      payload.username = username;
-    }
-    if (password) {
-      payload.password = password;
-    }
-    if (targetValue) {
-      payload.target = targetValue;
-    }
-    return payload;
-  };
-
-  const scheduleReconnect = () => {
-    if (!reconnectEnabled || reconnectTimer) {
-      return;
-    }
-
-    const delay = reconnectDelay;
-    setStatus('Reconnecting', true);
-    reconnectTimer = window.setTimeout(() => {
-      reconnectTimer = null;
-      connect();
-    }, delay);
-    reconnectDelay = Math.min(8000, Math.floor(reconnectDelay * 1.6));
-  };
-
-  const updateScaleButton = () => {
-    if (!scaleButton) {
-      return;
-    }
-
-    scaleButton.textContent = autoScale ? 'Fit' : '1:1';
-    scaleButton.classList.toggle('active', autoScale);
-    scaleButton.setAttribute('aria-pressed', String(autoScale));
-    scaleButton.title = autoScale ? 'Auto-scale is on' : 'Auto-scale is off';
-  };
-
-  const updateFullscreenButton = () => {
-    if (!fullscreenButton) {
-      return;
-    }
-
-    const isFullscreen = document.fullscreenElement === workspace;
-    fullscreenButton.textContent = isFullscreen ? 'Exit' : 'Full';
-    fullscreenButton.classList.toggle('active', isFullscreen);
-    fullscreenButton.setAttribute('aria-pressed', String(isFullscreen));
-  };
-
-  const displayFor = (currentRfb) => currentRfb?._display || null;
-
-  const requestFullFramebufferUpdate = () => {
-    if (!rfb?._sock || !rfb._fbWidth || !rfb._fbHeight) {
-      return;
-    }
-
-    try {
-      RFB.messages.fbUpdateRequest(rfb._sock, false, 0, 0, rfb._fbWidth, rfb._fbHeight);
-    } catch (_) {}
-  };
-
-  const clearFullRefreshTimer = () => {
-    if (fullRefreshTimer !== null) {
-      window.clearTimeout(fullRefreshTimer);
-      fullRefreshTimer = null;
-    }
-  };
-
-  const scheduleFullFramebufferRefresh = () => {
-    clearFullRefreshTimer();
-    fullRefreshTimer = window.setTimeout(() => {
-      fullRefreshTimer = null;
-      requestFullFramebufferUpdate();
-    }, 150);
-  };
-
-  const expectedScaleFor = (screen, width, height) => {
-    if (!autoScale || !screen.width || !screen.height) {
-      return 1;
-    }
-
-    return Math.min(width / screen.width, height / screen.height);
-  };
-
-  const layoutMatches = (display, screen, width, height) => {
-    const expectedScale = expectedScaleFor(screen, width, height);
-    const actualScale = Number(display.scale || 0);
-    const expectedClip = screen.id !== 'all';
-    const actualClip = Boolean(display.clipViewport);
-    const viewport = display._viewportLoc || {};
-    const viewportMatches =
-      Math.abs(Number(viewport.x || 0) - screen.x) <= 1 &&
-      Math.abs(Number(viewport.y || 0) - screen.y) <= 1 &&
-      Math.abs(Number(viewport.w || 0) - screen.width) <= 1 &&
-      Math.abs(Number(viewport.h || 0) - screen.height) <= 1;
-
-    return (
-      Math.abs(actualScale - expectedScale) < 0.002 &&
-      actualClip === expectedClip &&
-      viewportMatches
-    );
-  };
-
-  const displaySize = (currentRfb) => {
-    const display = displayFor(currentRfb);
-    const width = Number(display?.width || currentRfb?._fbWidth || 0);
-    const height = Number(display?.height || currentRfb?._fbHeight || 0);
-    return { width, height };
-  };
-
-  const normalizedInteger = (value) => {
-    const number = Number(value);
-    if (!Number.isFinite(number)) {
-      return 0;
-    }
-    return Math.max(0, Math.floor(number));
-  };
-
-  const normalizeScreenLayout = (value) => {
-    if (!Array.isArray(value)) {
+  function screenOptions() {
+    if (!frameWidth || !frameHeight) {
       return [];
     }
-
-    return value
-      .map((screen, index) => {
-        const label = String(screen?.label || index + 1);
-        return {
-          id: String(screen?.id || `display-${index + 1}`),
-          label,
-          title: String(screen?.title || `Screen ${label}`),
-          x: normalizedInteger(screen?.x),
-          y: normalizedInteger(screen?.y),
-          width: normalizedInteger(screen?.width),
-          height: normalizedInteger(screen?.height),
-          primary: Boolean(screen?.primary),
-        };
-      })
-      .filter((screen) => screen.width > 0 && screen.height > 0);
-  };
-
-  const parseConfiguredScreens = () => {
-    try {
-      return normalizeScreenLayout(JSON.parse(workspace.dataset.screenLayout || '[]'));
-    } catch (_) {
-      return [];
-    }
-  };
-
-  const commonResolutionOptions = [
-    { width: 1024, height: 768 },
-    { width: 1280, height: 720 },
-    { width: 1280, height: 800 },
-    { width: 1366, height: 768 },
-    { width: 1440, height: 900 },
-    { width: 1600, height: 900 },
-    { width: 1920, height: 1080 },
-    { width: 2560, height: 1440 },
-    { width: 3840, height: 2160 },
-  ];
-
-  const normalizeResolutionOptions = (value) => {
-    if (!Array.isArray(value)) {
-      return [];
-    }
-
-    const seen = new Set();
-    return value
-      .map((resolution) => ({
-        width: normalizedInteger(resolution?.width),
-        height: normalizedInteger(resolution?.height),
-        current: Boolean(resolution?.current),
-      }))
-      .filter((resolution) => {
-        if (resolution.width < 640 || resolution.height < 480) {
-          return false;
-        }
-
-        const key = `${resolution.width}x${resolution.height}`;
-        if (seen.has(key)) {
-          return false;
-        }
-        seen.add(key);
-        return true;
-      })
-      .sort((left, right) => {
-        const leftPixels = left.width * left.height;
-        const rightPixels = right.width * right.height;
-        return leftPixels - rightPixels || left.width - right.width || left.height - right.height;
-      });
-  };
-
-  const parseResolutionOptions = () => {
-    try {
-      return normalizeResolutionOptions(JSON.parse(workspace.dataset.resolutionOptions || '[]'));
-    } catch (_) {
-      return [];
-    }
-  };
-
-  configuredScreens = parseConfiguredScreens();
-  resolutionOptions = parseResolutionOptions();
-
-  const configuredScreensFor = (width, height) => {
-    if (configuredScreens.length < 2) {
-      return [];
-    }
-
-    return configuredScreens
-      .map((screen) => {
-        if (screen.x >= width || screen.y >= height) {
-          return null;
-        }
-
-        const clippedWidth = Math.min(screen.width, width - screen.x);
-        const clippedHeight = Math.min(screen.height, height - screen.y);
-        if (clippedWidth <= 0 || clippedHeight <= 0) {
-          return null;
-        }
-
-        return {
-          ...screen,
-          width: clippedWidth,
-          height: clippedHeight,
-        };
-      })
-      .filter(Boolean);
-  };
-
-  const splitHorizontal = (width, height, count) =>
-    Array.from({ length: count }, (_, index) => {
-      const x = Math.floor((width * index) / count);
-      const nextX = Math.floor((width * (index + 1)) / count);
-      return {
-        id: `screen-${index + 1}`,
-        label: String(index + 1),
-        title: `Screen ${index + 1}`,
-        x,
-        y: 0,
-        width: nextX - x,
-        height,
-      };
-    });
-
-  const splitVertical = (width, height, count) =>
-    Array.from({ length: count }, (_, index) => {
-      const y = Math.floor((height * index) / count);
-      const nextY = Math.floor((height * (index + 1)) / count);
-      return {
-        id: `screen-${index + 1}`,
-        label: String(index + 1),
-        title: `Screen ${index + 1}`,
-        x: 0,
-        y,
-        width,
-        height: nextY - y,
-      };
-    });
-
-  const detectedScreens = (width, height) => {
-    if (!width || !height) {
-      return [];
-    }
-
-    const standardAspect = 16 / 9;
-    const aspect = width / height;
-    const tallAspect = height / width;
-
-    if (aspect >= 2.35) {
-      const count = Math.min(4, Math.max(2, Math.round(aspect / standardAspect)));
-      return splitHorizontal(width, height, count);
-    }
-
-    if (tallAspect >= 2.35) {
-      const count = Math.min(4, Math.max(2, Math.round(tallAspect / standardAspect)));
-      return splitVertical(width, height, count);
-    }
-
-    return [];
-  };
-
-  const buildScreenOptions = () => {
-    const { width, height } = displaySize(rfb);
-    if (!width || !height) {
-      return [];
-    }
-
-    const allScreens = {
+    const all = {
       id: 'all',
       label: 'All',
       title: 'All screens',
       x: 0,
       y: 0,
-      width,
-      height,
+      width: frameWidth,
+      height: frameHeight,
     };
-    let screens = configuredScreensFor(width, height);
-    if (screens.length < 2) {
-      screens = detectedScreens(width, height);
-    }
-    if (screens.length < 2) {
-      return [allScreens];
-    }
-
-    return [allScreens, ...screens];
-  };
-
-  const sameScreenOptions = (left, right) => {
-    if (left.length !== right.length) {
-      return false;
-    }
-
-    return left.every((screen, index) => {
-      const other = right[index];
-      return (
-        screen.id === other.id &&
-        screen.label === other.label &&
-        screen.x === other.x &&
-        screen.y === other.y &&
-        screen.width === other.width &&
-        screen.height === other.height &&
-        screen.primary === other.primary
+    const screens = configuredScreens
+      .map((screen, index) => ({
+        id: String(screen.id || `screen-${index + 1}`),
+        label: String(screen.label || index + 1),
+        title: String(screen.title || `Screen ${index + 1}`),
+        x: Math.max(0, Number(screen.x) || 0),
+        y: Math.max(0, Number(screen.y) || 0),
+        width: Math.max(1, Number(screen.width) || 1),
+        height: Math.max(1, Number(screen.height) || 1),
+        primary: Boolean(screen.primary),
+      }))
+      .filter(
+        (screen) =>
+          screen.x < frameWidth &&
+          screen.y < frameHeight &&
+          screen.x + screen.width <= frameWidth &&
+          screen.y + screen.height <= frameHeight,
       );
-    });
-  };
+    return screens.length > 1 ? [all, ...screens] : [all];
+  }
 
-  const renderScreenSwitcher = () => {
-    if (!screenSwitcher) {
-      return;
-    }
+  function selectedScreen() {
+    const options = screenOptions();
+    return options.find((screen) => screen.id === selectedScreenId) || options[0] || null;
+  }
 
-    screenSwitcher.hidden = screenOptions.length < 2;
+  function renderScreenSwitcher() {
+    const options = screenOptions();
     screenSwitcher.replaceChildren();
-    if (screenOptions.length < 2) {
-      return;
-    }
-
-    for (const screen of screenOptions) {
+    screenSwitcher.hidden = options.length <= 1;
+    for (const screen of options) {
       const button = document.createElement('button');
       button.type = 'button';
+      button.className = 'desktop-control-button';
       button.textContent = screen.label;
       button.title = screen.title;
-      button.setAttribute('aria-label', screen.title);
       button.classList.toggle('active', screen.id === selectedScreenId);
+      button.setAttribute('aria-pressed', String(screen.id === selectedScreenId));
       button.addEventListener('click', () => {
         selectedScreenId = screen.id;
-        lastAppliedViewport = '';
         renderScreenSwitcher();
-        renderResolutionSelect();
-        applySelectedScreen(true);
-        scheduleLayoutRetry();
+        renderFrame();
       });
       screenSwitcher.appendChild(button);
     }
-  };
+  }
 
-  const selectedScreen = () =>
-    screenOptions.find((screen) => screen.id === selectedScreenId) || screenOptions[0] || null;
-
-  const resolutionKey = (resolution) => `${resolution.width}x${resolution.height}`;
-
-  const currentResolutionForSelect = () => {
-    const screen = selectedScreen();
-    if (screen?.id && screen.id !== 'all' && screen.width && screen.height) {
-      return { width: screen.width, height: screen.height };
-    }
-
-    const size = displaySize(rfb);
-    if (size.width && size.height) {
-      return { width: Math.round(size.width), height: Math.round(size.height) };
-    }
-
-    return resolutionOptions.find((resolution) => resolution.current) || null;
-  };
-
-  const availableResolutionOptions = () => {
-    const current = currentResolutionForSelect();
-    const baseOptions = resolutionOptions.length > 0 ? resolutionOptions : commonResolutionOptions;
-    const seen = new Set();
-    const options = [];
-
-    for (const resolution of [...baseOptions, current].filter(Boolean)) {
-      const width = normalizedInteger(resolution.width);
-      const height = normalizedInteger(resolution.height);
-      if (width < 640 || height < 480) {
-        continue;
-      }
-
-      const key = `${width}x${height}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      options.push({ width, height });
-    }
-
-    return options.sort((left, right) => {
-      const leftPixels = left.width * left.height;
-      const rightPixels = right.width * right.height;
-      return leftPixels - rightPixels || left.width - right.width || left.height - right.height;
-    });
-  };
-
-  const renderResolutionSelect = () => {
-    if (!resolutionSelect) {
-      return;
-    }
-
-    const options = availableResolutionOptions();
-    const current = currentResolutionForSelect();
-    const currentKey = current ? resolutionKey(current) : '';
-    resolutionSelect.hidden = options.length === 0;
-    resolutionSelect.disabled = resolutionChanging || options.length === 0;
+  function renderResolutionOptions() {
     resolutionSelect.replaceChildren();
-
-    for (const resolution of options) {
+    resolutionSelect.hidden = resolutionOptions.length === 0;
+    for (const resolution of resolutionOptions) {
       const option = document.createElement('option');
-      option.value = resolutionKey(resolution);
-      option.textContent = `${resolution.width} x ${resolution.height}`;
-      option.selected = option.value === currentKey;
+      option.value = `${resolution.width}x${resolution.height}`;
+      option.textContent = `${resolution.width} × ${resolution.height}`;
+      option.selected = Boolean(resolution.current);
       resolutionSelect.appendChild(option);
     }
-  };
+  }
 
-  const applySelectedScreen = (force = false) => {
-    const display = displayFor(rfb);
+  function updateScaleButton() {
+    scaleButton.textContent = autoScale ? 'Fit' : '1:1';
+    scaleButton.classList.toggle('active', autoScale);
+    scaleButton.setAttribute('aria-pressed', String(autoScale));
+  }
+
+  function updateFullscreenButton() {
+    const active = document.fullscreenElement === workspace;
+    fullscreenButton.textContent = active ? 'Exit' : 'Full';
+    fullscreenButton.classList.toggle('active', active);
+    fullscreenButton.setAttribute('aria-pressed', String(active));
+  }
+
+  function renderFrame() {
     const screen = selectedScreen();
-    if (!target || !display || !screen) {
+    if (!context || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !screen) {
       return;
     }
-
-    const bounds = target.getBoundingClientRect();
-    const width = Math.max(1, bounds.width);
-    const height = Math.max(1, bounds.height);
-    const displayWidth = Number(display.width || 0);
-    const displayHeight = Number(display.height || 0);
-    const layoutKey = [
-      screen.id,
+    if (canvas.width !== screen.width || canvas.height !== screen.height) {
+      canvas.width = screen.width;
+      canvas.height = screen.height;
+    }
+    context.drawImage(
+      video,
       screen.x,
       screen.y,
       screen.width,
       screen.height,
-      displayWidth,
-      displayHeight,
-      Math.round(width),
-      Math.round(height),
-      autoScale ? 'fit' : 'native',
-    ].join(':');
+      0,
+      0,
+      screen.width,
+      screen.height,
+    );
+    canvas.classList.toggle('fit', autoScale);
+    target.classList.toggle('actual-size', !autoScale);
+  }
 
-    if (!force && layoutKey === lastAppliedViewport && layoutMatches(display, screen, width, height)) {
+  function scheduleVideoFrame() {
+    if (!peerSession || videoFrameCallback !== null) {
       return;
     }
-    lastAppliedViewport = layoutKey;
-
-    if (rfb?._screen) {
-      rfb._screen.style.overflow = autoScale ? 'hidden' : 'auto';
-    }
-
-    if (screen.id === 'all') {
-      rfb.clipViewport = false;
-      rfb.scaleViewport = autoScale;
-      display.clipViewport = false;
-      display.viewportChangeSize();
-    } else {
-      rfb.scaleViewport = false;
-      rfb.clipViewport = true;
-      display.clipViewport = true;
-      display.viewportChangeSize(screen.width, screen.height);
-      const viewport = display._viewportLoc || { x: 0, y: 0 };
-      display.viewportChangePos(screen.x - viewport.x, screen.y - viewport.y);
-    }
-
-    if (autoScale) {
-      display.autoscale(width, height);
-    } else {
-      display.scale = 1;
-    }
-
-    if (force) {
-      scheduleFullFramebufferRefresh();
-    }
-  };
-
-  const refreshScreenOptions = () => {
-    const nextOptions = buildScreenOptions();
-    const selectedExists = nextOptions.some((screen) => screen.id === selectedScreenId);
-    let selectedChanged = false;
-    if (!selectedExists) {
-      selectedScreenId = 'all';
-      selectedChanged = true;
-    }
-
-    if (!sameScreenOptions(screenOptions, nextOptions)) {
-      screenOptions = nextOptions;
-      lastAppliedViewport = '';
-      renderScreenSwitcher();
-    } else if (selectedChanged) {
-      lastAppliedViewport = '';
-      renderScreenSwitcher();
-    }
-
-    applySelectedScreen();
-    renderResolutionSelect();
-  };
-
-  const clearLayoutRetries = () => {
-    for (const timer of layoutRetryTimers) {
-      window.clearTimeout(timer);
-    }
-    layoutRetryTimers = [];
-  };
-
-  const scheduleLayoutRetry = () => {
-    clearLayoutRetries();
-
-    const retry = () => {
-      lastAppliedViewport = '';
-      refreshScreenOptions();
+    const render = () => {
+      videoFrameCallback = null;
+      renderFrame();
+      scheduleVideoFrame();
     };
+    videoFrameCallback = video.requestVideoFrameCallback
+      ? video.requestVideoFrameCallback(render)
+      : window.requestAnimationFrame(render);
+  }
 
-    window.requestAnimationFrame(() => {
-      retry();
-      window.requestAnimationFrame(retry);
-    });
+  function send(command) {
+    return peerSession?.sendControl(command) || false;
+  }
 
-    for (const delay of [80, 180, 360, 720]) {
-      layoutRetryTimers.push(window.setTimeout(retry, delay));
+  function sendSignal(message) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
     }
-  };
+    socket.send(JSON.stringify(message));
+    return true;
+  }
 
-  const stopScreenRefresh = () => {
-    clearLayoutRetries();
-    clearFullRefreshTimer();
-    if (screenRefreshTimer) {
-      window.clearInterval(screenRefreshTimer);
-      screenRefreshTimer = null;
-    }
-    if (resizeObserver) {
-      resizeObserver.disconnect();
-      resizeObserver = null;
-    }
-    screenOptions = [];
-    selectedScreenId = 'all';
-    lastAppliedViewport = '';
-    renderScreenSwitcher();
-    renderResolutionSelect();
-  };
-
-  const startScreenRefresh = () => {
-    stopScreenRefresh();
-    if (!target) {
-      return;
-    }
-
-    if (typeof ResizeObserver !== 'undefined') {
-      resizeObserver = new ResizeObserver(refreshScreenOptions);
-      resizeObserver.observe(target);
-    }
-    screenRefreshTimer = window.setInterval(refreshScreenOptions, 1000);
-    window.setTimeout(refreshScreenOptions, 50);
-    window.setTimeout(refreshScreenOptions, 500);
-    scheduleLayoutRetry();
-  };
-
-  const desktopActionUrl = () => new URL(workspace.dataset.actionPath || window.location.pathname, window.location.href);
-
-  const parseResolutionValue = (value) => {
-    const match = /^(\d+)x(\d+)$/.exec(String(value || ''));
-    if (!match) {
+  function pointerPosition(event) {
+    const screen = selectedScreen();
+    const bounds = canvas.getBoundingClientRect();
+    if (!screen || bounds.width <= 0 || bounds.height <= 0 || !frameWidth || !frameHeight) {
       return null;
     }
-
+    const localX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
+    const localY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
     return {
-      width: Number(match[1]),
-      height: Number(match[2]),
+      x: (screen.x + localX * screen.width) / frameWidth,
+      y: (screen.y + localY * screen.height) / frameHeight,
     };
-  };
+  }
 
-  const refreshResolutionData = (payload) => {
-    if (Array.isArray(payload?.screens)) {
-      configuredScreens = normalizeScreenLayout(payload.screens);
+  function sendPointer(event, buttons = pointerButtons) {
+    if (!hasControl()) {
+      return;
+    }
+    cancelPendingPointerMove();
+    const point = pointerPosition(event);
+    if (point) {
+      send({ type: 'pointer', x: point.x, y: point.y, buttons });
+    }
+  }
+
+  function sendPointerMove(event) {
+    if (!hasControl()) {
+      return;
+    }
+    const point = pointerPosition(event);
+    if (!point) {
+      return;
+    }
+    pendingPointerMove = { type: 'pointer_move', x: point.x, y: point.y };
+    if (pointerMoveFrame === null) {
+      pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+    }
+  }
+
+  function flushPointerMove() {
+    pointerMoveFrame = null;
+    if (!pendingPointerMove || !hasControl()) {
+      pendingPointerMove = null;
+      return;
+    }
+    if (peerSession?.sendPointer(pendingPointerMove)) {
+      pendingPointerMove = null;
+    }
+    if (pendingPointerMove !== null) {
+      pointerMoveFrame = window.requestAnimationFrame(flushPointerMove);
+    }
+  }
+
+  function cancelPendingPointerMove() {
+    if (pointerMoveFrame !== null) {
+      window.cancelAnimationFrame(pointerMoveFrame);
+      pointerMoveFrame = null;
+    }
+    pendingPointerMove = null;
+  }
+
+  function clearReconnectTimer() {
+    if (reconnectTimer !== null) {
+      window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  }
+
+  function scheduleReconnect() {
+    if (!reconnectEnabled || reconnectTimer !== null) {
+      return;
+    }
+    setStatus('Reconnecting', true);
+    const delay = reconnectDelay;
+    reconnectTimer = window.setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+    reconnectDelay = Math.min(8000, Math.floor(reconnectDelay * 1.6));
+  }
+
+  function updateGeometry(message) {
+    let screensChanged = false;
+    if (Array.isArray(message.screens)) {
+      configuredScreens = message.screens;
       workspace.dataset.screenLayout = JSON.stringify(configuredScreens);
+      screensChanged = true;
     }
-    if (Array.isArray(payload?.resolutions)) {
-      resolutionOptions = normalizeResolutionOptions(payload.resolutions);
-      workspace.dataset.resolutionOptions = JSON.stringify(resolutionOptions);
+    const nextWidth = Math.max(1, Number(message.width) || 1);
+    const nextHeight = Math.max(1, Number(message.height) || 1);
+    if (frameWidth === nextWidth && frameHeight === nextHeight && !screensChanged) {
+      return;
+    }
+    frameWidth = nextWidth;
+    frameHeight = nextHeight;
+    if (!screenOptions().some((screen) => screen.id === selectedScreenId)) {
+      selectedScreenId = 'all';
+    }
+    renderScreenSwitcher();
+    renderFrame();
+  }
+
+  function handleControlMessage(event) {
+    if (typeof event.data !== 'string') {
+      return;
+    }
+    let message;
+    try {
+      message = JSON.parse(event.data);
+    } catch (_) {
+      return;
+    }
+    if (message.type === 'geometry') {
+      updateGeometry(message);
+    } else if (message.type === 'cursor') {
+      canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+    } else if (message.type === 'control') {
+      controlState = message.state === 'granted' ? 'granted' : 'waiting';
+      if (hasControl()) {
+        canvas.focus({ preventScroll: true });
+      } else {
+        pointerButtons = 0;
+        pressedKeys.clear();
+      }
+      setConnectedStatus();
+    } else if (message.type === 'error') {
+      setStatus(message.message || 'Desktop stream failed', true);
+    }
+  }
+
+  function closePeerConnection() {
+    const currentPeer = peerSession;
+    peerSession = null;
+    cancelPendingPointerMove();
+    if (videoFrameCallback !== null) {
+      if (typeof video.cancelVideoFrameCallback === 'function') {
+        video.cancelVideoFrameCallback(videoFrameCallback);
+      } else {
+        window.cancelAnimationFrame(videoFrameCallback);
+      }
+    }
+    videoFrameCallback = null;
+    video.srcObject = null;
+    currentPeer?.close();
+  }
+
+  async function startPeerConnection(iceServers, h264ProfileLevelId) {
+    if (peerSession) {
+      return;
+    }
+    const peer = new DesktopPeer({
+      onControlOpen: () => {
+        setConnectedStatus();
+      },
+      onControlMessage: handleControlMessage,
+      onControlError: () => {
+        setStatus('Desktop control channel failed', true);
+      },
+      onTrack: (event) => {
+        video.srcObject = event.streams[0] || new MediaStream([event.track]);
+        void video.play().then(scheduleVideoFrame).catch((error) => {
+          setStatus(error?.message || 'Desktop video could not start', true);
+        });
+      },
+      onConnectionState: (state) => {
+        if (state === 'connected') {
+          reconnectDelay = 1000;
+          setConnectedStatus();
+        } else if (state === 'connecting') {
+          setStatus('Connecting media');
+        } else if (state === 'failed') {
+          setStatus('WebRTC connection failed', true);
+          socket?.close();
+        }
+      },
+      onIceCandidate: (candidate) => {
+        sendSignal({ type: 'candidate', candidate });
+      },
+    });
+    peerSession = peer;
+    const offer = await peer.start(iceServers, h264ProfileLevelId);
+    if (peerSession !== peer || !offer) {
+      return;
+    }
+    setStatus('Negotiating');
+    if (sendSignal({ type: 'offer', sdp: offer })) {
+      peer.releaseIceCandidates();
+    }
+  }
+
+  function connect() {
+    if (socket) {
+      return;
+    }
+    clearReconnectTimer();
+    setStatus('Connecting');
+    const nextSocket = new WebSocket(buildSocketUrl());
+    socket = nextSocket;
+
+    nextSocket.addEventListener('open', () => {
+      if (socket !== nextSocket) return;
+      reconnectDelay = 1000;
+      setStatus('Negotiating');
+    });
+    nextSocket.addEventListener('message', async (event) => {
+      if (socket !== nextSocket) return;
+      if (typeof event.data !== 'string') return;
+      let message;
+      try {
+        message = JSON.parse(event.data);
+      } catch (_) {
+        return;
+      }
+      if (message.type === 'hello') {
+        updateGeometry(message);
+        try {
+          await startPeerConnection(message.ice_servers, message.h264_profile_level_id);
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC could not be started', true);
+          nextSocket.close();
+        }
+      } else if (message.type === 'answer') {
+        if (!peerSession) return;
+        try {
+          await peerSession.acceptAnswer(message.sdp);
+          setStatus('Connecting media');
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC answer was rejected', true);
+          nextSocket.close();
+        }
+      } else if (message.type === 'candidate') {
+        if (!peerSession || !message.candidate) return;
+        try {
+          await peerSession.addCandidate(message.candidate);
+        } catch (error) {
+          setStatus(error?.message || 'WebRTC ICE candidate was rejected', true);
+          nextSocket.close();
+        }
+      } else if (message.type === 'error') {
+        setStatus(message.message || 'Desktop connection failed', true);
+      }
+    });
+    nextSocket.addEventListener('close', () => {
+      if (socket !== nextSocket) return;
+      socket = null;
+      pointerButtons = 0;
+      pressedKeys.clear();
+      controlState = viewOnly ? 'disabled' : 'pending';
+      closePeerConnection();
+      scheduleReconnect();
+    });
+    nextSocket.addEventListener('error', () => {
+      if (socket === nextSocket) setStatus('Desktop connection failed', true);
+    });
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (!hasControl()) return;
+    event.preventDefault();
+    canvas.focus({ preventScroll: true });
+    canvas.setPointerCapture?.(event.pointerId);
+    pointerButtons |= pointerButtonMask(event.button);
+    sendPointer(event);
+  });
+  canvas.addEventListener('pointermove', (event) => {
+    if (!hasControl()) return;
+    event.preventDefault();
+    sendPointerMove(event);
+  });
+  const releasePointer = (event) => {
+    if (!hasControl()) return;
+    event.preventDefault();
+    pointerButtons &= ~pointerButtonMask(event.button);
+    sendPointer(event);
+  };
+  canvas.addEventListener('pointerup', releasePointer);
+  canvas.addEventListener('pointercancel', (event) => {
+    if (!hasControl()) return;
+    event.preventDefault();
+    releaseAllInput();
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+  canvas.addEventListener(
+    'wheel',
+    (event) => {
+      if (!hasControl()) return;
+      event.preventDefault();
+      sendPointer(event);
+      send({
+        type: 'wheel',
+        delta_x: event.deltaX === 0 ? 0 : event.deltaX > 0 ? 120 : -120,
+        delta_y: event.deltaY === 0 ? 0 : event.deltaY > 0 ? -120 : 120,
+      });
+    },
+    { passive: false },
+  );
+  canvas.addEventListener('keydown', (event) => {
+    if (!hasControl()) return;
+    const vk = virtualKeyFor(event);
+    if (!vk) return;
+    event.preventDefault();
+    const extended = isExtendedKey(event.code || '');
+    pressedKeys.set(event.code || `${vk}:${extended}`, { vk, extended });
+    send({ type: 'key', vk, down: true, extended });
+  });
+  canvas.addEventListener('keyup', (event) => {
+    if (!hasControl()) return;
+    const vk = virtualKeyFor(event);
+    if (!vk) return;
+    event.preventDefault();
+    const extended = isExtendedKey(event.code || '');
+    pressedKeys.delete(event.code || `${vk}:${extended}`);
+    send({ type: 'key', vk, down: false, extended });
+  });
+  const releaseAllInput = () => {
+    const shouldRelease = hasControl();
+    cancelPendingPointerMove();
+    pointerButtons = 0;
+    pressedKeys.clear();
+    if (shouldRelease) {
+      send({ type: 'release_input' });
     }
   };
-
-  const applyResolution = async (resolution) => {
-    if (!resolution || resolutionChanging) {
-      return;
+  canvas.addEventListener('blur', releaseAllInput);
+  canvas.addEventListener('paste', (event) => {
+    if (!hasControl()) return;
+    const text = event.clipboardData?.getData('text/plain');
+    if (text) {
+      event.preventDefault();
+      send({ type: 'text', text });
     }
+  });
 
-    const current = currentResolutionForSelect();
-    if (current && current.width === resolution.width && current.height === resolution.height) {
-      renderResolutionSelect();
-      return;
+  scaleButton.addEventListener('click', () => {
+    autoScale = !autoScale;
+    updateScaleButton();
+    renderFrame();
+  });
+  fullscreenButton.addEventListener('click', async () => {
+    if (document.fullscreenElement === workspace) {
+      await document.exitFullscreen?.();
+    } else {
+      await workspace.requestFullscreen?.();
     }
-
+    updateFullscreenButton();
+  });
+  document.addEventListener('fullscreenchange', updateFullscreenButton);
+  resolutionSelect.addEventListener('change', async () => {
+    if (resolutionChanging) return;
+    const [width, height] = resolutionSelect.value.split('x').map(Number);
+    if (!width || !height) return;
     resolutionChanging = true;
-    renderResolutionSelect();
+    resolutionSelect.disabled = true;
     setStatus('Changing resolution');
-
     try {
       const headers = { 'content-type': 'application/json' };
       if (workspace.dataset.wsToken) {
         headers.authorization = `Bearer ${workspace.dataset.wsToken}`;
       }
-      const response = await fetch(desktopActionUrl(), {
+      const response = await fetch(actionPath, {
         method: 'PATCH',
         credentials: 'same-origin',
         headers,
         body: JSON.stringify({
           action: 'set_resolution',
-          width: resolution.width,
-          height: resolution.height,
           screen_id: selectedScreenId.startsWith('display-') ? selectedScreenId : null,
+          width,
+          height,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || 'Resolution change failed');
+        throw new Error(payload.error || `Resolution change failed (${response.status})`);
       }
-
-      refreshResolutionData(payload);
-      lastAppliedViewport = '';
+      if (Array.isArray(payload.resolutions)) {
+        resolutionOptions = payload.resolutions;
+        workspace.dataset.resolutionOptions = JSON.stringify(resolutionOptions);
+      }
+      if (!screenOptions().some((screen) => screen.id === selectedScreenId)) {
+        selectedScreenId = 'all';
+      }
+      renderScreenSwitcher();
+      renderResolutionOptions();
       setStatus('Resolution changed');
-      window.latitudeReconnect?.(true);
-      scheduleLayoutRetry();
-      window.setTimeout(scheduleLayoutRetry, 600);
-      window.setTimeout(scheduleFullFramebufferRefresh, 1000);
-      window.setTimeout(() => {
-        setStatus('');
-      }, 1400);
     } catch (error) {
-      setStatus(error.message || 'Resolution change failed', true);
+      setStatus(error?.message || 'Resolution change failed', true);
     } finally {
       resolutionChanging = false;
-      renderResolutionSelect();
-    }
-  };
-
-  resolutionSelect?.addEventListener('change', () => {
-    applyResolution(parseResolutionValue(resolutionSelect.value));
-  });
-
-  document.addEventListener('paste', (event) => {
-    if (viewOnly) {
-      return;
-    }
-
-    const text = event.clipboardData?.getData('text/plain');
-    if (typeof text !== 'string') {
-      return;
-    }
-
-    try {
-      if (sendRemoteClipboard(text)) {
-        if (interceptedPasteKey) {
-          event.preventDefault();
-          pasteFocusTarget?.focus?.({ preventScroll: true });
-          window.setTimeout(sendRemotePasteShortcut, 25);
-        }
-      }
-    } catch (_) {}
-    interceptedPasteKey = false;
-    pasteFocusTarget = null;
-  }, true);
-
-  window.addEventListener('keydown', (event) => {
-    const activeElement = document.activeElement;
-    const viewerHasFocus = Boolean(target && (activeElement === target || target.contains(activeElement)));
-    if (
-      viewOnly ||
-      !viewerHasFocus ||
-      event.altKey ||
-      (!event.ctrlKey && !event.metaKey) ||
-      event.key.toLowerCase() !== 'v'
-    ) {
-      return;
-    }
-
-    interceptedPasteKey = true;
-    suppressPasteKeyUp = true;
-    pasteFocusTarget = activeElement;
-    const bridge = document.createElement('textarea');
-    bridge.className = 'desktop-clipboard-bridge';
-    bridge.tabIndex = -1;
-    bridge.setAttribute('aria-hidden', 'true');
-    bridge.addEventListener('paste', () => window.setTimeout(() => bridge.remove(), 0), { once: true });
-    document.body.appendChild(bridge);
-    bridge.focus({ preventScroll: true });
-    event.stopImmediatePropagation();
-    window.setTimeout(() => {
-      bridge.remove();
-      interceptedPasteKey = false;
-      pasteFocusTarget = null;
-    }, 1000);
-  }, true);
-
-  window.addEventListener('keyup', (event) => {
-    if (suppressPasteKeyUp && event.key.toLowerCase() === 'v') {
-      suppressPasteKeyUp = false;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    }
-  }, true);
-
-  scaleButton?.addEventListener('click', () => {
-    autoScale = !autoScale;
-    lastAppliedViewport = '';
-    updateScaleButton();
-    scheduleLayoutRetry();
-  });
-
-  fullscreenButton?.addEventListener('click', async () => {
-    try {
-      if (document.fullscreenElement === workspace) {
-        await document.exitFullscreen();
-      } else {
-        await workspace.requestFullscreen();
-      }
-    } catch (error) {
-      setStatus(error.message || 'Fullscreen unavailable', true);
+      resolutionSelect.disabled = false;
     }
   });
-
-  document.addEventListener('fullscreenchange', () => {
-    updateFullscreenButton();
-    lastAppliedViewport = '';
-    scheduleLayoutRetry();
-  });
-
-  const configureRfb = (nextRfb) => {
-    nextRfb.viewOnly = viewOnly;
-    nextRfb.scaleViewport = false;
-    nextRfb.resizeSession = false;
-    nextRfb.clipViewport = false;
-    nextRfb.dragViewport = false;
-    nextRfb.focusOnClick = !viewOnly;
-    nextRfb.qualityLevel = 6;
-    nextRfb.compressionLevel = 2;
-
-    nextRfb.addEventListener('connect', () => {
-      clearReconnectTimer();
-      reconnectDelay = 1000;
-      hideCredentials();
-      setStatus('Connected');
-      startScreenRefresh();
-      syncLocalClipboardToRemote();
-      window.setTimeout(() => {
-        if (rfb === nextRfb) {
-          setStatus('');
-        }
-      }, 1000);
-    });
-
-    nextRfb.addEventListener('disconnect', (event) => {
-      if (rfb !== nextRfb) {
-        return;
-      }
-
-      rfb = null;
-      lastSentClipboardText = null;
-      stopScreenRefresh();
-      if (event.detail.clean) {
-        setStatus('Disconnected', true);
-      } else {
-        scheduleReconnect();
-      }
-    });
-
-    nextRfb.addEventListener('credentialsrequired', (event) => {
-      showCredentials(event.detail.types);
-      setStatus('Credentials required', true);
-    });
-
-    nextRfb.addEventListener('securityfailure', (event) => {
-      setStatus(event.detail.reason || 'Security failure', true);
-    });
-
-    nextRfb.addEventListener('clipboard', (event) => {
-      const text = event.detail?.text || '';
-      lastSentClipboardText = text;
-      writeLocalClipboard(text).catch(() => {});
-    });
-  };
-
-  const connect = () => {
-    if (!target || rfb) {
-      return;
-    }
-
-    clearReconnectTimer();
-    hideCredentials();
-    target.replaceChildren();
-    setStatus('Connecting');
-    try {
-      const nextRfb = new RFB(target, buildSocketUrl().toString(), { shared: true });
-      rfb = nextRfb;
-      configureRfb(nextRfb);
-    } catch (error) {
-      setStatus(error.message || 'Connection failed', true);
-      scheduleReconnect();
-    }
-  };
-
-  const reconnect = (force) => {
-    clearReconnectTimer();
-    reconnectDelay = 1000;
-    if (force && rfb) {
-      const current = rfb;
-      rfb = null;
-      try {
-        current.disconnect();
-      } catch (_) {}
-    }
-    if (!rfb) {
-      connect();
-    }
-  };
-
-  window.latitudeReconnect = reconnect;
-
-  credentials?.addEventListener('submit', (event) => {
-    event.preventDefault();
-    if (!rfb) {
-      connect();
-      return;
-    }
-
-    rfb.sendCredentials(collectCredentials());
-    hideCredentials();
-    setStatus('Authenticating');
-  });
-
   window.addEventListener('focus', () => {
-    reconnect(false);
-    syncLocalClipboardToRemote();
+    if (!socket) connect();
   });
-  window.addEventListener('online', () => reconnect(true));
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      reconnect(false);
-      syncLocalClipboardToRemote();
+  window.addEventListener('blur', releaseAllInput);
+  window.addEventListener('online', () => {
+    if (socket) {
+      const current = socket;
+      socket = null;
+      current.close();
     }
+    closePeerConnection();
+    connect();
   });
   window.addEventListener('beforeunload', () => {
     reconnectEnabled = false;
     clearReconnectTimer();
-    stopScreenRefresh();
-    if (rfb) {
-      rfb.disconnect();
+    releaseAllInput();
+    socket?.close();
+    closePeerConnection();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      releaseAllInput();
     }
   });
 
+  renderResolutionOptions();
+  renderScreenSwitcher();
   updateScaleButton();
   updateFullscreenButton();
-  renderResolutionSelect();
-
-  if (target) {
-    connect();
-  } else {
-    setStatus('Desktop surface missing', true);
-  }
+  connect();
 }

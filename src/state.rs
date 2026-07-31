@@ -16,7 +16,7 @@ use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard, RwLock};
 
 use crate::{
     config::{BootConfig, ConfigError},
-    desktop::{ManagedDesktopManager, NativeSessionBridge},
+    desktop::NativeSessionBridge,
     device::current_hostname,
     project_files::ProjectFileService,
     server::GitStatusSummary,
@@ -50,7 +50,6 @@ struct AppStateInner {
     client: Client,
     device_hostname: String,
     public_auth_secret: [u8; 32],
-    desktop_manager: Arc<ManagedDesktopManager>,
     native_session_bridge: Option<NativeSessionBridge>,
     workspace_bridge: Option<WorkspaceBridge>,
     terminal_sessions: Arc<TerminalSessionManager>,
@@ -89,7 +88,6 @@ impl AppState {
                 client,
                 device_hostname: current_hostname(),
                 public_auth_secret: random(),
-                desktop_manager: Arc::new(ManagedDesktopManager::default()),
                 native_session_bridge,
                 workspace_bridge,
                 terminal_sessions: Arc::new(TerminalSessionManager::default()),
@@ -114,10 +112,6 @@ impl AppState {
 
     pub fn terminal_sessions(&self) -> Arc<TerminalSessionManager> {
         self.inner.terminal_sessions.clone()
-    }
-
-    pub fn desktop_manager(&self) -> Arc<ManagedDesktopManager> {
-        self.inner.desktop_manager.clone()
     }
 
     pub(crate) fn native_session_bridge(&self) -> Option<NativeSessionBridge> {

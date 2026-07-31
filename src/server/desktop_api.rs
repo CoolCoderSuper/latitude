@@ -11,7 +11,7 @@ use serde::Deserialize;
 
 use crate::{
     desktop::{
-        DesktopProtocol, DesktopResolutionError, desktop_info_response, set_desktop_resolution,
+        DesktopResolutionError, DesktopSessionConfig, desktop_info_response, set_desktop_resolution,
     },
     state::AppState,
 };
@@ -48,19 +48,15 @@ pub(in crate::server) async fn public_api_get_root_desktop(
         return json_error(StatusCode::NOT_FOUND, "desktop is not enabled");
     }
 
-    let target = match state.desktop_manager().target_for(&config.desktop).await {
-        Ok(target) => target,
-        Err(error) => {
-            return json_error(
-                StatusCode::BAD_GATEWAY,
-                format!("desktop target could not be prepared: {error}"),
-            );
-        }
-    };
+    if let Err(error) = DesktopSessionConfig::try_from(&config.desktop) {
+        return json_error(
+            StatusCode::BAD_GATEWAY,
+            format!("desktop session could not be prepared: {error}"),
+        );
+    }
 
     Json(desktop_info_response(
         &config.desktop,
-        &target,
         PUBLIC_ROOT_DESKTOP_WS_PATH.to_string(),
     ))
     .into_response()
@@ -192,20 +188,18 @@ pub(in crate::server) async fn public_root_desktop_ws(
         return json_error(StatusCode::NOT_FOUND, "desktop is not enabled");
     }
 
-    let target = match state.desktop_manager().target_for(&config.desktop).await {
-        Ok(target) => target,
+    let session_config = match DesktopSessionConfig::try_from(&config.desktop) {
+        Ok(session_config) => session_config,
         Err(error) => {
             return json_error(
                 StatusCode::BAD_GATEWAY,
-                format!("desktop target could not be prepared: {error}"),
+                format!("desktop session could not be prepared: {error}"),
             );
         }
     };
 
     let view_only = config.desktop.view_only;
-    if target.protocol == DesktopProtocol::LatitudeNative
-        && let Some(bridge) = state.native_session_bridge()
-    {
+    if let Some(bridge) = state.native_session_bridge() {
         if !bridge.is_available().await {
             return json_error(
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -214,7 +208,7 @@ pub(in crate::server) async fn public_root_desktop_ws(
         }
         return ws.on_upgrade(move |socket| async move {
             bridge
-                .proxy(socket, target, view_only, Some(peer_address.ip()))
+                .proxy(socket, session_config, view_only, Some(peer_address.ip()))
                 .await
         });
     }
@@ -222,7 +216,7 @@ pub(in crate::server) async fn public_root_desktop_ws(
     ws.on_upgrade(move |socket| {
         crate::desktop::desktop_websocket_session(
             socket,
-            target,
+            session_config,
             view_only,
             Some(peer_address.ip()),
         )

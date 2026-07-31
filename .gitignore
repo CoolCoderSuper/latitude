@@ -6,5 +6,3 @@ latitude.json
 latitude-data/
 .codex-remote-attachments/
 logs/
-/tools/ultravnc/*
-!/tools/ultravnc/README.md

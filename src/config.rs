@@ -73,30 +73,18 @@ pub struct DesktopConfig {
     pub enabled: bool,
     #[serde(default = "default_desktop_label")]
     pub label: String,
+    #[serde(default = "default_desktop_max_fps")]
+    pub max_fps: u16,
+    #[serde(default = "default_desktop_bitrate_kbps")]
+    pub bitrate_kbps: u32,
+    #[serde(default = "default_desktop_max_width")]
+    pub max_width: u32,
+    #[serde(default = "default_desktop_max_height")]
+    pub max_height: u32,
     #[serde(default)]
-    pub mode: DesktopMode,
-    #[serde(default)]
-    pub managed_provider: ManagedDesktopProvider,
-    #[serde(default = "default_desktop_managed_executable")]
-    pub managed_executable: PathBuf,
-    #[serde(default = "default_desktop_vnc_host")]
-    pub vnc_host: String,
-    #[serde(default = "default_desktop_vnc_port")]
-    pub vnc_port: u16,
-    #[serde(default = "default_desktop_native_max_fps")]
-    pub native_max_fps: u16,
-    #[serde(default = "default_desktop_native_bitrate_kbps")]
-    pub native_bitrate_kbps: u32,
-    #[serde(default = "default_desktop_native_max_width")]
-    pub native_max_width: u32,
-    #[serde(default = "default_desktop_native_max_height")]
-    pub native_max_height: u32,
-    #[serde(default)]
-    pub native_ice_servers: Vec<DesktopIceServerConfig>,
+    pub ice_servers: Vec<DesktopIceServerConfig>,
     #[serde(default = "default_true")]
     pub view_only: bool,
-    #[serde(default)]
-    pub allow_non_loopback: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,22 +116,6 @@ pub struct T3CodeConfig {
     pub base_dir: Option<PathBuf>,
     #[serde(default)]
     pub start_if_needed: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopMode {
-    #[default]
-    External,
-    Managed,
-    Native,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedDesktopProvider {
-    #[default]
-    UltraVnc,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -381,18 +353,12 @@ impl Default for DesktopConfig {
         Self {
             enabled: false,
             label: default_desktop_label(),
-            mode: DesktopMode::default(),
-            managed_provider: ManagedDesktopProvider::default(),
-            managed_executable: default_desktop_managed_executable(),
-            vnc_host: default_desktop_vnc_host(),
-            vnc_port: default_desktop_vnc_port(),
-            native_max_fps: default_desktop_native_max_fps(),
-            native_bitrate_kbps: default_desktop_native_bitrate_kbps(),
-            native_max_width: default_desktop_native_max_width(),
-            native_max_height: default_desktop_native_max_height(),
-            native_ice_servers: Vec::new(),
+            max_fps: default_desktop_max_fps(),
+            bitrate_kbps: default_desktop_bitrate_kbps(),
+            max_width: default_desktop_max_width(),
+            max_height: default_desktop_max_height(),
+            ice_servers: Vec::new(),
             view_only: true,
-            allow_non_loopback: false,
         }
     }
 }
@@ -548,72 +514,33 @@ impl DesktopConfig {
             ));
         }
 
-        if self.mode == DesktopMode::Managed {
-            if self.managed_executable.as_os_str().is_empty() {
-                return Err(ConfigError::Invalid(
-                    "desktop managed_executable must not be empty when managed desktop is enabled"
-                        .to_string(),
-                ));
-            }
-            return Ok(());
-        }
-
-        if self.mode == DesktopMode::Native {
-            if !(1..=60).contains(&self.native_max_fps) {
-                return Err(ConfigError::Invalid(
-                    "desktop native_max_fps must be between 1 and 60".to_string(),
-                ));
-            }
-            if !(250..=25_000).contains(&self.native_bitrate_kbps) {
-                return Err(ConfigError::Invalid(
-                    "desktop native_bitrate_kbps must be between 250 and 25000".to_string(),
-                ));
-            }
-            if !(640..=1920).contains(&self.native_max_width)
-                || !self.native_max_width.is_multiple_of(2)
-            {
-                return Err(ConfigError::Invalid(
-                    "desktop native_max_width must be an even number between 640 and 1920"
-                        .to_string(),
-                ));
-            }
-            if !(360..=1080).contains(&self.native_max_height)
-                || !self.native_max_height.is_multiple_of(2)
-            {
-                return Err(ConfigError::Invalid(
-                    "desktop native_max_height must be an even number between 360 and 1080"
-                        .to_string(),
-                ));
-            }
-            for server in &self.native_ice_servers {
-                if server.urls.is_empty() || server.urls.iter().any(|url| url.trim().is_empty()) {
-                    return Err(ConfigError::Invalid(
-                        "desktop native_ice_servers entries require at least one non-empty URL"
-                            .to_string(),
-                    ));
-                }
-            }
-            return Ok(());
-        }
-
-        if self.vnc_host.trim().is_empty() {
+        if !(1..=60).contains(&self.max_fps) {
             return Err(ConfigError::Invalid(
-                "desktop vnc_host must not be empty when desktop is enabled".to_string(),
+                "desktop max_fps must be between 1 and 60".to_string(),
             ));
         }
-
-        if self.vnc_port == 0 {
+        if !(250..=25_000).contains(&self.bitrate_kbps) {
             return Err(ConfigError::Invalid(
-                "desktop vnc_port must be between 1 and 65535".to_string(),
+                "desktop bitrate_kbps must be between 250 and 25000".to_string(),
             ));
         }
-
-        if !self.allow_non_loopback && !is_loopback_host(&self.vnc_host) {
+        if !(640..=1920).contains(&self.max_width) || !self.max_width.is_multiple_of(2) {
             return Err(ConfigError::Invalid(
-                "desktop vnc_host must be loopback unless allow_non_loopback is true".to_string(),
+                "desktop max_width must be an even number between 640 and 1920".to_string(),
             ));
         }
-
+        if !(360..=1080).contains(&self.max_height) || !self.max_height.is_multiple_of(2) {
+            return Err(ConfigError::Invalid(
+                "desktop max_height must be an even number between 360 and 1080".to_string(),
+            ));
+        }
+        for server in &self.ice_servers {
+            if server.urls.is_empty() || server.urls.iter().any(|url| url.trim().is_empty()) {
+                return Err(ConfigError::Invalid(
+                    "desktop ice_servers entries require at least one non-empty URL".to_string(),
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -960,14 +887,6 @@ fn is_valid_url_segment(name: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    let host = host.trim();
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
-}
-
 pub fn is_binary_document_media_type(media_type: &str) -> bool {
     let media_type = media_type
         .split(';')
@@ -1018,31 +937,19 @@ fn default_desktop_label() -> String {
     "Desktop".to_string()
 }
 
-fn default_desktop_managed_executable() -> PathBuf {
-    PathBuf::from("tools/ultravnc/winvnc.exe")
-}
-
-fn default_desktop_vnc_host() -> String {
-    "127.0.0.1".to_string()
-}
-
-fn default_desktop_vnc_port() -> u16 {
-    5900
-}
-
-fn default_desktop_native_max_fps() -> u16 {
+fn default_desktop_max_fps() -> u16 {
     30
 }
 
-fn default_desktop_native_bitrate_kbps() -> u32 {
+fn default_desktop_bitrate_kbps() -> u32 {
     4_000
 }
 
-fn default_desktop_native_max_width() -> u32 {
+fn default_desktop_max_width() -> u32 {
     1_920
 }
 
-fn default_desktop_native_max_height() -> u32 {
+fn default_desktop_max_height() -> u32 {
     1_080
 }
 
@@ -1129,54 +1036,16 @@ mod tests {
     }
 
     #[test]
-    fn desktop_defaults_to_disabled_loopback_view_only() {
+    fn desktop_defaults_to_disabled_view_only() {
         let desktop = DesktopConfig::default();
 
         assert!(!desktop.enabled);
-        assert_eq!(desktop.mode, DesktopMode::External);
-        assert_eq!(desktop.managed_provider, ManagedDesktopProvider::UltraVnc);
-        assert_eq!(
-            desktop.managed_executable,
-            PathBuf::from("tools/ultravnc/winvnc.exe")
-        );
-        assert_eq!(desktop.vnc_host, "127.0.0.1");
-        assert_eq!(desktop.vnc_port, 5900);
-        assert_eq!(desktop.native_max_fps, 30);
-        assert_eq!(desktop.native_bitrate_kbps, 4_000);
-        assert_eq!(desktop.native_max_width, 1_920);
-        assert_eq!(desktop.native_max_height, 1_080);
-        assert!(desktop.native_ice_servers.is_empty());
+        assert_eq!(desktop.max_fps, 30);
+        assert_eq!(desktop.bitrate_kbps, 4_000);
+        assert_eq!(desktop.max_width, 1_920);
+        assert_eq!(desktop.max_height, 1_080);
+        assert!(desktop.ice_servers.is_empty());
         assert!(desktop.view_only);
-        assert!(!desktop.allow_non_loopback);
-    }
-
-    #[test]
-    fn rejects_non_loopback_desktop_host_by_default() {
-        let config = BootConfig {
-            desktop: DesktopConfig {
-                enabled: true,
-                vnc_host: "192.168.1.25".to_string(),
-                ..DesktopConfig::default()
-            },
-            ..BootConfig::default()
-        };
-
-        assert!(config.validate().is_err());
-    }
-
-    #[test]
-    fn accepts_non_loopback_desktop_host_when_explicitly_allowed() {
-        let config = BootConfig {
-            desktop: DesktopConfig {
-                enabled: true,
-                vnc_host: "192.168.1.25".to_string(),
-                allow_non_loopback: true,
-                ..DesktopConfig::default()
-            },
-            ..BootConfig::default()
-        };
-
-        assert!(config.validate().is_ok());
     }
 
     #[test]
@@ -1209,45 +1078,12 @@ mod tests {
     }
 
     #[test]
-    fn managed_desktop_skips_external_vnc_target_validation() {
+    fn desktop_rejects_invalid_capture_settings() {
         let config = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
-                mode: DesktopMode::Managed,
-                vnc_host: String::new(),
-                vnc_port: 0,
-                ..DesktopConfig::default()
-            },
-            ..BootConfig::default()
-        };
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn native_desktop_skips_external_vnc_target_validation() {
-        let config = BootConfig {
-            desktop: DesktopConfig {
-                enabled: true,
-                mode: DesktopMode::Native,
-                vnc_host: String::new(),
-                vnc_port: 0,
-                ..DesktopConfig::default()
-            },
-            ..BootConfig::default()
-        };
-
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn native_desktop_rejects_invalid_capture_settings() {
-        let config = BootConfig {
-            desktop: DesktopConfig {
-                enabled: true,
-                mode: DesktopMode::Native,
-                native_max_fps: 0,
-                native_bitrate_kbps: 100,
+                max_fps: 0,
+                bitrate_kbps: 100,
                 ..DesktopConfig::default()
             },
             ..BootConfig::default()
@@ -1257,12 +1093,11 @@ mod tests {
     }
 
     #[test]
-    fn native_desktop_rejects_oversized_or_odd_stream_caps() {
+    fn desktop_rejects_oversized_or_odd_stream_caps() {
         let oversized = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
-                mode: DesktopMode::Native,
-                native_max_width: 3_840,
+                max_width: 3_840,
                 ..DesktopConfig::default()
             },
             ..BootConfig::default()
@@ -1270,8 +1105,7 @@ mod tests {
         let odd = BootConfig {
             desktop: DesktopConfig {
                 enabled: true,
-                mode: DesktopMode::Native,
-                native_max_height: 1_079,
+                max_height: 1_079,
                 ..DesktopConfig::default()
             },
             ..BootConfig::default()

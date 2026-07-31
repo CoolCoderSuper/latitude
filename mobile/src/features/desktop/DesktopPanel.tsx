@@ -34,7 +34,6 @@ import { normalizeBaseUrl } from '../../api';
 import { useTheme, type ThemeColors, type ThemeMode } from '../../theme';
 import type { DesktopScreen, RootDesktopLink, SessionRecord } from '../../types';
 import { desktopDocument } from './desktopDocument';
-import { nativeDesktopDocument } from './nativeDesktopDocument';
 
 type PointerMode = 'touchpad' | 'direct';
 
@@ -64,17 +63,10 @@ type DesktopViewerState = {
   activeMouseButton: number;
   dragLocked: boolean;
   pressedModifiers: string[];
-  credentialsRequired: string[] | null;
 };
 
 type DesktopCommand = Record<string, unknown> & {
   type: string;
-};
-
-type CredentialValues = {
-  username: string;
-  password: string;
-  target: string;
 };
 
 const MOUSE_BUTTONS = [
@@ -133,7 +125,6 @@ type DesktopChrome = {
   danger: string;
   dangerBg: string;
   border: string;
-  modalBackdrop: string;
   viewerBackground: string;
 };
 
@@ -155,46 +146,33 @@ export function RootDesktopPanel({
     initialViewerState(
       rootDesktop.view_only,
       rootDesktop.screens ?? [],
-      rootDesktop.protocol !== 'latitude_native',
     ),
   );
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [keyboardText, setKeyboardText] = useState('');
-  const [credentialValues, setCredentialValues] = useState<CredentialValues>({
-    username: '',
-    password: '',
-    target: '',
-  });
   const desktopUrl = useMemo(
     () => desktopWebSocketUrl(session.baseUrl, rootDesktop.href, session.token),
     [rootDesktop.href, session.baseUrl, session.token],
   );
   const desktopHtml = useMemo(
-    () => {
-      const createDocument =
-        rootDesktop.protocol === 'latitude_native'
-          ? nativeDesktopDocument
-          : desktopDocument;
-      return createDocument(
+    () =>
+      desktopDocument(
         rootDesktop.label,
         desktopUrl,
         rootDesktop.view_only,
         rootDesktop.screens ?? [],
         chrome.viewerBackground,
-      );
-    },
+      ),
     [
       chrome.viewerBackground,
       desktopUrl,
       rootDesktop.label,
-      rootDesktop.protocol,
       rootDesktop.screens,
       rootDesktop.view_only,
     ],
   );
   const controlsDisabled = !viewerState.ready;
   const canControl = !viewerState.viewOnly && viewerState.controlGranted;
-  const credentialFields = viewerState.credentialsRequired ?? [];
 
   const sendCommand = useCallback((command: DesktopCommand) => {
     const payload = JSON.stringify(command);
@@ -212,13 +190,11 @@ export function RootDesktopPanel({
       initialViewerState(
         rootDesktop.view_only,
         rootDesktop.screens ?? [],
-        rootDesktop.protocol !== 'latitude_native',
       ),
     );
     setKeyboardOpen(false);
     setKeyboardText('');
-    setCredentialValues({ username: '', password: '', target: '' });
-  }, [rootDesktop.protocol, rootDesktop.screens, rootDesktop.view_only]);
+  }, [rootDesktop.screens, rootDesktop.view_only]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
@@ -248,14 +224,6 @@ export function RootDesktopPanel({
     sendCommand({ type: 'sendText', text: keyboardText });
     setKeyboardText('');
   }, [canControl, keyboardText, sendCommand]);
-
-  const sendCredentials = useCallback(() => {
-    sendCommand({
-      type: 'sendCredentials',
-      credentials: credentialValues,
-    });
-    setCredentialValues({ username: '', password: '', target: '' });
-  }, [credentialValues, sendCommand]);
 
   return (
     <View
@@ -364,17 +332,6 @@ export function RootDesktopPanel({
             />
           </View>
         </ScrollView>
-
-        {credentialFields.length > 0 && (
-          <CredentialPrompt
-            chrome={chrome}
-            controlStyles={controlStyles}
-            fields={credentialFields}
-            onChange={setCredentialValues}
-            onSubmit={sendCredentials}
-            values={credentialValues}
-          />
-        )}
 
         {keyboardOpen && canControl && (
           <KeyboardAvoidingView
@@ -642,75 +599,6 @@ function KeyRow({
   );
 }
 
-function CredentialPrompt({
-  chrome,
-  controlStyles,
-  fields,
-  onChange,
-  onSubmit,
-  values,
-}: {
-  chrome: DesktopChrome;
-  controlStyles: DesktopControlStyles;
-  fields: string[];
-  onChange: (values: CredentialValues) => void;
-  onSubmit: () => void;
-  values: CredentialValues;
-}) {
-  const needsUsername = fields.includes('username');
-  const needsPassword = fields.includes('password') || fields.length === 0;
-  const needsTarget = fields.includes('target');
-
-  return (
-    <View style={controlStyles.modalBackdrop}>
-      <View style={controlStyles.credentialPanel}>
-        <Text style={controlStyles.panelTitle}>Credentials</Text>
-        {needsUsername && (
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={(username) => onChange({ ...values, username })}
-            placeholder="Username"
-            placeholderTextColor={chrome.muted}
-            style={controlStyles.credentialInput}
-            value={values.username}
-          />
-        )}
-        {needsPassword && (
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={(password) => onChange({ ...values, password })}
-            placeholder="Password"
-            placeholderTextColor={chrome.muted}
-            secureTextEntry
-            style={controlStyles.credentialInput}
-            value={values.password}
-          />
-        )}
-        {needsTarget && (
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            onChangeText={(target) => onChange({ ...values, target })}
-            placeholder="Target"
-            placeholderTextColor={chrome.muted}
-            style={controlStyles.credentialInput}
-            value={values.target}
-          />
-        )}
-        <ControlButton
-          active
-          controlStyles={controlStyles}
-          icon={<Send color={chrome.onAccent} size={16} />}
-          label="Connect"
-          onPress={onSubmit}
-        />
-      </View>
-    </View>
-  );
-}
-
 function desktopWebSocketUrl(
   baseUrl: string,
   desktopHref: string,
@@ -726,7 +614,6 @@ function desktopWebSocketUrl(
 function initialViewerState(
   viewOnly: boolean,
   screens: DesktopScreen[],
-  controlGranted: boolean,
 ): DesktopViewerState {
   const normalizedScreens = normalizeScreens(screens);
   return {
@@ -735,7 +622,7 @@ function initialViewerState(
     status: 'Connecting',
     statusIsError: false,
     viewOnly,
-    controlGranted: !viewOnly && controlGranted,
+    controlGranted: false,
     autoScale: true,
     zoomLevel: 1,
     selectedScreenId: preferredScreenId(normalizedScreens),
@@ -744,7 +631,6 @@ function initialViewerState(
     activeMouseButton: 0x1,
     dragLocked: false,
     pressedModifiers: [],
-    credentialsRequired: null,
   };
 }
 
@@ -802,12 +688,6 @@ function mergeViewerState(
     pressedModifiers: Array.isArray(incoming.pressedModifiers)
       ? incoming.pressedModifiers.filter((modifier): modifier is string => typeof modifier === 'string')
       : current.pressedModifiers,
-    credentialsRequired:
-      incoming.credentialsRequired === null
-        ? null
-        : Array.isArray(incoming.credentialsRequired)
-          ? incoming.credentialsRequired.filter((field): field is string => typeof field === 'string')
-          : current.credentialsRequired,
   };
 }
 
@@ -881,7 +761,6 @@ function createDesktopChrome(
       danger: colors.danger,
       dangerBg: colors.dangerBg,
       border: colors.border,
-      modalBackdrop: 'rgba(0, 0, 0, 0.42)',
       viewerBackground: '#050505',
     };
   }
@@ -898,7 +777,6 @@ function createDesktopChrome(
     danger: colors.danger,
     dangerBg: colors.dangerBg,
     border: colors.border,
-    modalBackdrop: 'rgba(15, 23, 42, 0.2)',
     viewerBackground: colors.panel,
   };
 }
@@ -1085,32 +963,6 @@ function createDesktopControlStyles(chrome: DesktopChrome) {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 7,
-    },
-    modalBackdrop: {
-      ...StyleSheet.absoluteFillObject,
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: 16,
-      backgroundColor: chrome.modalBackdrop,
-    },
-    credentialPanel: {
-      width: '100%',
-      maxWidth: 380,
-      gap: 10,
-      borderRadius: 8,
-      padding: 12,
-      backgroundColor: chrome.panel,
-    },
-    credentialInput: {
-      minHeight: 44,
-      borderWidth: 1,
-      borderColor: chrome.border,
-      borderRadius: 8,
-      paddingHorizontal: 12,
-      color: chrome.text,
-      backgroundColor: chrome.input,
-      fontSize: 15,
-      fontWeight: '700',
     },
   });
 }

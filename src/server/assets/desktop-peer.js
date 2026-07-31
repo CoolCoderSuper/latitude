@@ -2,7 +2,7 @@ const CONTROL_CHANNEL_LABEL = 'latitude-control';
 const POINTER_CHANNEL_LABEL = 'latitude-pointer';
 const MAX_POINTER_BUFFER_BYTES = 256;
 
-export class NativeDesktopPeer {
+export class DesktopPeer {
   constructor({
     onControlOpen,
     onControlMessage,

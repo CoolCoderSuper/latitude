@@ -30,7 +30,7 @@ use webrtc::{
 };
 
 use crate::desktop::{
-    DesktopTarget, NativeControllerLeaseState, NativeDesktopCommand, NativeInputController,
+    DesktopSessionConfig, NativeControllerLeaseState, NativeDesktopCommand, NativeInputController,
     native_input_controller,
 };
 
@@ -82,7 +82,7 @@ pub(super) struct NativePeerSession {
 }
 
 pub(super) async fn create_session(
-    target: &DesktopTarget,
+    session_config: &DesktopSessionConfig,
     view_only: bool,
     offer_sdp: String,
 ) -> Result<NativePeerSession> {
@@ -100,8 +100,8 @@ pub(super) async fn create_session(
         .with_interceptor_registry(registry)
         .with_setting_engine(setting_engine)
         .build();
-    let ice_servers = target
-        .native_ice_servers
+    let ice_servers = session_config
+        .ice_servers
         .iter()
         .map(|server| RTCIceServer {
             urls: server.urls.clone(),
@@ -119,16 +119,16 @@ pub(super) async fn create_session(
     );
 
     let video_profile_level_id = h264_profile_level_id(
-        target.native_max_width,
-        target.native_max_height,
-        target.native_max_fps,
-        target.native_bitrate_kbps,
+        session_config.max_width,
+        session_config.max_height,
+        session_config.max_fps,
+        session_config.bitrate_kbps,
     );
     let video_settings = NativeVideoSettings::new(
-        target.native_max_fps,
-        target.native_bitrate_kbps,
-        target.native_max_width,
-        target.native_max_height,
+        session_config.max_fps,
+        session_config.bitrate_kbps,
+        session_config.max_width,
+        session_config.max_height,
     );
     let track = Arc::new(TrackLocalStaticSample::new(
         RTCRtpCodecCapability {

@@ -31,12 +31,10 @@ pub(super) use syntax::{
 
 use maud::html;
 
-use crate::desktop::{DesktopInfoResponse, DesktopProtocol};
+use crate::desktop::DesktopInfoResponse;
 
 use super::{
-    assets::{
-        DESKTOP_VIEWER_SCRIPT_SRC, DESKTOP_VIEWER_STYLE_HREF, NATIVE_DESKTOP_VIEWER_SCRIPT_SRC,
-    },
+    assets::{DESKTOP_VIEWER_SCRIPT_SRC, DESKTOP_VIEWER_STYLE_HREF},
     html as html_page,
 };
 
@@ -45,10 +43,6 @@ pub(super) fn render_root_desktop(
     websocket_token: Option<&str>,
     device_hostname: &str,
 ) -> String {
-    let viewer_script = match info.protocol {
-        DesktopProtocol::Rfb => DESKTOP_VIEWER_SCRIPT_SRC,
-        DesktopProtocol::LatitudeNative => NATIVE_DESKTOP_VIEWER_SCRIPT_SRC,
-    };
     html_page::document(
         &format!("{} - Latitude", info.label),
         device_hostname,
@@ -62,7 +56,7 @@ pub(super) fn render_root_desktop(
                     p { "Desktop on " (device_hostname) }
                 }
                 (desktop::desktop_workspace(info, websocket_token))
-                script type="module" src=(viewer_script) {}
+                script type="module" src=(DESKTOP_VIEWER_SCRIPT_SRC) {}
             }
         },
     )
