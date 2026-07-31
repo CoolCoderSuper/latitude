@@ -13,13 +13,14 @@ mod server;
 mod state;
 mod storage;
 mod terminal;
+mod util;
 mod websocket_bridge;
 mod windows_service_host;
 mod workspace;
 
 use clap::Parser;
 use cli::{Cli, CliCommand, ServiceCommand};
-use config::LoadedConfig;
+use config::BootConfig;
 use desktop::NativeSessionBridge;
 use state::AppState;
 use storage::CatalogStore;
@@ -60,25 +61,22 @@ async fn run_server(
     native_session_bridge: Option<NativeSessionBridge>,
     workspace_bridge: Option<workspace::WorkspaceBridge>,
 ) -> anyhow::Result<()> {
-    let mut config = LoadedConfig::load_or_default(&config_path).await?;
+    let mut config = BootConfig::load_or_default(&config_path).await?;
 
     if let Some(public_bind) = public_bind {
-        config.boot.public_bind = public_bind;
+        config.public_bind = public_bind;
     }
     if let Some(command_bind) = command_bind {
-        config.boot.command_bind = command_bind;
+        config.command_bind = command_bind;
     }
 
     config.validate()?;
-    let data_dir = config.boot.resolved_data_dir(&config_path)?;
+    let data_dir = config.resolved_data_dir(&config_path)?;
     let catalog = CatalogStore::open(data_dir).await?;
-    catalog
-        .import_config_seed_if_needed(&config.catalog_seed)
-        .await?;
 
     server::run(AppState::new_with_bridges(
         config_path,
-        config.boot,
+        config,
         catalog,
         native_session_bridge,
         workspace_bridge,

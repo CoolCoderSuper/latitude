@@ -7,6 +7,7 @@ use crate::config::{
     PageFormat, decode_page_binary_content, encode_page_binary_content,
     is_binary_document_media_type,
 };
+use crate::util::{is_image_media_type, is_video_media_type};
 
 use super::{
     assets::PAGE_STYLE_HREF,
@@ -346,12 +347,4 @@ fn is_full_html_document(content: &str) -> bool {
 fn looks_like_html(content: &str) -> bool {
     let trimmed = content.trim_start();
     trimmed.starts_with('<') && trimmed.contains('>')
-}
-
-fn is_image_media_type(media_type: &str) -> bool {
-    media_type.starts_with("image/")
-}
-
-fn is_video_media_type(media_type: &str) -> bool {
-    media_type.starts_with("video/")
 }

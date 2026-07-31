@@ -2,7 +2,6 @@ use std::{
     io::{self, Read},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -18,7 +17,7 @@ use crate::{
         project_deployments_path, project_page_path, project_path, share_path,
     },
     config::{
-        ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig,
+        ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig, current_unix_timestamp,
         encode_page_binary_content, is_binary_document_media_type,
     },
 };
@@ -875,13 +874,6 @@ fn parse_duration_seconds(value: &str) -> Result<u64> {
     quantity
         .checked_mul(multiplier)
         .ok_or_else(|| anyhow!("duration is too large"))
-}
-
-fn current_unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]

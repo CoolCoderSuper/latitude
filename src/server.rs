@@ -22,7 +22,7 @@ use std::net::SocketAddr;
 
 use axum::{
     Router, middleware,
-    routing::{delete, get, post},
+    routing::{any, delete, get, post},
 };
 use tokio::net::TcpListener;
 use tracing::info;
@@ -46,7 +46,7 @@ pub(crate) use git::file_baseline;
 pub(crate) use terminal_api::terminal_websocket_session;
 
 use assets::{ASSET_BASE_PATH, public_asset};
-use auth::{open_t3code_embed, require_public_api_auth};
+use auth::{open_t3code_embed, require_public_api_auth, require_public_auth};
 use command::{
     command_health, create_deployment_share, create_project, create_project_deployment,
     create_t3code_embed_session, delete_deployment_share, delete_project,
@@ -63,8 +63,8 @@ use constants::{
     PUBLIC_API_PROJECTS_PATH, PUBLIC_API_ROOT_DESKTOP_PATH, PUBLIC_API_ROOT_TERMINAL_PATH,
     PUBLIC_API_ROOT_TERMINAL_SESSION_PATH, PUBLIC_API_ROOT_TERMINAL_SESSIONS_PATH,
     PUBLIC_API_SESSION_PATH, PUBLIC_API_SHARE_PATH, PUBLIC_API_SHARES_PATH,
-    PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH, PUBLIC_TERMINAL_WS_PATH,
-    T3CODE_EMBED_PATH,
+    PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_ROOT_TERMINAL_WS_PATH, PUBLIC_SHARE_BASE_PATH,
+    PUBLIC_TERMINAL_WS_PATH, T3CODE_EMBED_PATH,
 };
 use desktop_api::{
     public_api_get_root_desktop, public_api_patch_root_desktop, public_root_desktop_ws,
@@ -83,8 +83,10 @@ use public::{
     public_api_list_root_terminal_sessions, public_api_list_shares,
     public_api_list_terminal_sessions, public_api_login, public_api_patch_project_archive,
     public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
-    public_api_session, public_entry, public_root_terminal_ws, public_terminal_ws,
-    public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
+    public_api_session, public_deployment, public_home, public_not_found, public_project_diff,
+    public_project_files, public_project_home, public_project_terminal, public_root_desktop,
+    public_root_terminal, public_root_terminal_ws, public_share, public_share_not_found,
+    public_terminal_ws, public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
     public_ui_get_shares,
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
@@ -143,9 +145,55 @@ fn public_router(state: AppState) -> Router {
         .route(PUBLIC_ROOT_TERMINAL_WS_PATH, get(public_root_terminal_ws))
         .route(PUBLIC_ROOT_DESKTOP_WS_PATH, get(public_root_desktop_ws))
         .route(PUBLIC_TERMINAL_WS_PATH, get(public_terminal_ws))
+        .route(PUBLIC_SHARE_BASE_PATH, any(public_share_not_found))
+        .route(
+            &format!("{PUBLIC_SHARE_BASE_PATH}/{{token}}"),
+            any(public_share),
+        )
+        .route(
+            &format!("{PUBLIC_SHARE_BASE_PATH}/{{token}}/"),
+            any(public_share),
+        )
+        .route(
+            &format!("{PUBLIC_SHARE_BASE_PATH}/{{token}}/{{*remainder}}"),
+            any(public_share),
+        )
         .merge(protected_public_router(state.clone()))
-        .fallback(public_entry)
+        .merge(public_pages_router(state.clone()))
         .with_state(state)
+}
+
+fn public_pages_router(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route("/", any(public_home))
+        .route("/_terminal", any(public_root_terminal))
+        .route("/_terminal/", any(public_root_terminal))
+        .route("/_terminal/{*remainder}", any(public_root_terminal))
+        .route("/_desktop", any(public_root_desktop))
+        .route("/_desktop/", any(public_root_desktop))
+        .route("/_desktop/{*remainder}", any(public_root_desktop))
+        .route("/{project}", any(public_project_home))
+        .route("/{project}/", any(public_project_home))
+        .route("/{project}/_diff", any(public_project_diff))
+        .route("/{project}/_diff/", any(public_project_diff))
+        .route("/{project}/_diff/{*remainder}", any(public_project_diff))
+        .route("/{project}/_files", any(public_project_files))
+        .route("/{project}/_files/", any(public_project_files))
+        .route("/{project}/_files/{*remainder}", any(public_project_files))
+        .route("/{project}/_terminal", any(public_project_terminal))
+        .route("/{project}/_terminal/", any(public_project_terminal))
+        .route(
+            "/{project}/_terminal/{*remainder}",
+            any(public_project_terminal),
+        )
+        .route("/{project}/{deployment}", any(public_deployment))
+        .route("/{project}/{deployment}/", any(public_deployment))
+        .route(
+            "/{project}/{deployment}/{*remainder}",
+            any(public_deployment),
+        )
+        .fallback(public_not_found)
+        .route_layer(middleware::from_fn_with_state(state, require_public_auth))
 }
 
 fn protected_public_router(state: AppState) -> Router<AppState> {

@@ -1,4 +1,4 @@
-use sqlx::{Row, Sqlite, Transaction, sqlite::SqliteRow};
+use sqlx::{Row, sqlite::SqliteRow};
 
 use crate::config::DeploymentShareConfig;
 
@@ -90,23 +90,15 @@ async fn insert_share(
     Ok(())
 }
 
-pub(super) async fn insert_share_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    share: &DeploymentShareConfig,
-) -> Result<(), StorageError> {
-    sqlx::query(
-        "INSERT OR REPLACE INTO share_links \
-         (token, project_name, deployment_name, password, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-    )
-    .bind(&share.token)
-    .bind(&share.project)
-    .bind(&share.deployment)
-    .bind(&share.password)
-    .bind(share.expires_at.map(|value| value as i64))
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
+#[cfg(test)]
+impl CatalogStore {
+    pub(crate) async fn insert_share_for_tests(
+        &self,
+        share: &DeploymentShareConfig,
+    ) -> Result<(), StorageError> {
+        share.validate()?;
+        insert_share(&self.inner.pool, share).await
+    }
 }
 
 fn share_from_row(row: &SqliteRow) -> Result<DeploymentShareConfig, StorageError> {

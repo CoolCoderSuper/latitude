@@ -1,10 +1,11 @@
 use axum::{
     Json,
     body::{Body, to_bytes},
-    extract::State,
+    extract::{Path as AxumPath, State},
     http::{Method, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
+use serde::Deserialize;
 use tracing::error;
 
 use crate::{
@@ -15,21 +16,18 @@ use crate::{
 
 use super::super::{
     auth::{
-        clean_next_path, header_cookie_value, parse_public_login_form, public_auth_challenge,
-        public_login_success_response, public_password_matches, public_request_is_authenticated,
-        request_bearer_token,
+        clean_next_path, header_cookie_value, parse_public_login_form,
+        public_login_success_response, public_password_matches, request_bearer_token,
     },
     constants::{
-        AUTH_COOKIE_MAX_AGE_SECONDS, DESKTOP_ROUTE_SEGMENT, DIFF_ROUTE_SEGMENT,
-        FILES_ROUTE_SEGMENT, MAX_LOGIN_PAYLOAD_BYTES, MAX_TERMINAL_COMMAND_BYTES,
-        PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH, TERMINAL_ROUTE_SEGMENT,
+        AUTH_COOKIE_MAX_AGE_SECONDS, DIFF_ROUTE_SEGMENT, MAX_LOGIN_PAYLOAD_BYTES,
+        MAX_TERMINAL_COMMAND_BYTES, PUBLIC_ROOT_DESKTOP_WS_PATH, PUBLIC_SHARE_BASE_PATH,
     },
     desktop_api::execute_desktop_action_request,
     git::{
         GitCommandExecution, collect_project_diff, collect_project_file_diff,
         collect_project_git_commit, collect_project_git_history, handle_git_action_request,
     },
-    paths::{ProjectPath, split_project_path},
     render::{
         render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
         render_project_files, render_project_git_commit, render_project_git_history,
@@ -38,132 +36,252 @@ use super::super::{
     },
     response::{html_response, html_status_response, json_error, plain_response},
     terminal_api::{
-        execute_root_terminal_command, execute_terminal_command, parse_terminal_command_payload,
-        root_terminal_info_response, terminal_info_response,
+        execute_terminal_command, parse_terminal_command_payload, root_terminal_info_response,
+        terminal_info_response,
     },
 };
 
 use super::deployment::{DeploymentRequest, serve_deployment_target};
 
-pub(in crate::server) async fn public_entry(
+#[derive(Deserialize)]
+pub(in crate::server) struct ProjectRoute {
+    project: String,
+}
+
+#[derive(Deserialize)]
+pub(in crate::server) struct ProjectRemainderRoute {
+    project: String,
+    remainder: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(in crate::server) struct RemainderRoute {
+    remainder: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(in crate::server) struct DeploymentRoute {
+    project: String,
+    deployment: String,
+    remainder: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(in crate::server) struct ShareRoute {
+    token: String,
+    remainder: Option<String>,
+}
+
+fn route_remainder(remainder: Option<String>) -> String {
+    remainder.map_or_else(|| "/".to_string(), |remainder| format!("/{remainder}"))
+}
+
+pub(in crate::server) async fn public_home(
     State(state): State<AppState>,
     req: Request<Body>,
 ) -> Response<Body> {
-    let original_path = req.uri().path().to_string();
     let config = state.config_snapshot().await;
     let device_hostname = state.device_hostname().to_string();
+    serve_server_home(req, &state, &config, &device_hostname).await
+}
 
-    if original_path == PUBLIC_SHARE_BASE_PATH
-        || original_path.starts_with(&format!("{PUBLIC_SHARE_BASE_PATH}/"))
-    {
-        let Some(share_path) = split_share_path(&original_path) else {
-            return plain_response(StatusCode::NOT_FOUND, "share link was not found\n");
-        };
-        return serve_shared_deployment(state, req, share_path, &device_hostname).await;
-    }
-
-    if !public_request_is_authenticated(&state, &config, &req) {
-        return public_auth_challenge(&state, &req, false);
-    }
-
-    if original_path == "/" {
-        return serve_server_home(req, &state, &config, &device_hostname).await;
-    }
-
-    if let Some(remainder) = root_terminal_remainder(&original_path) {
-        return serve_root_terminal(req, remainder, &device_hostname).await;
-    }
-
-    if let Some(remainder) = root_desktop_remainder(&original_path) {
-        return serve_root_desktop(req, &config, remainder, &device_hostname).await;
-    }
-
-    let Some(public_path) = split_project_path(&original_path) else {
-        return plain_response(
-            StatusCode::NOT_FOUND,
-            "Latitude is running. Mount a deployment at /{project}/{name} to serve traffic.\n",
-        );
-    };
-    let project_mount = public_path.project_name().to_string();
-
-    let project = match load_enabled_project(&state, &project_mount).await {
-        Ok(Some(project)) => project,
-        Ok(None) => {
-            return plain_response(
-                StatusCode::NOT_FOUND,
-                format!("No enabled project is mounted at /{project_mount}\n"),
-            );
-        }
+pub(in crate::server) async fn public_project_home(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<ProjectRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let project = match require_enabled_project(&state, &route.project).await {
+        Ok(project) => project,
         Err(response) => return response,
     };
+    let config = state.config_snapshot().await;
+    let device_hostname = state.device_hostname().to_string();
+    serve_project_home(
+        req,
+        &state,
+        &project,
+        config.t3code.enabled,
+        &device_hostname,
+    )
+    .await
+}
 
-    let ProjectPath::Deployment {
-        deployment: app_mount,
-        remainder,
-        ..
-    } = public_path
-    else {
-        return serve_project_home(
-            req,
-            &state,
-            &project,
-            config.t3code.enabled,
-            &device_hostname,
-        )
-        .await;
+pub(in crate::server) async fn public_project_diff(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<ProjectRemainderRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let project = match require_enabled_project(&state, &route.project).await {
+        Ok(project) => project,
+        Err(response) => return response,
     };
+    serve_project_diff(
+        req,
+        &project,
+        &route_remainder(route.remainder),
+        state.device_hostname(),
+    )
+    .await
+}
 
-    if app_mount == DIFF_ROUTE_SEGMENT {
-        return serve_project_diff(req, &project, remainder.as_str(), &device_hostname).await;
-    }
-    if app_mount == FILES_ROUTE_SEGMENT {
-        if remainder.as_str() != "/" {
-            return plain_response(
-                StatusCode::NOT_FOUND,
-                "file viewer only serves one document\n",
-            );
-        }
-        if req.method() != Method::GET && req.method() != Method::HEAD {
-            return plain_response(
-                StatusCode::METHOD_NOT_ALLOWED,
-                "file viewer supports GET and HEAD\n",
-            );
-        }
-        return html_response(
-            req.method(),
-            render_project_files(&project, &device_hostname),
+pub(in crate::server) async fn public_project_files(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<ProjectRemainderRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let project = match require_enabled_project(&state, &route.project).await {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    if route_remainder(route.remainder) != "/" {
+        return plain_response(
+            StatusCode::NOT_FOUND,
+            "file viewer only serves one document\n",
         );
     }
-    if app_mount == TERMINAL_ROUTE_SEGMENT {
-        return serve_project_terminal(req, &project, remainder.as_str(), &device_hostname).await;
+    if req.method() != Method::GET && req.method() != Method::HEAD {
+        return plain_response(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "file viewer supports GET and HEAD\n",
+        );
     }
+    html_response(
+        req.method(),
+        render_project_files(&project, state.device_hostname()),
+    )
+}
+
+pub(in crate::server) async fn public_project_terminal(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<ProjectRemainderRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let project = match require_enabled_project(&state, &route.project).await {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    serve_terminal(
+        req,
+        TerminalPage::Project(&project),
+        &route_remainder(route.remainder),
+        state.device_hostname(),
+    )
+    .await
+}
+
+pub(in crate::server) async fn public_root_terminal(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<RemainderRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    serve_terminal(
+        req,
+        TerminalPage::Root,
+        &route_remainder(route.remainder),
+        state.device_hostname(),
+    )
+    .await
+}
+
+pub(in crate::server) async fn public_root_desktop(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<RemainderRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    serve_root_desktop(
+        req,
+        &config,
+        &route_remainder(route.remainder),
+        state.device_hostname(),
+    )
+    .await
+}
+
+pub(in crate::server) async fn public_deployment(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<DeploymentRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let project = match require_enabled_project(&state, &route.project).await {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
 
     let Some(app) = project
         .deployments
         .iter()
-        .find(|app| app.enabled && app.name == app_mount)
+        .find(|app| app.enabled && app.name == route.deployment)
         .cloned()
     else {
         return plain_response(
             StatusCode::NOT_FOUND,
-            format!("No enabled deployment is mounted at /{project_mount}/{app_mount}\n"),
+            format!(
+                "No enabled deployment is mounted at /{}/{}\n",
+                route.project, route.deployment
+            ),
         );
     };
 
     let mount_path = format!("/{}/{}", project.name, app.name);
+    let remainder = route_remainder(route.remainder);
+    let device_hostname = state.device_hostname().to_string();
     serve_deployment_target(
         state,
         req,
         DeploymentRequest {
             project: &project,
             deployment: &app,
-            remainder: remainder.as_str(),
+            remainder: &remainder,
             mount_path: &mount_path,
             extra_excluded_cookie_name: None,
             device_hostname: &device_hostname,
         },
     )
     .await
+}
+
+pub(in crate::server) async fn public_share(
+    State(state): State<AppState>,
+    AxumPath(route): AxumPath<ShareRoute>,
+    req: Request<Body>,
+) -> Response<Body> {
+    let share_path = SharePath {
+        mount_path: format!("{PUBLIC_SHARE_BASE_PATH}/{}", route.token),
+        token: route.token,
+        remainder: route_remainder(route.remainder),
+    };
+    let device_hostname = state.device_hostname().to_string();
+    serve_shared_deployment(state, req, share_path, &device_hostname).await
+}
+
+pub(in crate::server) async fn public_share_not_found() -> Response<Body> {
+    plain_response(StatusCode::NOT_FOUND, "share link was not found\n")
+}
+
+pub(in crate::server) async fn public_not_found() -> Response<Body> {
+    plain_response(
+        StatusCode::NOT_FOUND,
+        "Latitude is running. Mount a deployment at /{project}/{name} to serve traffic.\n",
+    )
+}
+
+async fn require_enabled_project(
+    state: &AppState,
+    name: &str,
+) -> Result<ProjectConfig, Response<Body>> {
+    match load_enabled_project(state, name).await {
+        Ok(Some(project)) => Ok(project),
+        Ok(None) => Err(project_not_found(name)),
+        Err(response) => Err(response),
+    }
+}
+
+fn project_not_found(name: &str) -> Response<Body> {
+    plain_response(
+        StatusCode::NOT_FOUND,
+        format!("No enabled project is mounted at /{name}\n"),
+    )
 }
 
 struct SharePath {
@@ -368,27 +486,6 @@ fn share_auth_cookie_name(token: &str) -> String {
     format!("latitude_share_{token}")
 }
 
-fn split_share_path(path: &str) -> Option<SharePath> {
-    let prefix = format!("{PUBLIC_SHARE_BASE_PATH}/");
-    let rest = path.strip_prefix(&prefix)?;
-    let mut segments = rest.splitn(2, '/');
-    let token = segments.next()?.to_string();
-    if token.is_empty() {
-        return None;
-    }
-
-    let remainder = segments
-        .next()
-        .map(|rest| format!("/{rest}"))
-        .unwrap_or_else(|| "/".to_string());
-
-    Some(SharePath {
-        mount_path: format!("{PUBLIC_SHARE_BASE_PATH}/{token}"),
-        token,
-        remainder,
-    })
-}
-
 async fn serve_project_home(
     req: Request<Body>,
     state: &AppState,
@@ -503,61 +600,15 @@ async fn serve_project_diff(
     )
 }
 
-async fn serve_project_terminal(
-    req: Request<Body>,
-    project: &ProjectConfig,
-    remainder: &str,
-    device_hostname: &str,
-) -> Response<Body> {
-    let method = req.method().clone();
-    if method != Method::GET && method != Method::HEAD && method != Method::POST {
-        return plain_response(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "terminal viewers support GET, HEAD, and POST\n",
-        );
-    }
-
-    if remainder != "/" {
-        return plain_response(
-            StatusCode::NOT_FOUND,
-            "terminal viewers only serve one document\n",
-        );
-    }
-
-    if method == Method::POST {
-        let content_type = req
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let (_parts, body) = req.into_parts();
-        let body = match to_bytes(body, MAX_TERMINAL_COMMAND_BYTES + 1024).await {
-            Ok(body) => body,
-            Err(error) => {
-                return json_error(
-                    StatusCode::BAD_REQUEST,
-                    format!("terminal payload could not be read: {error}"),
-                );
-            }
-        };
-        let command = match parse_terminal_command_payload(content_type.as_deref(), &body) {
-            Ok(command) => command,
-            Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
-        };
-
-        return Json(execute_terminal_command(&project.project_dir, command).await).into_response();
-    }
-
-    let websocket_token = request_bearer_token(&req);
-    let info = terminal_info_response(&project.name, &project.project_dir);
-    html_response(
-        &method,
-        render_project_terminal(project, &info, websocket_token.as_deref(), device_hostname),
-    )
+#[derive(Clone, Copy)]
+enum TerminalPage<'a> {
+    Root,
+    Project(&'a ProjectConfig),
 }
 
-async fn serve_root_terminal(
+async fn serve_terminal(
     req: Request<Body>,
+    page: TerminalPage<'_>,
     remainder: &str,
     device_hostname: &str,
 ) -> Response<Body> {
@@ -597,15 +648,35 @@ async fn serve_root_terminal(
             Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
         };
 
-        return Json(execute_root_terminal_command(command).await).into_response();
+        let project_dir = match page {
+            TerminalPage::Root => None,
+            TerminalPage::Project(project) => Some(project.project_dir.as_path()),
+        };
+        return Json(execute_terminal_command(project_dir, command).await).into_response();
     }
 
     let websocket_token = request_bearer_token(&req);
-    let info = root_terminal_info_response().await;
-    html_response(
-        &method,
-        render_root_terminal(&info, websocket_token.as_deref(), device_hostname),
-    )
+    match page {
+        TerminalPage::Root => {
+            let info = root_terminal_info_response().await;
+            html_response(
+                &method,
+                render_root_terminal(&info, websocket_token.as_deref(), device_hostname),
+            )
+        }
+        TerminalPage::Project(project) => {
+            let info = terminal_info_response(&project.name, &project.project_dir);
+            html_response(
+                &method,
+                render_project_terminal(
+                    project,
+                    &info,
+                    websocket_token.as_deref(),
+                    device_hostname,
+                ),
+            )
+        }
+    }
 }
 
 async fn serve_root_desktop(
@@ -730,32 +801,4 @@ async fn load_enabled_project(
                 "catalog could not be read\n",
             )
         })
-}
-
-fn root_terminal_remainder(path: &str) -> Option<&str> {
-    let root_terminal_path = format!("/{TERMINAL_ROUTE_SEGMENT}");
-    if path == root_terminal_path {
-        return Some("/");
-    }
-
-    let root_terminal_prefix = format!("{root_terminal_path}/");
-    path.strip_prefix(&root_terminal_prefix).map(
-        |remainder| {
-            if remainder.is_empty() { "/" } else { remainder }
-        },
-    )
-}
-
-fn root_desktop_remainder(path: &str) -> Option<&str> {
-    let root_desktop_path = format!("/{DESKTOP_ROUTE_SEGMENT}");
-    if path == root_desktop_path {
-        return Some("/");
-    }
-
-    let root_desktop_prefix = format!("{root_desktop_path}/");
-    path.strip_prefix(&root_desktop_prefix).map(
-        |remainder| {
-            if remainder.is_empty() { "/" } else { remainder }
-        },
-    )
 }

@@ -2,7 +2,7 @@ use std::{path::Path, time::Duration};
 
 use axum::{
     body::Body,
-    http::{HeaderValue, Method, Request, Response, StatusCode, header},
+    http::{Method, Request, Response, StatusCode, header},
 };
 use tokio::fs;
 
@@ -11,7 +11,9 @@ use crate::{
         ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig,
         is_binary_document_media_type,
     },
-    http_stream::file_response,
+    http_stream::{
+        file_response, is_hop_by_hop_header, streaming_http_response, streaming_request_body,
+    },
     state::AppState,
     storage::PageContent,
 };
@@ -20,7 +22,7 @@ use super::super::{
     constants::AUTH_COOKIE_NAME,
     page::{page_theme_from_headers, render_project_page_content},
     paths::{
-        is_hop_by_hop_header, join_upstream_url, resolve_project_path, sanitized_relative_path,
+        filtered_cookie_header, join_upstream_url, resolve_project_path, sanitized_relative_path,
     },
     response::{html_response, internal_response, json_error, plain_response},
 };
@@ -136,10 +138,9 @@ async fn proxy_request(
             continue;
         }
         if *name == header::COOKIE {
-            let excluded_cookie_names = [Some(AUTH_COOKIE_NAME), extra_excluded_cookie_name];
-            if let Some(filtered_cookie) =
-                filtered_cookie_header_except(value, &excluded_cookie_names)
-            {
+            let mut excluded_cookie_names = vec![AUTH_COOKIE_NAME];
+            excluded_cookie_names.extend(extra_excluded_cookie_name);
+            if let Some(filtered_cookie) = filtered_cookie_header(value, &excluded_cookie_names) {
                 builder = builder.header(name, filtered_cookie);
             }
             continue;
@@ -147,23 +148,13 @@ async fn proxy_request(
         builder = builder.header(name, value);
     }
 
-    let request_body = reqwest::Body::wrap_stream(body.into_data_stream());
-    match tokio::time::timeout(Duration::from_secs(60), builder.body(request_body).send()).await {
-        Ok(Ok(response)) => {
-            let status = response.status();
-            let mut response_builder = Response::builder().status(status);
-
-            for (name, value) in response.headers() {
-                if is_hop_by_hop_header(name.as_str()) {
-                    continue;
-                }
-                response_builder = response_builder.header(name, value);
-            }
-
-            response_builder
-                .body(Body::from_stream(response.bytes_stream()))
-                .unwrap_or_else(internal_response)
-        }
+    match tokio::time::timeout(
+        Duration::from_secs(60),
+        builder.body(streaming_request_body(body)).send(),
+    )
+    .await
+    {
+        Ok(Ok(response)) => streaming_http_response(response),
         Ok(Err(error)) => json_error(
             StatusCode::BAD_GATEWAY,
             format!("upstream request failed: {error}"),
@@ -172,31 +163,6 @@ async fn proxy_request(
             StatusCode::GATEWAY_TIMEOUT,
             "upstream did not return response headers within 60 seconds",
         ),
-    }
-}
-
-fn filtered_cookie_header_except(
-    value: &HeaderValue,
-    excluded_names: &[Option<&str>],
-) -> Option<String> {
-    let raw = value.to_str().ok()?;
-    let cookies = raw
-        .split(';')
-        .filter_map(|cookie| {
-            let cookie = cookie.trim();
-            let (name, _) = cookie.split_once('=')?;
-            let should_exclude = excluded_names
-                .iter()
-                .flatten()
-                .any(|excluded_name| name.trim() == *excluded_name);
-            (!should_exclude).then(|| cookie.to_string())
-        })
-        .collect::<Vec<_>>();
-
-    if cookies.is_empty() {
-        None
-    } else {
-        Some(cookies.join("; "))
     }
 }
 

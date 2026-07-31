@@ -10,6 +10,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::util::strip_windows_extended_path;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use rand::random;
 use serde::{Deserialize, Serialize};
@@ -406,30 +407,17 @@ fn display_path(path: &Path) -> String {
 
 fn display_path_text(path: &Path) -> String {
     let path = path.display().to_string();
-    strip_windows_extended_path_text(&path).into_owned()
+    strip_windows_extended_path(&path).into_owned()
 }
 
 fn strip_windows_extended_path_prefix(path: PathBuf) -> PathBuf {
     let path_text = path.display().to_string();
-    let stripped = strip_windows_extended_path_text(&path_text);
+    let stripped = strip_windows_extended_path(&path_text);
     if stripped == path_text.as_str() {
         path
     } else {
         PathBuf::from(stripped.into_owned())
     }
-}
-
-fn strip_windows_extended_path_text(path: &str) -> std::borrow::Cow<'_, str> {
-    const EXTENDED_UNC_PREFIX: &str = "\\\\?\\UNC\\";
-    const EXTENDED_PATH_PREFIX: &str = "\\\\?\\";
-
-    if let Some(stripped) = path.strip_prefix(EXTENDED_UNC_PREFIX) {
-        return std::borrow::Cow::Owned(format!("\\\\{stripped}"));
-    }
-
-    path.strip_prefix(EXTENDED_PATH_PREFIX)
-        .map(std::borrow::Cow::Borrowed)
-        .unwrap_or_else(|| std::borrow::Cow::Borrowed(path))
 }
 
 #[cfg(test)]

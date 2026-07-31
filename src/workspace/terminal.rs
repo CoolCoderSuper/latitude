@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, Response, StatusCode, header},
     response::IntoResponse,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::{
@@ -23,7 +23,7 @@ use tracing::{debug, warn};
 use crate::{
     server::terminal_websocket_session,
     terminal::{TerminalSession, TerminalSessionManager, TerminalSessionSummary},
-    websocket_bridge::{to_axum, to_tungstenite},
+    websocket_bridge::forward_websocket,
 };
 
 use super::{
@@ -158,37 +158,7 @@ impl WorkspaceBridge {
             .await
             .context("workspace terminal parameters could not be sent")?;
 
-        loop {
-            tokio::select! {
-                message = browser.recv() => {
-                    let Some(message) = message else {
-                        let _ = worker.close(None).await;
-                        break;
-                    };
-                    let message = message.context("browser terminal WebSocket failed")?;
-                    let message = to_tungstenite(message);
-                    let closes = matches!(message, tungstenite::Message::Close(_));
-                    worker.send(message).await.context("terminal message could not be forwarded to the workspace host")?;
-                    if closes {
-                        break;
-                    }
-                }
-                message = worker.next() => {
-                    let Some(message) = message else {
-                        break;
-                    };
-                    let message = message.context("workspace terminal WebSocket failed")?;
-                    if let Some(message) = to_axum(message) {
-                        let closes = matches!(message, Message::Close(_));
-                        browser.send(message).await.context("workspace terminal output could not be forwarded")?;
-                        if closes {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
+        forward_websocket(browser, &mut worker).await?;
         debug!("workspace terminal proxy closed");
         Ok(())
     }

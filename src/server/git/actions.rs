@@ -11,10 +11,7 @@ use super::{
         constants::MAX_DIFF_ACTION_PAYLOAD_BYTES,
         page::{content_type_media_type, is_json_media_type},
     },
-    command::{
-        git_worktree_root, parse_nul_separated_paths, run_git_action_text,
-        run_git_action_text_owned, run_git_command, run_git_command_owned,
-    },
+    command::{git_worktree_root, parse_nul_separated_paths, run_git_action, run_git_command},
     types::GitAction,
 };
 
@@ -89,13 +86,10 @@ pub(in crate::server) async fn execute_git_action(
     };
 
     match action {
-        GitAction::StageAll => {
-            run_git_action_text(&repo_dir, "Stage all", &["add", "--all"], &[0]).await
-        }
+        GitAction::StageAll => run_git_action(&repo_dir, &["add", "--all"], &[0]).await,
         GitAction::StageFile { path } => {
-            run_git_action_text_owned(
+            run_git_action(
                 &repo_dir,
-                "Stage file",
                 &["add".to_string(), "--".to_string(), path],
                 &[0],
             )
@@ -104,7 +98,7 @@ pub(in crate::server) async fn execute_git_action(
         GitAction::StageFiles { paths } => {
             let mut args = vec!["add".to_string(), "--".to_string()];
             args.extend(paths);
-            run_git_action_text_owned(&repo_dir, "Stage selected files", &args, &[0]).await
+            run_git_action(&repo_dir, &args, &[0]).await
         }
         GitAction::UnstageAll => unstage_all(&repo_dir).await,
         GitAction::UnstageFile { path } => unstage_file(&repo_dir, path).await,
@@ -112,29 +106,23 @@ pub(in crate::server) async fn execute_git_action(
         GitAction::DiscardAll => discard_unstaged_all(&repo_dir).await,
         GitAction::DiscardFile { path } => discard_unstaged_file(&repo_dir, path).await,
         GitAction::Commit { message } => {
-            run_git_action_text_owned(
+            run_git_action(
                 &repo_dir,
-                "Commit staged",
                 &["commit".to_string(), "-m".to_string(), message],
                 &[0],
             )
             .await
         }
-        GitAction::Fetch => {
-            run_git_action_text(&repo_dir, "Fetch", &["fetch", "--prune"], &[0]).await
-        }
-        GitAction::Pull => {
-            run_git_action_text(&repo_dir, "Pull", &["pull", "--ff-only"], &[0]).await
-        }
-        GitAction::Push => run_git_action_text(&repo_dir, "Push", &["push"], &[0]).await,
+        GitAction::Fetch => run_git_action(&repo_dir, &["fetch", "--prune"], &[0]).await,
+        GitAction::Pull => run_git_action(&repo_dir, &["pull", "--ff-only"], &[0]).await,
+        GitAction::Push => run_git_action(&repo_dir, &["push"], &[0]).await,
     }
 }
 
 async fn discard_unstaged_file(repo_dir: &Path, path: String) -> Result<(), String> {
     if git_path_is_untracked(repo_dir, &path).await? {
-        return run_git_action_text_owned(
+        return run_git_action(
             repo_dir,
-            "Discard untracked file",
             &[
                 "clean".to_string(),
                 "-fd".to_string(),
@@ -146,9 +134,8 @@ async fn discard_unstaged_file(repo_dir: &Path, path: String) -> Result<(), Stri
         .await;
     }
 
-    run_git_action_text_owned(
+    run_git_action(
         repo_dir,
-        "Discard file changes",
         &[
             "restore".to_string(),
             "--worktree".to_string(),
@@ -162,26 +149,14 @@ async fn discard_unstaged_file(repo_dir: &Path, path: String) -> Result<(), Stri
 
 async fn discard_unstaged_all(repo_dir: &Path) -> Result<(), String> {
     if !git_tracked_unstaged_paths(repo_dir).await?.is_empty() {
-        run_git_action_text(
-            repo_dir,
-            "Discard tracked changes",
-            &["restore", "--worktree", "--", "."],
-            &[0],
-        )
-        .await?;
+        run_git_action(repo_dir, &["restore", "--worktree", "--", "."], &[0]).await?;
     }
 
-    run_git_action_text(
-        repo_dir,
-        "Discard untracked files",
-        &["clean", "-fd", "--", "."],
-        &[0],
-    )
-    .await
+    run_git_action(repo_dir, &["clean", "-fd", "--", "."], &[0]).await
 }
 
 async fn git_path_is_untracked(repo_dir: &Path, path: &str) -> Result<bool, String> {
-    let output = run_git_command_owned(
+    let output = run_git_command(
         repo_dir,
         &[
             "ls-files".to_string(),
@@ -209,9 +184,8 @@ async fn unstage_file(repo_dir: &Path, path: String) -> Result<(), String> {
         .is_ok();
 
     if has_head {
-        run_git_action_text_owned(
+        run_git_action(
             repo_dir,
-            "Unstage file",
             &[
                 "reset".to_string(),
                 "-q".to_string(),
@@ -223,9 +197,8 @@ async fn unstage_file(repo_dir: &Path, path: String) -> Result<(), String> {
         )
         .await
     } else {
-        run_git_action_text_owned(
+        run_git_action(
             repo_dir,
-            "Unstage file",
             &[
                 "rm".to_string(),
                 "--cached".to_string(),
@@ -246,11 +219,10 @@ async fn unstage_all(repo_dir: &Path) -> Result<(), String> {
         .is_ok();
 
     if has_head {
-        run_git_action_text(repo_dir, "Unstage all", &["reset", "-q", "HEAD"], &[0]).await
+        run_git_action(repo_dir, &["reset", "-q", "HEAD"], &[0]).await
     } else {
-        run_git_action_text(
+        run_git_action(
             repo_dir,
-            "Unstage all",
             &["rm", "--cached", "-r", "--ignore-unmatch", "."],
             &[0],
         )
@@ -279,7 +251,7 @@ async fn unstage_files(repo_dir: &Path, paths: Vec<String>) -> Result<(), String
         ]
     };
     args.extend(paths);
-    run_git_action_text_owned(repo_dir, "Unstage selected files", &args, &[0]).await
+    run_git_action(repo_dir, &args, &[0]).await
 }
 
 pub(in crate::server) fn parse_git_action_form(body: &[u8]) -> Result<GitAction, String> {

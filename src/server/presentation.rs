@@ -1,6 +1,7 @@
 use crate::config::{
     ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig, is_binary_document_media_type,
 };
+use crate::util::{is_image_media_type, is_video_media_type};
 
 pub(super) fn project_summary(project: &ProjectConfig) -> String {
     match enabled_deployment_count(project) {
@@ -91,12 +92,4 @@ fn is_static_image_deployment(index_file: &str) -> bool {
 
 fn is_static_video_deployment(index_file: &str) -> bool {
     static_media_type(index_file).is_some_and(|media_type| is_video_media_type(&media_type))
-}
-
-fn is_image_media_type(media_type: &str) -> bool {
-    media_type.starts_with("image/")
-}
-
-fn is_video_media_type(media_type: &str) -> bool {
-    media_type.starts_with("video/")
 }

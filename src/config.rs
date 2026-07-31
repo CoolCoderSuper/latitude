@@ -11,7 +11,6 @@ use thiserror::Error;
 use tokio::fs;
 use url::Url;
 
-pub(crate) const MAX_PAGE_CONTENT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const MAX_PAGE_BINARY_CONTENT_BYTES: usize = 25 * 1024 * 1024;
 pub(crate) const MAX_PAGE_TITLE_CHARS: usize = 160;
 pub(crate) const DEFAULT_PUBLIC_PASSWORD: &str = "test";
@@ -31,39 +30,6 @@ pub(crate) struct BootConfig {
     pub desktop: DesktopConfig,
     #[serde(default)]
     pub t3code: T3CodeConfig,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct CatalogSeed {
-    pub share_links: Vec<DeploymentShareConfig>,
-    pub projects: Vec<SeedProjectConfig>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct LoadedConfig {
-    pub boot: BootConfig,
-    pub catalog_seed: CatalogSeed,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConfigFile {
-    #[serde(default = "default_public_bind")]
-    public_bind: String,
-    #[serde(default = "default_command_bind")]
-    command_bind: String,
-    #[serde(default = "default_public_password")]
-    public_password: String,
-    #[serde(default)]
-    data_dir: Option<PathBuf>,
-    #[serde(default)]
-    desktop: DesktopConfig,
-    #[serde(default)]
-    t3code: T3CodeConfig,
-    #[serde(default)]
-    share_links: Vec<DeploymentShareConfig>,
-    #[serde(default)]
-    projects: Vec<SeedProjectConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -175,53 +141,6 @@ pub(crate) enum ApplicationTarget {
     },
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct SeedProjectConfig {
-    pub name: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    pub project_dir: PathBuf,
-    #[serde(default)]
-    pub deployments: Vec<SeedApplicationConfig>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-pub(crate) struct SeedApplicationConfig {
-    pub name: String,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(flatten)]
-    pub target: SeedApplicationTarget,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum SeedApplicationTarget {
-    ReverseProxy {
-        upstream: String,
-        #[serde(default = "default_true")]
-        strip_prefix: bool,
-    },
-    Static {
-        root: PathBuf,
-        #[serde(default = "default_index_file")]
-        index_file: String,
-        #[serde(default)]
-        spa_fallback: bool,
-    },
-    Page {
-        #[serde(default)]
-        content: String,
-        #[serde(default)]
-        format: PageFormat,
-        #[serde(default)]
-        media_type: Option<String>,
-        #[serde(default)]
-        title: Option<String>,
-    },
-}
-
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PageFormat {
@@ -250,100 +169,6 @@ impl Default for BootConfig {
             data_dir: None,
             desktop: DesktopConfig::default(),
             t3code: T3CodeConfig::default(),
-        }
-    }
-}
-
-impl Default for ConfigFile {
-    fn default() -> Self {
-        BootConfig::default().into()
-    }
-}
-
-impl From<BootConfig> for ConfigFile {
-    fn from(config: BootConfig) -> Self {
-        Self {
-            public_bind: config.public_bind,
-            command_bind: config.command_bind,
-            public_password: config.public_password,
-            data_dir: config.data_dir,
-            desktop: config.desktop,
-            t3code: config.t3code,
-            share_links: Vec::new(),
-            projects: Vec::new(),
-        }
-    }
-}
-
-impl ConfigFile {
-    fn into_loaded(self) -> LoadedConfig {
-        LoadedConfig {
-            boot: BootConfig {
-                public_bind: self.public_bind,
-                command_bind: self.command_bind,
-                public_password: self.public_password,
-                data_dir: self.data_dir,
-                desktop: self.desktop,
-                t3code: self.t3code,
-            },
-            catalog_seed: CatalogSeed {
-                share_links: self.share_links,
-                projects: self.projects,
-            },
-        }
-    }
-}
-
-impl From<&SeedProjectConfig> for ProjectConfig {
-    fn from(project: &SeedProjectConfig) -> Self {
-        Self {
-            name: project.name.clone(),
-            enabled: project.enabled,
-            project_dir: project.project_dir.clone(),
-            deployments: project
-                .deployments
-                .iter()
-                .map(ApplicationConfig::from)
-                .collect(),
-        }
-    }
-}
-
-impl From<&SeedApplicationConfig> for ApplicationConfig {
-    fn from(app: &SeedApplicationConfig) -> Self {
-        let target = match &app.target {
-            SeedApplicationTarget::ReverseProxy {
-                upstream,
-                strip_prefix,
-            } => ApplicationTarget::ReverseProxy {
-                upstream: upstream.clone(),
-                strip_prefix: *strip_prefix,
-            },
-            SeedApplicationTarget::Static {
-                root,
-                index_file,
-                spa_fallback,
-            } => ApplicationTarget::Static {
-                root: root.clone(),
-                index_file: index_file.clone(),
-                spa_fallback: *spa_fallback,
-            },
-            SeedApplicationTarget::Page {
-                format,
-                media_type,
-                title,
-                ..
-            } => ApplicationTarget::Page {
-                format: *format,
-                media_type: media_type.clone(),
-                title: title.clone(),
-            },
-        };
-
-        Self {
-            name: app.name.clone(),
-            enabled: app.enabled,
-            target,
         }
     }
 }
@@ -378,30 +203,13 @@ impl Default for T3CodeConfig {
     }
 }
 
-impl LoadedConfig {
+impl BootConfig {
     pub(crate) async fn load_or_default(path: &Path) -> Result<Self, ConfigError> {
         match fs::read(path).await {
-            Ok(bytes) => Ok(serde_json::from_slice::<ConfigFile>(&bytes)?.into_loaded()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(ConfigFile::default().into_loaded())
-            }
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error.into()),
         }
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        self.boot.validate()?;
-        self.catalog_seed.validate()
-    }
-}
-
-impl CatalogSeed {
-    pub(crate) fn is_empty(&self) -> bool {
-        self.projects.is_empty() && self.share_links.is_empty()
-    }
-
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        validate_catalog(&self.projects, &self.share_links)
     }
 }
 
@@ -471,35 +279,6 @@ impl BootConfig {
 
         Ok(())
     }
-}
-
-fn validate_catalog(
-    projects: &[SeedProjectConfig],
-    share_links: &[DeploymentShareConfig],
-) -> Result<(), ConfigError> {
-    let mut seen_share_tokens = HashSet::new();
-    for share in share_links {
-        share.validate()?;
-        if !seen_share_tokens.insert(share.token.clone()) {
-            return Err(ConfigError::Invalid(format!(
-                "duplicate share link token '{}'",
-                share.token
-            )));
-        }
-    }
-
-    let mut seen_names = HashSet::new();
-    for project in projects {
-        project.validate()?;
-        if !seen_names.insert(project.name.clone()) {
-            return Err(ConfigError::Invalid(format!(
-                "duplicate project name '{}'",
-                project.name
-            )));
-        }
-    }
-
-    Ok(())
 }
 
 impl DesktopConfig {
@@ -792,94 +571,6 @@ fn validate_page_metadata(
     Ok(())
 }
 
-fn validate_page_content(name: &str, content: &str, format: PageFormat) -> Result<(), ConfigError> {
-    if format == PageFormat::Binary {
-        let bytes = decode_page_binary_content(content).map_err(|error| {
-            ConfigError::Invalid(format!(
-                "application '{name}' binary page content must be base64: {error}"
-            ))
-        })?;
-        if bytes.len() > MAX_PAGE_BINARY_CONTENT_BYTES {
-            return Err(ConfigError::Invalid(format!(
-                "application '{name}' binary page content must be at most {MAX_PAGE_BINARY_CONTENT_BYTES} bytes"
-            )));
-        }
-    } else if content.len() > MAX_PAGE_CONTENT_BYTES {
-        return Err(ConfigError::Invalid(format!(
-            "application '{name}' page content must be at most {MAX_PAGE_CONTENT_BYTES} bytes"
-        )));
-    }
-
-    Ok(())
-}
-
-impl SeedProjectConfig {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if !is_valid_url_segment(&self.name) {
-            return Err(ConfigError::Invalid(format!(
-                "project name '{}' must contain only ASCII letters, digits, '-' or '_'",
-                self.name
-            )));
-        }
-
-        if self.project_dir.as_os_str().is_empty() {
-            return Err(ConfigError::Invalid(format!(
-                "project '{}' project_dir must not be empty",
-                self.name
-            )));
-        }
-
-        let mut seen_names = HashSet::new();
-        for app in &self.deployments {
-            app.validate()?;
-            if !seen_names.insert(app.name.clone()) {
-                return Err(ConfigError::Invalid(format!(
-                    "project '{}' has duplicate deployment name '{}'",
-                    self.name, app.name
-                )));
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl SeedApplicationConfig {
-    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
-        if !is_valid_url_segment(&self.name) {
-            return Err(ConfigError::Invalid(format!(
-                "application name '{}' must contain only ASCII letters, digits, '-' or '_'",
-                self.name
-            )));
-        }
-
-        match &self.target {
-            SeedApplicationTarget::ReverseProxy { upstream, .. } => {
-                validate_upstream(&self.name, upstream)?;
-            }
-            SeedApplicationTarget::Static { index_file, .. } => {
-                validate_static_index_file(&self.name, index_file)?;
-            }
-            SeedApplicationTarget::Page {
-                content,
-                format,
-                media_type,
-                title,
-            } => {
-                validate_page_metadata(
-                    &self.name,
-                    *format,
-                    media_type.as_deref(),
-                    title.as_deref(),
-                )?;
-                validate_page_content(&self.name, content, *format)?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
 fn is_valid_url_segment(name: &str) -> bool {
     !name.is_empty()
         && name
@@ -1127,93 +818,31 @@ mod tests {
 
     #[test]
     fn rejects_unknown_top_level_applications_config() {
-        let error = serde_json::from_str::<ConfigFile>(r#"{"applications":[]}"#).unwrap_err();
+        let error = serde_json::from_str::<BootConfig>(r#"{"applications":[]}"#).unwrap_err();
 
         assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]
-    fn requires_project_dir_for_projects() {
-        let error = serde_json::from_str::<ConfigFile>(
-            r#"{"projects":[{"name":"demo","deployments":[]}]}"#,
-        )
-        .unwrap_err();
+    fn rejects_legacy_catalog_fields() {
+        for json in [r#"{"projects":[]}"#, r#"{"share_links":[]}"#] {
+            let error = serde_json::from_str::<BootConfig>(json).unwrap_err();
 
-        assert!(error.to_string().contains("project_dir"));
-    }
-
-    #[test]
-    fn rejects_unknown_project_applications_field() {
-        let error = serde_json::from_str::<ConfigFile>(
-            r#"{"projects":[{"name":"demo","project_dir":".","applications":[]}]}"#,
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("unknown field"));
-    }
-
-    #[test]
-    fn rejects_duplicate_project_names() {
-        let seed = CatalogSeed {
-            projects: vec![
-                SeedProjectConfig {
-                    name: "demo".to_string(),
-                    enabled: true,
-                    project_dir: PathBuf::from("."),
-                    deployments: Vec::new(),
-                },
-                SeedProjectConfig {
-                    name: "demo".to_string(),
-                    enabled: true,
-                    project_dir: PathBuf::from("./other"),
-                    deployments: Vec::new(),
-                },
-            ],
-            ..CatalogSeed::default()
-        };
-
-        assert!(seed.validate().is_err());
+            assert!(error.to_string().contains("unknown field"));
+        }
     }
 
     #[test]
     fn accepts_deployment_share_links() {
-        let seed = CatalogSeed {
-            share_links: vec![DeploymentShareConfig {
-                token: "abc123".to_string(),
-                project: "demo".to_string(),
-                deployment: "site".to_string(),
-                password: Some("secret".to_string()),
-                expires_at: Some(4_102_444_800),
-            }],
-            ..CatalogSeed::default()
+        let share = DeploymentShareConfig {
+            token: "abc123".to_string(),
+            project: "demo".to_string(),
+            deployment: "site".to_string(),
+            password: Some("secret".to_string()),
+            expires_at: Some(4_102_444_800),
         };
 
-        assert!(seed.validate().is_ok());
-    }
-
-    #[test]
-    fn rejects_duplicate_share_link_tokens() {
-        let seed = CatalogSeed {
-            share_links: vec![
-                DeploymentShareConfig {
-                    token: "abc123".to_string(),
-                    project: "demo".to_string(),
-                    deployment: "site".to_string(),
-                    password: None,
-                    expires_at: None,
-                },
-                DeploymentShareConfig {
-                    token: "abc123".to_string(),
-                    project: "demo".to_string(),
-                    deployment: "other".to_string(),
-                    password: None,
-                    expires_at: None,
-                },
-            ],
-            ..CatalogSeed::default()
-        };
-
-        assert!(seed.validate().is_err());
+        assert!(share.validate().is_ok());
     }
 
     #[test]
@@ -1232,130 +861,81 @@ mod tests {
 
     #[test]
     fn rejects_duplicate_app_names_within_project() {
-        let seed = CatalogSeed {
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![
-                    SeedApplicationConfig {
-                        name: "site".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::ReverseProxy {
-                            upstream: "http://127.0.0.1:3000".to_string(),
-                            strip_prefix: true,
-                        },
+        let project = ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![
+                ApplicationConfig {
+                    name: "site".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::ReverseProxy {
+                        upstream: "http://127.0.0.1:3000".to_string(),
+                        strip_prefix: true,
                     },
-                    SeedApplicationConfig {
-                        name: "site".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::Static {
-                            root: PathBuf::from("public"),
-                            index_file: "index.html".to_string(),
-                            spa_fallback: false,
-                        },
+                },
+                ApplicationConfig {
+                    name: "site".to_string(),
+                    enabled: true,
+                    target: ApplicationTarget::Static {
+                        root: PathBuf::from("public"),
+                        index_file: "index.html".to_string(),
+                        spa_fallback: false,
                     },
-                ],
-            }],
-            ..CatalogSeed::default()
+                },
+            ],
         };
 
-        assert!(seed.validate().is_err());
+        assert!(project.validate().is_err());
     }
 
     #[test]
     fn accepts_page_application_inside_project() {
-        let seed = CatalogSeed {
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
+        let project = ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "agent-note".to_string(),
                 enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![SeedApplicationConfig {
-                    name: "agent-note".to_string(),
-                    enabled: true,
-                    target: SeedApplicationTarget::Page {
-                        content: "# Agent Note".to_string(),
-                        format: PageFormat::Markdown,
-                        media_type: None,
-                        title: Some("Agent Note".to_string()),
-                    },
-                }],
+                target: ApplicationTarget::Page {
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: Some("Agent Note".to_string()),
+                },
             }],
-            ..CatalogSeed::default()
         };
 
-        assert!(seed.validate().is_ok());
-    }
-
-    #[test]
-    fn rejects_oversized_page_content() {
-        let seed = CatalogSeed {
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![SeedApplicationConfig {
-                    name: "agent-note".to_string(),
-                    enabled: true,
-                    target: SeedApplicationTarget::Page {
-                        content: "x".repeat(MAX_PAGE_CONTENT_BYTES + 1),
-                        format: PageFormat::Html,
-                        media_type: None,
-                        title: None,
-                    },
-                }],
-            }],
-            ..CatalogSeed::default()
-        };
-
-        assert!(seed.validate().is_err());
+        assert!(project.validate().is_ok());
     }
 
     #[test]
     fn accepts_binary_image_page_application() {
-        let seed = CatalogSeed {
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![SeedApplicationConfig {
-                    name: "snapshot".to_string(),
-                    enabled: true,
-                    target: SeedApplicationTarget::Page {
-                        content: encode_page_binary_content(b"png bytes"),
-                        format: PageFormat::Binary,
-                        media_type: Some("image/png".to_string()),
-                        title: Some("Snapshot".to_string()),
-                    },
-                }],
-            }],
-            ..CatalogSeed::default()
+        let app = ApplicationConfig {
+            name: "snapshot".to_string(),
+            enabled: true,
+            target: ApplicationTarget::Page {
+                format: PageFormat::Binary,
+                media_type: Some("image/png".to_string()),
+                title: Some("Snapshot".to_string()),
+            },
         };
 
-        assert!(seed.validate().is_ok());
+        assert!(app.validate().is_ok());
     }
 
     #[test]
     fn rejects_non_media_binary_page_application() {
-        let seed = CatalogSeed {
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![SeedApplicationConfig {
-                    name: "asset".to_string(),
-                    enabled: true,
-                    target: SeedApplicationTarget::Page {
-                        content: encode_page_binary_content(b"pdf bytes"),
-                        format: PageFormat::Binary,
-                        media_type: Some("application/pdf".to_string()),
-                        title: None,
-                    },
-                }],
-            }],
-            ..CatalogSeed::default()
+        let app = ApplicationConfig {
+            name: "asset".to_string(),
+            enabled: true,
+            target: ApplicationTarget::Page {
+                format: PageFormat::Binary,
+                media_type: Some("application/pdf".to_string()),
+                title: None,
+            },
         };
 
-        assert!(seed.validate().is_err());
+        assert!(app.validate().is_err());
     }
 }

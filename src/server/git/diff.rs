@@ -8,7 +8,7 @@ use tokio::{
 use super::{
     command::{
         GitCommandExecution, git_command_label, git_worktree_root, parse_nul_separated_paths,
-        run_git_command, run_git_command_owned, run_git_command_with_execution,
+        run_git_command, run_git_command_with_execution,
     },
     types::{
         GitCommit, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff, GitHistoryReport,
@@ -98,7 +98,7 @@ pub(in crate::server) async fn collect_project_file_diff(
         "--".to_string(),
         path.to_string(),
     ];
-    let mut file_changes = match run_git_command_owned(&repo_dir, &status_args, &[0]).await {
+    let mut file_changes = match run_git_command(&repo_dir, &status_args, &[0]).await {
         Ok(output) => parse_porcelain_status(&output.stdout),
         Err(error) => {
             return GitDiffReport {
@@ -134,8 +134,8 @@ pub(in crate::server) async fn collect_project_file_diff(
         "--".to_string(),
         path.to_string(),
     ];
-    let unstaged_diff = collect_git_text_owned(&repo_dir, &unstaged_args, &[0]).await;
-    let staged_diff = collect_git_text_owned(&repo_dir, &staged_args, &[0]).await;
+    let unstaged_diff = collect_git_text(&repo_dir, &unstaged_args, &[0]).await;
+    let staged_diff = collect_git_text(&repo_dir, &staged_args, &[0]).await;
     attach_file_diffs(
         &mut file_changes,
         "Unstaged",
@@ -383,7 +383,7 @@ pub(in crate::server) async fn collect_project_git_commit(
         "--color=never".to_string(),
         hash.to_string(),
     ];
-    let output = run_git_command_owned(&repo_dir, &args, &[0]).await.ok()?;
+    let output = run_git_command(&repo_dir, &args, &[0]).await.ok()?;
     let commit = parse_git_history(&String::from_utf8_lossy(&output.stdout))
         .into_iter()
         .next()?;
@@ -448,24 +448,16 @@ fn section_output(section: &GitSection) -> Option<&str> {
     section.output.as_ref().ok().map(String::as_str)
 }
 
-async fn collect_git_text(project_dir: &Path, args: &[&str], success_codes: &[i32]) -> GitSection {
+async fn collect_git_text<S: AsRef<str>>(
+    project_dir: &Path,
+    args: &[S],
+    success_codes: &[i32],
+) -> GitSection {
     let command = git_command_label(args);
     let output = run_git_command(project_dir, args, success_codes)
         .await
         .map(|output| String::from_utf8_lossy(&output.stdout).to_string());
 
-    GitSection { command, output }
-}
-
-async fn collect_git_text_owned(
-    project_dir: &Path,
-    args: &[String],
-    success_codes: &[i32],
-) -> GitSection {
-    let command = format!("git {}", args.join(" "));
-    let output = run_git_command_owned(project_dir, args, success_codes)
-        .await
-        .map(|output| String::from_utf8_lossy(&output.stdout).to_string());
     GitSection { command, output }
 }
 
@@ -478,7 +470,7 @@ async fn collect_untracked_file_diff(project_dir: &Path, path: &str) -> GitSecti
         "/dev/null".to_string(),
         path.to_string(),
     ];
-    collect_git_text_owned(project_dir, &args, &[0, 1]).await
+    collect_git_text(project_dir, &args, &[0, 1]).await
 }
 
 async fn collect_untracked_diff(project_dir: &Path) -> GitSection {

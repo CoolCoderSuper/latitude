@@ -65,6 +65,19 @@ pub(super) async fn require_public_api_auth(
     }
 }
 
+pub(super) async fn require_public_auth(
+    State(state): State<AppState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    let config = state.config_snapshot().await;
+    if public_request_is_authenticated(&state, &config, &req) {
+        next.run(req).await
+    } else {
+        public_auth_challenge(&state, &req, false)
+    }
+}
+
 pub(super) fn public_auth_challenge(
     state: &AppState,
     req: &Request<Body>,

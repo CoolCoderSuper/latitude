@@ -3,22 +3,23 @@ use std::{ffi::OsString, net::SocketAddr, path::Path, process::Stdio, time::Dura
 use axum::{
     Router,
     body::Body,
-    extract::{Path as AxumPath, State, WebSocketUpgrade, ws::Message as AxumMessage},
+    extract::{Path as AxumPath, State, WebSocketUpgrade},
     http::{HeaderMap, Request, Response, StatusCode, Uri, header, uri::Authority},
     routing::get,
 };
-use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use tokio::{process::Command, time::sleep};
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{Message as TungsteniteMessage, client::IntoClientRequest},
-};
+use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
-    config::T3CodeConfig, state::AppState, storage::WorktreeRecord, workspace::WorkspaceExecRequest,
+    config::T3CodeConfig,
+    http_stream::{is_hop_by_hop_header, streaming_http_response, streaming_request_body},
+    state::AppState,
+    storage::WorktreeRecord,
+    websocket_bridge::forward_websocket,
+    workspace::WorkspaceExecRequest,
 };
 
 use super::{
@@ -28,7 +29,7 @@ use super::{
         public_request_is_authenticated,
     },
     constants::{AUTH_COOKIE_NAME, LOGIN_PATH},
-    paths::{is_hop_by_hop_header, join_upstream_url},
+    paths::{filtered_cookie_header, join_upstream_url},
     public::{get_public_login, post_public_login},
     response::{internal_response, json_error, plain_response},
 };
@@ -385,7 +386,7 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
             continue;
         }
         if *name == header::COOKIE {
-            if let Some(value) = cookie_header_without(value, AUTH_COOKIE_NAME) {
+            if let Some(value) = filtered_cookie_header(value, &[AUTH_COOKIE_NAME]) {
                 request = request.header(name, value);
             }
             continue;
@@ -408,23 +409,6 @@ async fn t3code_gateway_http(State(state): State<AppState>, req: Request<Body>) 
         }
     };
     streaming_http_response(upstream)
-}
-
-fn streaming_request_body(body: Body) -> reqwest::Body {
-    reqwest::Body::wrap_stream(body.into_data_stream())
-}
-
-fn streaming_http_response(upstream: reqwest::Response) -> Response<Body> {
-    let status = upstream.status();
-    let mut response = Response::builder().status(status);
-    for (name, value) in upstream.headers() {
-        if !is_hop_by_hop_header(name.as_str()) {
-            response = response.header(name, value);
-        }
-    }
-    response
-        .body(Body::from_stream(upstream.bytes_stream()))
-        .unwrap_or_else(internal_response)
 }
 
 async fn t3code_gateway_websocket(
@@ -466,7 +450,7 @@ async fn t3code_gateway_websocket(
     };
     if let Some(cookie) = headers
         .get(header::COOKIE)
-        .and_then(|value| cookie_header_without(value, AUTH_COOKIE_NAME))
+        .and_then(|value| filtered_cookie_header(value, &[AUTH_COOKIE_NAME]))
         .and_then(|value| value.parse().ok())
     {
         upstream_request
@@ -499,94 +483,14 @@ async fn t3code_gateway_websocket(
 }
 
 async fn proxy_websocket(
-    client: axum::extract::ws::WebSocket,
-    upstream: tokio_tungstenite::WebSocketStream<
+    mut client: axum::extract::ws::WebSocket,
+    mut upstream: tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) {
-    let (mut client_tx, mut client_rx) = client.split();
-    let (mut upstream_tx, mut upstream_rx) = upstream.split();
-
-    let browser_to_upstream = async {
-        while let Some(message) = client_rx.next().await {
-            match message {
-                Ok(message) => {
-                    let close = matches!(message, AxumMessage::Close(_));
-                    if let Err(error) = upstream_tx.send(to_upstream_message(message)).await {
-                        warn!(%error, "T3 Code gateway could not forward browser message");
-                        return;
-                    }
-                    if close {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    warn!(%error, "T3 Code gateway browser websocket failed");
-                    return;
-                }
-            }
-        }
-    };
-    let upstream_to_browser = async {
-        while let Some(message) = upstream_rx.next().await {
-            match message {
-                Ok(TungsteniteMessage::Frame(_)) => {}
-                Ok(message) => {
-                    let close = matches!(message, TungsteniteMessage::Close(_));
-                    if let Err(error) = client_tx.send(to_client_message(message)).await {
-                        warn!(%error, "T3 Code gateway could not forward upstream message");
-                        return;
-                    }
-                    if close {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    warn!(%error, "T3 Code gateway upstream websocket failed");
-                    return;
-                }
-            }
-        }
-    };
-
-    tokio::select! {
-        _ = browser_to_upstream => {}
-        _ = upstream_to_browser => {}
+    if let Err(error) = forward_websocket(&mut client, &mut upstream).await {
+        warn!(%error, "T3 Code gateway websocket failed");
     }
-}
-
-fn to_upstream_message(message: AxumMessage) -> TungsteniteMessage {
-    match message {
-        AxumMessage::Text(value) => TungsteniteMessage::Text(value.to_string().into()),
-        AxumMessage::Binary(value) => TungsteniteMessage::Binary(value),
-        AxumMessage::Ping(value) => TungsteniteMessage::Ping(value),
-        AxumMessage::Pong(value) => TungsteniteMessage::Pong(value),
-        AxumMessage::Close(_) => TungsteniteMessage::Close(None),
-    }
-}
-
-fn to_client_message(message: TungsteniteMessage) -> AxumMessage {
-    match message {
-        TungsteniteMessage::Text(value) => AxumMessage::Text(value.to_string().into()),
-        TungsteniteMessage::Binary(value) => AxumMessage::Binary(value),
-        TungsteniteMessage::Ping(value) => AxumMessage::Ping(value),
-        TungsteniteMessage::Pong(value) => AxumMessage::Pong(value),
-        TungsteniteMessage::Close(_) | TungsteniteMessage::Frame(_) => AxumMessage::Close(None),
-    }
-}
-
-fn cookie_header_without(value: &header::HeaderValue, excluded_name: &str) -> Option<String> {
-    let raw = value.to_str().ok()?;
-    let cookies = raw
-        .split(';')
-        .map(str::trim)
-        .filter(|cookie| {
-            cookie
-                .split_once('=')
-                .is_some_and(|(name, _)| name.trim() != excluded_name)
-        })
-        .collect::<Vec<_>>();
-    (!cookies.is_empty()).then(|| cookies.join("; "))
 }
 
 fn append_base_dir(args: &mut Vec<OsString>, config: &T3CodeConfig) {
@@ -759,7 +663,7 @@ mod tests {
     use std::{convert::Infallible, time::Duration};
 
     use axum::body::Bytes;
-    use futures_util::stream;
+    use futures_util::{StreamExt, stream};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
@@ -818,7 +722,7 @@ mod tests {
         );
 
         assert_eq!(
-            cookie_header_without(&value, AUTH_COOKIE_NAME).as_deref(),
+            filtered_cookie_header(&value, &[AUTH_COOKIE_NAME]).as_deref(),
             Some("theme=dark; t3_session=allowed")
         );
     }

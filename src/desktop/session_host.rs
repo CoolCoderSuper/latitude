@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use futures_util::{SinkExt, StreamExt};
+use futures_util::SinkExt;
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, sync::RwLock};
 use tokio_tungstenite::{
@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, info, warn};
 
-use crate::websocket_bridge::{to_axum, to_tungstenite};
+use crate::websocket_bridge::forward_websocket;
 
 use super::DesktopSessionConfig;
 
@@ -131,37 +131,7 @@ impl NativeSessionBridge {
             .await
             .context("desktop session parameters could not be sent")?;
 
-        loop {
-            tokio::select! {
-                message = browser.recv() => {
-                    let Some(message) = message else {
-                        let _ = worker.close(None).await;
-                        break;
-                    };
-                    let message = message.context("browser desktop WebSocket failed")?;
-                    let message = to_tungstenite(message);
-                    let closes = matches!(message, tungstenite::Message::Close(_));
-                    worker.send(message).await.context("desktop message could not be forwarded to the session host")?;
-                    if closes {
-                        break;
-                    }
-                }
-                message = worker.next() => {
-                    let Some(message) = message else {
-                        break;
-                    };
-                    let message = message.context("desktop session-host WebSocket failed")?;
-                    if let Some(message) = to_axum(message) {
-                        let closes = matches!(message, axum::extract::ws::Message::Close(_));
-                        browser.send(message).await.context("desktop message could not be forwarded to the browser")?;
-                        if closes {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
+        forward_websocket(browser, &mut worker).await?;
         debug!("native desktop session-host proxy closed");
         Ok(())
     }

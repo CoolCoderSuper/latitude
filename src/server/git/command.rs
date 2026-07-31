@@ -31,10 +31,9 @@ pub(super) async fn git_worktree_root(project_dir: &Path) -> Result<PathBuf, Str
     Ok(PathBuf::from(path))
 }
 
-pub(super) async fn run_git_action_text(
+pub(super) async fn run_git_action<S: AsRef<str>>(
     repo_dir: &Path,
-    _title: &str,
-    args: &[&str],
+    args: &[S],
     success_codes: &[i32],
 ) -> Result<(), String> {
     run_git_command(repo_dir, args, success_codes)
@@ -42,20 +41,9 @@ pub(super) async fn run_git_action_text(
         .map(|_| ())
 }
 
-pub(super) async fn run_git_action_text_owned(
-    repo_dir: &Path,
-    _title: &str,
-    args: &[String],
-    success_codes: &[i32],
-) -> Result<(), String> {
-    run_git_command_owned(repo_dir, args, success_codes)
-        .await
-        .map(|_| ())
-}
-
-pub(super) async fn run_git_command(
+pub(super) async fn run_git_command<S: AsRef<str>>(
     project_dir: &Path,
-    args: &[&str],
+    args: &[S],
     success_codes: &[i32],
 ) -> Result<GitCommandOutput, String> {
     run_git_command_with_execution(
@@ -67,39 +55,13 @@ pub(super) async fn run_git_command(
     .await
 }
 
-pub(super) async fn run_git_command_with_execution(
+pub(super) async fn run_git_command_with_execution<S: AsRef<str>>(
     project_dir: &Path,
-    args: &[&str],
+    args: &[S],
     success_codes: &[i32],
     execution: GitCommandExecution,
 ) -> Result<GitCommandOutput, String> {
-    let owned_args = args
-        .iter()
-        .map(|arg| (*arg).to_string())
-        .collect::<Vec<_>>();
-    run_git_command_owned_with_execution(project_dir, &owned_args, success_codes, execution).await
-}
-
-pub(super) async fn run_git_command_owned(
-    project_dir: &Path,
-    args: &[String],
-    success_codes: &[i32],
-) -> Result<GitCommandOutput, String> {
-    run_git_command_owned_with_execution(
-        project_dir,
-        args,
-        success_codes,
-        GitCommandExecution::Interactive,
-    )
-    .await
-}
-
-async fn run_git_command_owned_with_execution(
-    project_dir: &Path,
-    args: &[String],
-    success_codes: &[i32],
-    execution: GitCommandExecution,
-) -> Result<GitCommandOutput, String> {
+    let args = args.iter().map(AsRef::as_ref).collect::<Vec<_>>();
     let _permit = if execution.uses_concurrency_pool() {
         Some(
             GIT_COMMAND_CONCURRENCY
@@ -114,7 +76,7 @@ async fn run_git_command_owned_with_execution(
         "-c".to_string(),
         format!("safe.directory={}", git_safe_directory(project_dir)),
     ];
-    command_args.extend_from_slice(args);
+    command_args.extend(args.iter().map(|arg| (*arg).to_string()));
 
     let (status_code, stdout, stderr) = if let Some(bridge) = global_workspace_bridge() {
         let output = bridge
@@ -129,20 +91,20 @@ async fn run_git_command_owned_with_execution(
             .map_err(|error| {
                 format!(
                     "Could not run {} in the signed-in user workspace: {error}",
-                    git_command_label_owned(args)
+                    git_command_label(&args)
                 )
             })?;
         if output.timed_out {
             return Err(format!(
                 "{} timed out after {} seconds",
-                git_command_label_owned(args),
+                git_command_label(&args),
                 GIT_COMMAND_TIMEOUT.as_secs()
             ));
         }
         if output.truncated {
             return Err(format!(
                 "{} produced more workspace output than Latitude can safely transfer",
-                git_command_label_owned(args)
+                git_command_label(&args)
             ));
         }
         (output.status_code, output.stdout, output.stderr)
@@ -157,13 +119,13 @@ async fn run_git_command_owned_with_execution(
             Ok(Err(error)) => {
                 return Err(format!(
                     "Could not run {}: {error}",
-                    git_command_label_owned(args)
+                    git_command_label(&args)
                 ));
             }
             Err(_) => {
                 return Err(format!(
                     "{} timed out after {} seconds",
-                    git_command_label_owned(args),
+                    git_command_label(&args),
                     GIT_COMMAND_TIMEOUT.as_secs()
                 ));
             }
@@ -178,10 +140,7 @@ async fn run_git_command_owned_with_execution(
     let status = status_code
         .map(|code| code.to_string())
         .unwrap_or_else(|| "terminated".to_string());
-    let mut message = format!(
-        "{} exited with status {status}",
-        git_command_label_owned(args)
-    );
+    let mut message = format!("{} exited with status {status}", git_command_label(&args));
     let stderr = String::from_utf8_lossy(&stderr);
     let stdout = String::from_utf8_lossy(&stdout);
     if !stderr.trim().is_empty() {
@@ -207,20 +166,11 @@ pub(super) fn parse_nul_separated_paths(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
-pub(super) fn git_command_label(args: &[&str]) -> String {
+pub(super) fn git_command_label<S: AsRef<str>>(args: &[S]) -> String {
     let mut label = String::from("git");
     for arg in args {
         label.push(' ');
-        label.push_str(arg);
-    }
-    label
-}
-
-fn git_command_label_owned(args: &[String]) -> String {
-    let mut label = String::from("git");
-    for arg in args {
-        label.push(' ');
-        label.push_str(arg);
+        label.push_str(arg.as_ref());
     }
     label
 }

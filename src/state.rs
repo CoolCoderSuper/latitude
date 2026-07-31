@@ -22,6 +22,7 @@ use crate::{
     server::GitStatusSummary,
     storage::CatalogStore,
     terminal::TerminalSessionManager,
+    util::{decode_hex, encode_hex},
     workspace::WorkspaceBridge,
 };
 
@@ -234,39 +235,4 @@ fn public_auth_mac(secret: &[u8], password: &str) -> HmacSha256 {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC should accept any secret length");
     mac.update(password.as_bytes());
     mac
-}
-
-fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
-fn decode_hex(value: &str) -> Option<Vec<u8>> {
-    let bytes = value.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return None;
-    }
-
-    let mut output = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks_exact(2) {
-        let high = hex_value(pair[0])?;
-        let low = hex_value(pair[1])?;
-        output.push((high << 4) | low);
-    }
-    Some(output)
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }

@@ -15,20 +15,13 @@ use thiserror::Error;
 use tokio::fs;
 use tracing::warn;
 
-use crate::config::{
-    ApplicationConfig, ApplicationTarget, CatalogSeed, ConfigError, PageFormat, ProjectConfig,
-    SeedApplicationConfig, SeedApplicationTarget, decode_page_binary_content,
-};
+use crate::config::{ApplicationConfig, ApplicationTarget, ConfigError, PageFormat, ProjectConfig};
+use crate::util::encode_hex;
 
-use shares::insert_share_tx;
 pub(crate) use worktrees::{DiscoveredWorktree, WorktreeRecord};
-
-#[cfg(test)]
-use crate::config::DeploymentShareConfig;
 
 const DB_FILE_NAME: &str = "latitude.db";
 const CONTENT_DIR_NAME: &str = "content";
-const CONFIG_SEED_IMPORTED_KEY: &str = "config_seed_imported";
 
 #[derive(Clone)]
 pub(crate) struct CatalogStore {
@@ -115,56 +108,6 @@ impl CatalogStore {
     #[cfg(test)]
     pub(crate) fn data_dir(&self) -> &Path {
         &self.inner.data_dir
-    }
-
-    pub(crate) async fn import_config_seed_if_needed(
-        &self,
-        seed: &CatalogSeed,
-    ) -> Result<(), StorageError> {
-        if self.config_seed_imported().await? || seed.is_empty() {
-            return Ok(());
-        }
-
-        let mut tx = self.inner.pool.begin().await?;
-        for project in &seed.projects {
-            let project_config = ProjectConfig::from(project);
-            insert_project_tx(&mut tx, &project_config).await?;
-            for deployment in &project.deployments {
-                let prepared = self.prepare_seed_deployment(deployment).await?;
-                insert_deployment_tx(&mut tx, &project.name, &prepared).await?;
-            }
-        }
-
-        for share in &seed.share_links {
-            if deployment_exists_tx(&mut tx, &share.project, &share.deployment).await? {
-                insert_share_tx(&mut tx, share).await?;
-            } else {
-                warn!(
-                    token = %share.token,
-                    project = %share.project,
-                    deployment = %share.deployment,
-                    "skipping config seed share link because its deployment does not exist"
-                );
-            }
-        }
-
-        sqlx::query("INSERT OR REPLACE INTO migration_metadata (key, value) VALUES (?1, 'true')")
-            .bind(CONFIG_SEED_IMPORTED_KEY)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(())
-    }
-
-    pub(crate) async fn config_seed_imported(&self) -> Result<bool, StorageError> {
-        let value = sqlx::query_scalar::<_, Option<String>>(
-            "SELECT value FROM migration_metadata WHERE key = ?1",
-        )
-        .bind(CONFIG_SEED_IMPORTED_KEY)
-        .fetch_optional(&self.inner.pool)
-        .await?;
-
-        Ok(value.flatten().is_some())
     }
 
     pub(crate) async fn counts(&self) -> Result<CatalogCounts, StorageError> {
@@ -454,34 +397,6 @@ impl CatalogStore {
         })
     }
 
-    async fn prepare_seed_deployment(
-        &self,
-        deployment: &SeedApplicationConfig,
-    ) -> Result<PreparedDeployment, StorageError> {
-        deployment.validate()?;
-        let app = ApplicationConfig::from(deployment);
-        let content = match &deployment.target {
-            SeedApplicationTarget::Page {
-                content, format, ..
-            } => {
-                let bytes = match format {
-                    PageFormat::Binary => decode_page_binary_content(content).map_err(|error| {
-                        StorageError::Invalid(format!(
-                            "binary page content must be base64: {error}"
-                        ))
-                    })?,
-                    PageFormat::Html | PageFormat::Markdown => content.as_bytes().to_vec(),
-                };
-                Some(self.write_content_file(&bytes).await?)
-            }
-            SeedApplicationTarget::ReverseProxy { .. } | SeedApplicationTarget::Static { .. } => {
-                None
-            }
-        };
-
-        Ok(PreparedDeployment { app, content })
-    }
-
     async fn write_content_file(&self, bytes: &[u8]) -> Result<ContentMeta, StorageError> {
         let hash = sha256_hex(bytes);
         let relative = content_relative_path(&hash);
@@ -687,21 +602,6 @@ async fn insert_deployment_tx(
     Ok(())
 }
 
-async fn deployment_exists_tx(
-    tx: &mut Transaction<'_, Sqlite>,
-    project: &str,
-    deployment: &str,
-) -> Result<bool, StorageError> {
-    let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM deployments WHERE project_name = ?1 AND name = ?2",
-    )
-    .bind(project)
-    .bind(deployment)
-    .fetch_one(&mut **tx)
-    .await?;
-    Ok(count > 0)
-}
-
 fn project_from_row(row: &SqliteRow) -> Result<ProjectConfig, StorageError> {
     Ok(ProjectConfig {
         name: row.try_get("name")?,
@@ -781,21 +681,9 @@ fn content_relative_path(hash: &str) -> String {
     format!("{CONTENT_DIR_NAME}/{}/{}", &hash[..2], hash)
 }
 
-fn encode_hex(bytes: impl AsRef<[u8]>) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let bytes = bytes.as_ref();
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{SeedProjectConfig, encode_page_binary_content};
 
     fn temp_data_dir(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -805,119 +693,6 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
-    }
-
-    fn config_with_catalog_seed() -> CatalogSeed {
-        CatalogSeed {
-            share_links: vec![
-                DeploymentShareConfig {
-                    token: "validshare".to_string(),
-                    project: "demo".to_string(),
-                    deployment: "report".to_string(),
-                    password: Some("secret".to_string()),
-                    expires_at: Some(4_102_444_800),
-                },
-                DeploymentShareConfig {
-                    token: "staleshare".to_string(),
-                    project: "demo".to_string(),
-                    deployment: "missing".to_string(),
-                    password: None,
-                    expires_at: None,
-                },
-            ],
-            projects: vec![SeedProjectConfig {
-                name: "demo".to_string(),
-                enabled: true,
-                project_dir: PathBuf::from("."),
-                deployments: vec![
-                    SeedApplicationConfig {
-                        name: "proxy".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::ReverseProxy {
-                            upstream: "http://127.0.0.1:3000".to_string(),
-                            strip_prefix: true,
-                        },
-                    },
-                    SeedApplicationConfig {
-                        name: "static".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::Static {
-                            root: PathBuf::from("dist"),
-                            index_file: "index.html".to_string(),
-                            spa_fallback: true,
-                        },
-                    },
-                    SeedApplicationConfig {
-                        name: "report".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::Page {
-                            content: "# Report".to_string(),
-                            format: PageFormat::Markdown,
-                            media_type: None,
-                            title: Some("Report".to_string()),
-                        },
-                    },
-                    SeedApplicationConfig {
-                        name: "snapshot".to_string(),
-                        enabled: true,
-                        target: SeedApplicationTarget::Page {
-                            content: encode_page_binary_content(b"png bytes"),
-                            format: PageFormat::Binary,
-                            media_type: Some("image/png".to_string()),
-                            title: Some("Snapshot".to_string()),
-                        },
-                    },
-                ],
-            }],
-        }
-    }
-
-    #[tokio::test]
-    async fn imports_config_catalog_seed_once_and_skips_stale_shares() {
-        let store = CatalogStore::open_for_tests(temp_data_dir("seed"))
-            .await
-            .unwrap();
-        let config = config_with_catalog_seed();
-
-        store.import_config_seed_if_needed(&config).await.unwrap();
-        store.import_config_seed_if_needed(&config).await.unwrap();
-
-        let counts = store.counts().await.unwrap();
-        assert_eq!(counts.project_count, 1);
-        assert_eq!(counts.deployment_count, 4);
-        assert_eq!(counts.share_link_count, 1);
-        assert!(store.config_seed_imported().await.unwrap());
-
-        let project = store.get_project("demo").await.unwrap().unwrap();
-        assert_eq!(project.deployments.len(), 4);
-        assert!(matches!(
-            project.deployments[0].target,
-            ApplicationTarget::ReverseProxy { .. }
-        ));
-        assert!(matches!(
-            project.deployments[1].target,
-            ApplicationTarget::Static { .. }
-        ));
-
-        let report = store
-            .get_page_content("demo", "report")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(report.bytes, b"# Report");
-        assert_eq!(report.format, PageFormat::Markdown);
-        assert_eq!(report.title.as_deref(), Some("Report"));
-
-        let snapshot = store
-            .get_page_content("demo", "snapshot")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(snapshot.bytes, b"png bytes");
-        assert_eq!(snapshot.media_type.as_deref(), Some("image/png"));
-
-        assert!(store.get_share("validshare").await.unwrap().is_some());
-        assert!(store.get_share("staleshare").await.unwrap().is_none());
     }
 
     #[tokio::test]

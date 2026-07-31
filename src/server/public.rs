@@ -128,7 +128,11 @@ pub(super) use api::{
     public_api_session, public_root_terminal_ws, public_terminal_ws, public_ui_archive_project,
     public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
 };
-pub(super) use serve::public_entry;
+pub(super) use serve::{
+    public_deployment, public_home, public_not_found, public_project_diff, public_project_files,
+    public_project_home, public_project_terminal, public_root_desktop, public_root_terminal,
+    public_share, public_share_not_found,
+};
 
 #[cfg(test)]
 pub(super) use models::public_project_detail;

@@ -134,20 +134,7 @@ fn scoped_terminal_info_response(
     }
 }
 
-pub(super) async fn execute_root_terminal_command(
-    command_text: String,
-) -> PublicTerminalCommandResponse {
-    execute_terminal_command_in(None, command_text).await
-}
-
 pub(super) async fn execute_terminal_command(
-    project_dir: &Path,
-    command_text: String,
-) -> PublicTerminalCommandResponse {
-    execute_terminal_command_in(Some(project_dir), command_text).await
-}
-
-async fn execute_terminal_command_in(
     project_dir: Option<&Path>,
     command_text: String,
 ) -> PublicTerminalCommandResponse {

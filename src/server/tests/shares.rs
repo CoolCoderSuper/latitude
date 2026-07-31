@@ -2,9 +2,9 @@ use super::*;
 
 #[tokio::test]
 async fn public_api_manages_deployment_shares() {
-    let state = test_state_with_seed(
+    let state = test_state_with_fixture(
         BootConfig::default(),
-        demo_seed(vec![seed_static(
+        demo_fixture(vec![fixture_static(
             "website",
             PathBuf::from("."),
             "index.html",
@@ -44,9 +44,9 @@ async fn public_api_manages_deployment_shares() {
 
 #[tokio::test]
 async fn share_ui_exchanges_html_fragments() {
-    let state = test_state_with_seed(
+    let state = test_state_with_fixture(
         BootConfig::default(),
-        demo_seed(vec![seed_static(
+        demo_fixture(vec![fixture_static(
             "website",
             PathBuf::from("."),
             "index.html",
@@ -139,8 +139,8 @@ async fn public_share_management_requires_authentication() {
 
 #[tokio::test]
 async fn serves_unprotected_deployment_share_without_public_auth() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
+    let seed = demo_fixture_with_shares(
+        vec![fixture_page(
             "report",
             "# Shared Report",
             PageFormat::Markdown,
@@ -155,13 +155,13 @@ async fn serves_unprotected_deployment_share_without_public_auth() {
             expires_at: None,
         }],
     );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state_with_fixture(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/open123/")
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let rendered = String::from_utf8(body.to_vec()).unwrap();
@@ -172,8 +172,8 @@ async fn serves_unprotected_deployment_share_without_public_auth() {
 
 #[tokio::test]
 async fn password_protected_deployment_share_sets_scoped_cookie() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
+    let seed = demo_fixture_with_shares(
+        vec![fixture_page(
             "report",
             "# Locked Report",
             PageFormat::Markdown,
@@ -188,13 +188,13 @@ async fn password_protected_deployment_share_sets_scoped_cookie() {
             expires_at: None,
         }],
     );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state_with_fixture(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/locked123/")
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state.clone()), req).await;
+    let response = public_response(state.clone(), req).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let rendered = String::from_utf8(body.to_vec()).unwrap();
@@ -208,7 +208,7 @@ async fn password_protected_deployment_share_sets_scoped_cookie() {
             "password=secret&next=%2F__latitude%2Fshare%2Flocked123%2F",
         ))
         .unwrap();
-    let response = public_entry(State(state.clone()), req).await;
+    let response = public_response(state.clone(), req).await;
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
         response
@@ -231,7 +231,7 @@ async fn password_protected_deployment_share_sets_scoped_cookie() {
         .header(header::COOKIE, cookie)
         .body(Body::empty())
         .unwrap();
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let rendered = String::from_utf8(body.to_vec()).unwrap();
@@ -241,8 +241,8 @@ async fn password_protected_deployment_share_sets_scoped_cookie() {
 
 #[tokio::test]
 async fn expired_deployment_share_returns_gone() {
-    let seed = demo_seed_with_shares(
-        vec![seed_page(
+    let seed = demo_fixture_with_shares(
+        vec![fixture_page(
             "report",
             "# Old Report",
             PageFormat::Markdown,
@@ -257,12 +257,12 @@ async fn expired_deployment_share_returns_gone() {
             expires_at: Some(1),
         }],
     );
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state_with_fixture(BootConfig::default(), seed).await;
     let req = Request::builder()
         .uri("/__latitude/share/expired123/")
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::GONE);
 }

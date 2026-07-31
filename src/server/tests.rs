@@ -16,9 +16,9 @@ use tower::ServiceExt;
 use crate::{
     command_protocol::CreateDeploymentShareRequest,
     config::{
-        ApplicationConfig, ApplicationTarget, BootConfig, CatalogSeed, DeploymentShareConfig,
-        DesktopConfig, PageFormat, ProjectConfig, SeedApplicationConfig, SeedApplicationTarget,
-        SeedProjectConfig, T3CodeConfig, decode_page_binary_content, encode_page_binary_content,
+        ApplicationConfig, ApplicationTarget, BootConfig, DeploymentShareConfig, DesktopConfig,
+        PageFormat, ProjectConfig, T3CodeConfig, decode_page_binary_content,
+        encode_page_binary_content,
     },
     desktop::DesktopInfoResponse,
     state::AppState,
@@ -50,12 +50,12 @@ use super::{
         render_project_page_content,
     },
     paths::{
-        ProjectPath, display_path, filtered_cookie_header, join_upstream_url, resolve_project_path,
-        sanitized_relative_path, split_project_path,
+        display_path, filtered_cookie_header, join_upstream_url, resolve_project_path,
+        sanitized_relative_path,
     },
     public::{
         ShareUiForm, public_api_create_share, public_api_delete_share, public_api_list_shares,
-        public_entry, public_project_detail, public_ui_create_share, public_ui_delete_share,
+        public_project_detail, public_ui_create_share, public_ui_delete_share,
         public_ui_get_shares,
     },
     public_router,
@@ -70,11 +70,52 @@ use super::{
 
 const TEST_HOSTNAME: &str = "test-host";
 
-async fn test_state(config: BootConfig) -> AppState {
-    test_state_with_seed(config, CatalogSeed::default()).await
+#[derive(Default)]
+struct CatalogFixture {
+    share_links: Vec<DeploymentShareConfig>,
+    projects: Vec<ProjectFixture>,
 }
 
-async fn test_state_with_seed(config: BootConfig, seed: CatalogSeed) -> AppState {
+struct ProjectFixture {
+    name: String,
+    enabled: bool,
+    project_dir: PathBuf,
+    deployments: Vec<DeploymentFixture>,
+}
+
+struct DeploymentFixture {
+    name: String,
+    enabled: bool,
+    target: DeploymentTargetFixture,
+}
+
+enum DeploymentTargetFixture {
+    ReverseProxy {
+        upstream: String,
+        strip_prefix: bool,
+    },
+    Static {
+        root: PathBuf,
+        index_file: String,
+        spa_fallback: bool,
+    },
+    Page {
+        content: String,
+        format: PageFormat,
+        media_type: Option<String>,
+        title: Option<String>,
+    },
+}
+
+async fn public_response(state: AppState, request: Request<Body>) -> axum::response::Response {
+    public_router(state).oneshot(request).await.unwrap()
+}
+
+async fn test_state(config: BootConfig) -> AppState {
+    test_state_with_fixture(config, CatalogFixture::default()).await
+}
+
+async fn test_state_with_fixture(config: BootConfig, fixture: CatalogFixture) -> AppState {
     let data_dir = std::env::temp_dir().join(format!(
         "latitude-test-data-{}",
         std::time::SystemTime::now()
@@ -83,21 +124,101 @@ async fn test_state_with_seed(config: BootConfig, seed: CatalogSeed) -> AppState
             .as_nanos()
     ));
     let catalog = CatalogStore::open_for_tests(data_dir).await.unwrap();
-    catalog.import_config_seed_if_needed(&seed).await.unwrap();
+    install_fixture(&catalog, fixture).await;
     AppState::new(PathBuf::from("latitude.test.json"), config, catalog)
 }
 
-fn demo_seed(deployments: Vec<SeedApplicationConfig>) -> CatalogSeed {
-    demo_seed_with_shares(deployments, Vec::new())
+async fn install_fixture(catalog: &CatalogStore, fixture: CatalogFixture) {
+    for project in fixture.projects {
+        let mut deployments = Vec::new();
+        let mut pages = Vec::new();
+        for deployment in project.deployments {
+            match deployment.target {
+                DeploymentTargetFixture::ReverseProxy {
+                    upstream,
+                    strip_prefix,
+                } => deployments.push(ApplicationConfig {
+                    name: deployment.name,
+                    enabled: deployment.enabled,
+                    target: ApplicationTarget::ReverseProxy {
+                        upstream,
+                        strip_prefix,
+                    },
+                }),
+                DeploymentTargetFixture::Static {
+                    root,
+                    index_file,
+                    spa_fallback,
+                } => deployments.push(ApplicationConfig {
+                    name: deployment.name,
+                    enabled: deployment.enabled,
+                    target: ApplicationTarget::Static {
+                        root,
+                        index_file,
+                        spa_fallback,
+                    },
+                }),
+                DeploymentTargetFixture::Page {
+                    content,
+                    format,
+                    media_type,
+                    title,
+                } => pages.push((deployment.name, content, format, media_type, title)),
+            }
+        }
+        let project_name = project.name.clone();
+        catalog
+            .create_project(ProjectConfig {
+                name: project.name,
+                enabled: project.enabled,
+                project_dir: project.project_dir,
+                deployments,
+            })
+            .await
+            .unwrap();
+        for (name, content, format, media_type, title) in pages {
+            let bytes = if format == PageFormat::Binary {
+                decode_page_binary_content(&content).unwrap()
+            } else {
+                content.into_bytes()
+            };
+            catalog
+                .upsert_page(&project_name, &name, format, media_type, title, bytes)
+                .await
+                .unwrap();
+        }
+    }
+    for share in fixture.share_links {
+        catalog.insert_share_for_tests(&share).await.unwrap();
+    }
 }
 
-fn demo_seed_with_shares(
-    deployments: Vec<SeedApplicationConfig>,
+#[tokio::test]
+async fn public_pages_render_login_challenge_without_authentication() {
+    let response = public_response(
+        test_state(BootConfig::default()).await,
+        Request::builder().uri("/").body(Body::empty()).unwrap(),
+    )
+    .await;
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "text/html; charset=utf-8"
+    );
+}
+
+fn demo_fixture(deployments: Vec<DeploymentFixture>) -> CatalogFixture {
+    demo_fixture_with_shares(deployments, Vec::new())
+}
+
+fn demo_fixture_with_shares(
+    deployments: Vec<DeploymentFixture>,
     share_links: Vec<DeploymentShareConfig>,
-) -> CatalogSeed {
-    CatalogSeed {
+) -> CatalogFixture {
+    CatalogFixture {
         share_links,
-        projects: vec![SeedProjectConfig {
+        projects: vec![ProjectFixture {
             name: "demo".to_string(),
             enabled: true,
             project_dir: PathBuf::from("."),
@@ -106,17 +227,17 @@ fn demo_seed_with_shares(
     }
 }
 
-fn seed_page(
+fn fixture_page(
     name: &str,
     content: &str,
     format: PageFormat,
     media_type: Option<&str>,
     title: Option<&str>,
-) -> SeedApplicationConfig {
-    SeedApplicationConfig {
+) -> DeploymentFixture {
+    DeploymentFixture {
         name: name.to_string(),
         enabled: true,
-        target: SeedApplicationTarget::Page {
+        target: DeploymentTargetFixture::Page {
             content: content.to_string(),
             format,
             media_type: media_type.map(str::to_string),
@@ -125,11 +246,11 @@ fn seed_page(
     }
 }
 
-fn seed_static(name: &str, root: PathBuf, index_file: &str) -> SeedApplicationConfig {
-    SeedApplicationConfig {
+fn fixture_static(name: &str, root: PathBuf, index_file: &str) -> DeploymentFixture {
+    DeploymentFixture {
         name: name.to_string(),
         enabled: true,
-        target: SeedApplicationTarget::Static {
+        target: DeploymentTargetFixture::Static {
             root,
             index_file: index_file.to_string(),
             spa_fallback: false,
@@ -137,49 +258,15 @@ fn seed_static(name: &str, root: PathBuf, index_file: &str) -> SeedApplicationCo
     }
 }
 
-fn seed_reverse_proxy(name: &str, upstream: String) -> SeedApplicationConfig {
-    SeedApplicationConfig {
+fn fixture_reverse_proxy(name: &str, upstream: String) -> DeploymentFixture {
+    DeploymentFixture {
         name: name.to_string(),
         enabled: true,
-        target: SeedApplicationTarget::ReverseProxy {
+        target: DeploymentTargetFixture::ReverseProxy {
             upstream,
             strip_prefix: true,
         },
     }
-}
-
-#[test]
-fn splits_project_home_and_deployment_paths() {
-    assert_eq!(
-        split_project_path("/demo/website1/about"),
-        Some(ProjectPath::Deployment {
-            project: "demo".to_string(),
-            deployment: "website1".to_string(),
-            remainder: "/about".to_string()
-        })
-    );
-    assert_eq!(
-        split_project_path("/demo/website1"),
-        Some(ProjectPath::Deployment {
-            project: "demo".to_string(),
-            deployment: "website1".to_string(),
-            remainder: "/".to_string()
-        })
-    );
-    assert_eq!(
-        split_project_path("/demo"),
-        Some(ProjectPath::Project {
-            project: "demo".to_string()
-        })
-    );
-    assert_eq!(
-        split_project_path("/demo/"),
-        Some(ProjectPath::Project {
-            project: "demo".to_string()
-        })
-    );
-    assert_eq!(split_project_path("/demo//website1"), None);
-    assert_eq!(split_project_path("/"), None);
 }
 
 #[test]
@@ -237,7 +324,7 @@ async fn authenticates_public_requests_with_bearer_token() {
 #[tokio::test]
 async fn t3code_embed_session_authenticates_the_browser_and_carries_theme() {
     let config = BootConfig::default();
-    let state = test_state_with_seed(config.clone(), demo_seed(Vec::new())).await;
+    let state = test_state_with_fixture(config.clone(), demo_fixture(Vec::new())).await;
     let response = create_t3code_embed_session(
         State(state.clone()),
         axum::Json(T3CodeEmbedSessionRequest {
@@ -298,7 +385,7 @@ async fn t3code_session_cookie_does_not_hide_open_action_from_normal_pages() {
         },
         ..BootConfig::default()
     };
-    let state = test_state_with_seed(config.clone(), demo_seed(Vec::new())).await;
+    let state = test_state_with_fixture(config.clone(), demo_fixture(Vec::new())).await;
     let auth = state.public_auth_cookie_value(&config.public_password);
     let request = Request::builder()
         .uri("/demo")
@@ -310,7 +397,7 @@ async fn t3code_session_cookie_does_not_hide_open_action_from_normal_pages() {
         )
         .body(Body::empty())
         .unwrap();
-    let response = public_entry(State(state), request).await;
+    let response = public_response(state, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let rendered = String::from_utf8(body.to_vec()).unwrap();
@@ -338,12 +425,12 @@ fn filters_public_auth_cookie_from_proxy_headers() {
     let value = HeaderValue::from_static("app=one; latitude_public_session=secret; theme=dark");
 
     assert_eq!(
-        filtered_cookie_header(&value, AUTH_COOKIE_NAME).as_deref(),
+        filtered_cookie_header(&value, &[AUTH_COOKIE_NAME]).as_deref(),
         Some("app=one; theme=dark")
     );
 
     let value = HeaderValue::from_static("latitude_public_session=secret");
-    assert_eq!(filtered_cookie_header(&value, AUTH_COOKIE_NAME), None);
+    assert_eq!(filtered_cookie_header(&value, &[AUTH_COOKIE_NAME]), None);
 }
 
 #[test]
@@ -506,9 +593,9 @@ async fn reverse_proxy_streams_upstream_chunks_without_waiting_for_completion() 
     });
 
     let config = BootConfig::default();
-    let state = test_state_with_seed(
+    let state = test_state_with_fixture(
         config.clone(),
-        demo_seed(vec![seed_reverse_proxy(
+        demo_fixture(vec![fixture_reverse_proxy(
             "live",
             format!("http://{address}"),
         )]),
@@ -520,7 +607,7 @@ async fn reverse_proxy_streams_upstream_chunks_without_waiting_for_completion() 
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
         .unwrap();
-    let response = public_entry(State(state), request).await;
+    let response = public_response(state, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body().into_data_stream();
     let first = timeout(Duration::from_secs(1), body.next())
@@ -597,22 +684,7 @@ fn infers_html_for_raw_html_payload() {
 
 #[tokio::test]
 async fn command_config_response_is_boot_only() {
-    let seed = CatalogSeed {
-        projects: vec![SeedProjectConfig {
-            name: "demo".to_string(),
-            enabled: true,
-            project_dir: PathBuf::from("."),
-            deployments: Vec::new(),
-        }],
-        share_links: vec![DeploymentShareConfig {
-            token: "abc123".to_string(),
-            project: "demo".to_string(),
-            deployment: "missing".to_string(),
-            password: None,
-            expires_at: None,
-        }],
-    };
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state(BootConfig::default()).await;
 
     let response = get_config(State(state)).await.into_response();
     assert_eq!(response.status(), StatusCode::OK);
@@ -665,16 +737,16 @@ async fn command_project_create_discovers_the_requested_worktree_without_creatin
         ],
     );
 
-    let seed = CatalogSeed {
-        projects: vec![SeedProjectConfig {
+    let seed = CatalogFixture {
+        projects: vec![ProjectFixture {
             name: "demo".to_string(),
             enabled: true,
             project_dir: repository_dir,
             deployments: Vec::new(),
         }],
-        ..CatalogSeed::default()
+        ..CatalogFixture::default()
     };
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state_with_fixture(BootConfig::default(), seed).await;
 
     let response = create_project(
         State(state.clone()),
@@ -705,15 +777,15 @@ async fn command_project_create_discovers_the_requested_worktree_without_creatin
 
 #[tokio::test]
 async fn command_deployment_response_omits_page_content_and_content_endpoint_returns_bytes() {
-    let seed = CatalogSeed {
-        projects: vec![SeedProjectConfig {
+    let seed = CatalogFixture {
+        projects: vec![ProjectFixture {
             name: "demo".to_string(),
             enabled: true,
             project_dir: PathBuf::from("."),
-            deployments: vec![SeedApplicationConfig {
+            deployments: vec![DeploymentFixture {
                 name: "report".to_string(),
                 enabled: true,
-                target: SeedApplicationTarget::Page {
+                target: DeploymentTargetFixture::Page {
                     content: "# Report".to_string(),
                     format: PageFormat::Markdown,
                     media_type: None,
@@ -721,9 +793,9 @@ async fn command_deployment_response_omits_page_content_and_content_endpoint_ret
                 },
             }],
         }],
-        ..CatalogSeed::default()
+        ..CatalogFixture::default()
     };
-    let state = test_state_with_seed(BootConfig::default(), seed).await;
+    let state = test_state_with_fixture(BootConfig::default(), seed).await;
 
     let response = get_project_deployment(
         axum::extract::Path(("demo".to_string(), "report".to_string())),
@@ -886,14 +958,14 @@ fn renders_project_home_with_enabled_deployments() {
 #[tokio::test]
 async fn serves_binary_page_document_shell_by_default() {
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_page(
+    let seed = demo_fixture(vec![fixture_page(
         "snapshot",
         &encode_page_binary_content(b"png bytes"),
         PageFormat::Binary,
         Some("image/png"),
         None,
     )]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -901,7 +973,7 @@ async fn serves_binary_page_document_shell_by_default() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -921,14 +993,14 @@ async fn serves_binary_page_document_shell_by_default() {
 #[tokio::test]
 async fn serves_binary_page_document_shell_for_media_accept_requests() {
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_page(
+    let seed = demo_fixture(vec![fixture_page(
         "snapshot",
         &encode_page_binary_content(b"png bytes"),
         PageFormat::Binary,
         Some("image/png"),
         Some("Build Snapshot"),
     )]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -937,7 +1009,7 @@ async fn serves_binary_page_document_shell_for_media_accept_requests() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -957,14 +1029,14 @@ async fn serves_binary_page_document_shell_for_media_accept_requests() {
 #[tokio::test]
 async fn serves_binary_page_document_raw_query_with_media_type() {
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_page(
+    let seed = demo_fixture(vec![fixture_page(
         "snapshot",
         &encode_page_binary_content(b"png bytes"),
         PageFormat::Binary,
         Some("image/png"),
         Some("Build Snapshot"),
     )]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot?raw=1")
@@ -973,7 +1045,7 @@ async fn serves_binary_page_document_raw_query_with_media_type() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1000,8 +1072,12 @@ async fn serves_static_media_document_shell_by_default() {
     std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
 
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_static("snapshot", root.clone(), "snapshot.png")]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let seed = demo_fixture(vec![fixture_static(
+        "snapshot",
+        root.clone(),
+        "snapshot.png",
+    )]);
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot")
@@ -1009,7 +1085,7 @@ async fn serves_static_media_document_shell_by_default() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1041,8 +1117,12 @@ async fn serves_static_media_document_raw_query_with_media_type() {
     std::fs::write(root.join("snapshot.png"), b"png bytes").unwrap();
 
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_static("snapshot", root.clone(), "snapshot.png")]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let seed = demo_fixture(vec![fixture_static(
+        "snapshot",
+        root.clone(),
+        "snapshot.png",
+    )]);
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/snapshot?raw=1")
@@ -1050,7 +1130,7 @@ async fn serves_static_media_document_raw_query_with_media_type() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1079,8 +1159,8 @@ async fn serves_static_site_without_document_shell() {
     std::fs::write(root.join("index.html"), b"<!doctype html><h1>Site</h1>").unwrap();
 
     let config = BootConfig::default();
-    let seed = demo_seed(vec![seed_static("website", root.clone(), "index.html")]);
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let seed = demo_fixture(vec![fixture_static("website", root.clone(), "index.html")]);
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .uri("/demo/website")
@@ -1088,7 +1168,7 @@ async fn serves_static_site_without_document_shell() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1441,9 +1521,9 @@ async fn authenticated_file_ui_saves_with_html_fragment_response() {
     std::fs::create_dir_all(&project_dir).unwrap();
     let file_path = project_dir.join("note.txt");
     std::fs::write(&file_path, "before").unwrap();
-    let seed = CatalogSeed {
+    let seed = CatalogFixture {
         share_links: Vec::new(),
-        projects: vec![SeedProjectConfig {
+        projects: vec![ProjectFixture {
             name: "demo".to_string(),
             enabled: true,
             project_dir,
@@ -1451,7 +1531,7 @@ async fn authenticated_file_ui_saves_with_html_fragment_response() {
         }],
     };
     let config = BootConfig::default();
-    let state = test_state_with_seed(config.clone(), seed).await;
+    let state = test_state_with_fixture(config.clone(), seed).await;
     let token = state.public_auth_cookie_value(&config.public_password);
     let req = Request::builder()
         .method("PUT")
@@ -1579,7 +1659,7 @@ async fn serves_root_terminal_viewer() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1613,7 +1693,7 @@ async fn serves_root_desktop_viewer_when_enabled() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response
@@ -1641,7 +1721,7 @@ async fn root_desktop_viewer_returns_not_found_when_disabled() {
         .body(Body::empty())
         .unwrap();
 
-    let response = public_entry(State(state), req).await;
+    let response = public_response(state, req).await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 

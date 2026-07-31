@@ -1,26 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
+use crate::util::strip_windows_extended_path;
 use percent_encoding::percent_decode_str;
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum ProjectPath {
-    Project {
-        project: String,
-    },
-    Deployment {
-        project: String,
-        deployment: String,
-        remainder: String,
-    },
-}
-
-impl ProjectPath {
-    pub(super) fn project_name(&self) -> &str {
-        match self {
-            Self::Project { project } | Self::Deployment { project, .. } => project,
-        }
-    }
-}
 
 pub(super) fn resolve_project_path(project_dir: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
@@ -28,41 +9,6 @@ pub(super) fn resolve_project_path(project_dir: &Path, path: &Path) -> PathBuf {
     } else {
         project_dir.join(path)
     }
-}
-
-pub(super) fn split_project_path(path: &str) -> Option<ProjectPath> {
-    let path = path.trim_start_matches('/');
-    if path.is_empty() {
-        return None;
-    }
-
-    let mut segments = path.splitn(3, '/');
-    let project = segments.next()?.to_string();
-    if project.is_empty() {
-        return None;
-    }
-
-    let Some(deployment) = segments.next() else {
-        return Some(ProjectPath::Project { project });
-    };
-    if deployment.is_empty() {
-        return if segments.next().is_some() {
-            None
-        } else {
-            Some(ProjectPath::Project { project })
-        };
-    }
-
-    let remainder = segments
-        .next()
-        .map(|rest| format!("/{rest}"))
-        .unwrap_or_else(|| "/".to_string());
-
-    Some(ProjectPath::Deployment {
-        project,
-        deployment: deployment.to_string(),
-        remainder,
-    })
 }
 
 pub(super) fn join_upstream_url(
@@ -106,24 +52,9 @@ pub(super) fn sanitized_relative_path(path: &str) -> Option<PathBuf> {
     Some(output)
 }
 
-pub(super) fn is_hop_by_hop_header(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-    )
-}
-
-#[cfg(test)]
 pub(super) fn filtered_cookie_header(
     value: &axum::http::HeaderValue,
-    excluded_name: &str,
+    excluded_names: &[&str],
 ) -> Option<String> {
     let raw = value.to_str().ok()?;
     let cookies = raw
@@ -131,7 +62,7 @@ pub(super) fn filtered_cookie_header(
         .filter_map(|cookie| {
             let cookie = cookie.trim();
             let (name, _) = cookie.split_once('=')?;
-            if name.trim() == excluded_name {
+            if excluded_names.contains(&name.trim()) {
                 None
             } else {
                 Some(cookie.to_string())
@@ -148,18 +79,5 @@ pub(super) fn filtered_cookie_header(
 
 pub(super) fn display_path(path: &Path) -> String {
     let path = path.display().to_string();
-    strip_windows_extended_path_text(&path).into_owned()
-}
-
-fn strip_windows_extended_path_text(path: &str) -> std::borrow::Cow<'_, str> {
-    const EXTENDED_UNC_PREFIX: &str = "\\\\?\\UNC\\";
-    const EXTENDED_PATH_PREFIX: &str = "\\\\?\\";
-
-    if let Some(stripped) = path.strip_prefix(EXTENDED_UNC_PREFIX) {
-        return std::borrow::Cow::Owned(format!("\\\\{stripped}"));
-    }
-
-    path.strip_prefix(EXTENDED_PATH_PREFIX)
-        .map(std::borrow::Cow::Borrowed)
-        .unwrap_or_else(|| std::borrow::Cow::Borrowed(path))
+    strip_windows_extended_path(&path).into_owned()
 }

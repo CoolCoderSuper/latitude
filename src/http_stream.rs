@@ -10,6 +10,42 @@ use tokio::{
 };
 use tokio_util::io::ReaderStream;
 
+pub(crate) fn streaming_request_body(body: Body) -> reqwest::Body {
+    reqwest::Body::wrap_stream(body.into_data_stream())
+}
+
+pub(crate) fn streaming_http_response(upstream: reqwest::Response) -> Response<Body> {
+    let status = upstream.status();
+    let mut response = Response::builder().status(status);
+    for (name, value) in upstream.headers() {
+        if !is_hop_by_hop_header(name.as_str()) {
+            response = response.header(name, value);
+        }
+    }
+    response
+        .body(Body::from_stream(upstream.bytes_stream()))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from("internal server error\n"))
+                .expect("static response should be valid")
+        })
+}
+
+pub(crate) fn is_hop_by_hop_header(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "connection"
+            | "keep-alive"
+            | "proxy-authenticate"
+            | "proxy-authorization"
+            | "te"
+            | "trailer"
+            | "transfer-encoding"
+            | "upgrade"
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ByteRange {
     start: u64,
