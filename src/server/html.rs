@@ -2,6 +2,28 @@ use maud::{DOCTYPE, Markup, html};
 
 use super::assets::{COMMON_THEME_STYLE_HREF, THEME_BOOTSTRAP_SCRIPT_SRC, THEME_TOGGLE_SCRIPT_SRC};
 
+pub(super) struct PageHeader<'a> {
+    pub(super) class_name: Option<&'a str>,
+    pub(super) back_href: &'a str,
+    pub(super) back_label: &'a str,
+    pub(super) heading: &'a str,
+    pub(super) description: &'a str,
+    pub(super) path: Option<&'a str>,
+}
+
+pub(super) fn page_header(header: PageHeader<'_>) -> Markup {
+    html! {
+        header class=[header.class_name] {
+            a href=(header.back_href) { (header.back_label) }
+            h1 { (header.heading) }
+            p { (header.description) }
+            @if let Some(path) = header.path {
+                p class="project-path" { (path) }
+            }
+        }
+    }
+}
+
 pub(super) fn document(
     title: &str,
     device_hostname: &str,

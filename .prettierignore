@@ -1,0 +1,3 @@
+src/server/assets/*.bundle.js
+src/server/assets/*.bundle.css
+src/server/assets/htmx.min.js

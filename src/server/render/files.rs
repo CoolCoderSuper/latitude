@@ -12,6 +12,9 @@ pub(in crate::server) fn render_project_files(
     project: &ProjectConfig,
     device_hostname: &str,
 ) -> String {
+    let project_path = display_path(&project.project_dir);
+    let description = format!("{} on {device_hostname}", project.name);
+
     html_page::document(
         &format!("{} files - Latitude", project.name),
         device_hostname,
@@ -19,12 +22,14 @@ pub(in crate::server) fn render_project_files(
         html! { script src=(HTMX_SCRIPT_SRC) {} },
         html! {
             main class="files-page" data-file-workspace data-api-url=(format!("/__latitude/api/projects/{}/files", project.name)) {
-                header class="files-header" {
-                    a href=(format!("/{}", project.name)) { "Back to project" }
-                    h1 { "Files" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&project.project_dir)) }
-                }
+                (html_page::page_header(html_page::PageHeader {
+                    class_name: Some("files-header"),
+                    back_href: &format!("/{}", project.name),
+                    back_label: "Back to project",
+                    heading: "Files",
+                    description: &description,
+                    path: Some(&project_path),
+                }))
                 div class="file-workspace" {
                     aside class="file-sidebar" {
                         div class="file-search-actions" {

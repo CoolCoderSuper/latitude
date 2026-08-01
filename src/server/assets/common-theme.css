@@ -1,3 +1,43 @@
+:root,
+:root[data-latitude-theme='light'] {
+  color-scheme: light;
+  --latitude-color-canvas: #f7f8fb;
+  --latitude-color-surface: #ffffff;
+  --latitude-color-surface-muted: #eef2f6;
+  --latitude-color-text: #1c2433;
+  --latitude-color-heading: #111827;
+  --latitude-color-muted: #526173;
+  --latitude-color-accent: #0f766e;
+  --latitude-color-accent-strong: #115e59;
+  --latitude-color-border: #d7dde8;
+  --latitude-color-border-strong: #b7c1cf;
+  --latitude-color-danger: #b42318;
+  --latitude-color-focus: #0d9488;
+  --latitude-shadow-floating: 0 10px 28px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-latitude-theme='dark'] {
+  color-scheme: dark;
+  --latitude-color-canvas: #10141d;
+  --latitude-color-surface: #151c28;
+  --latitude-color-surface-muted: #1b2432;
+  --latitude-color-text: #dbe4ef;
+  --latitude-color-heading: #f8fafc;
+  --latitude-color-muted: #aeb9c7;
+  --latitude-color-accent: #2aa79c;
+  --latitude-color-accent-strong: #6dd4ca;
+  --latitude-color-border: #2f3a4a;
+  --latitude-color-border-strong: #465568;
+  --latitude-color-danger: #ff8b7b;
+  --latitude-color-focus: #5eead4;
+  --latitude-shadow-floating: 0 10px 28px rgba(0, 0, 0, 0.32);
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid var(--latitude-color-focus);
+  outline-offset: 2px;
+}
+
 .latitude-theme-toggle {
   position: fixed;
   top: 14px;
@@ -10,23 +50,23 @@
   min-width: 38px;
   min-height: 38px;
   box-sizing: border-box;
-  border: 1px solid #b7c1cf;
+  border: 1px solid var(--latitude-color-border-strong);
   border-radius: 8px;
   padding: 0;
-  color: #1c2433;
-  background: #ffffff;
+  color: var(--latitude-color-text);
+  background: var(--latitude-color-surface);
   cursor: pointer;
-  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+  box-shadow: var(--latitude-shadow-floating);
 }
 
-:root[data-latitude-t3code-embed="true"] .latitude-theme-toggle,
-:root[data-latitude-t3code-embed="true"] [data-t3code-open] {
+:root[data-latitude-t3code-embed='true'] .latitude-theme-toggle,
+:root[data-latitude-t3code-embed='true'] [data-t3code-open] {
   display: none;
 }
 
 .latitude-theme-toggle:hover {
-  border-color: #0f766e;
-  color: #0f766e;
+  border-color: var(--latitude-color-accent);
+  color: var(--latitude-color-accent);
 }
 
 .latitude-theme-header {
@@ -56,29 +96,23 @@
   display: none;
 }
 
-.latitude-theme-toggle[data-latitude-theme-current="dark"] .latitude-theme-icon-moon {
+.latitude-theme-toggle[data-latitude-theme-current='dark']
+  .latitude-theme-icon-moon {
   display: none;
 }
 
-.latitude-theme-toggle[data-latitude-theme-current="dark"] .latitude-theme-icon-sun {
+.latitude-theme-toggle[data-latitude-theme-current='dark']
+  .latitude-theme-icon-sun {
   display: block;
 }
 
-:root[data-latitude-theme="light"] {
-  color-scheme: light;
+:root[data-latitude-theme='dark'] .latitude-theme-toggle {
+  border-color: var(--latitude-color-border);
+  color: var(--latitude-color-text);
+  background: var(--latitude-color-surface);
 }
 
-:root[data-latitude-theme="dark"] {
-  color-scheme: dark;
-}
-
-:root[data-latitude-theme="dark"] .latitude-theme-toggle {
-  border-color: #2f3a4a;
-  color: #edf4f1;
-  background: #151c28;
-}
-
-:root[data-latitude-theme="dark"] .latitude-theme-toggle:hover {
-  border-color: #2aa79c;
-  color: #2aa79c;
+:root[data-latitude-theme='dark'] .latitude-theme-toggle:hover {
+  border-color: var(--latitude-color-accent);
+  color: var(--latitude-color-accent);
 }

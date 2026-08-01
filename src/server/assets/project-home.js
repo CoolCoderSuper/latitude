@@ -1,11 +1,16 @@
+import { startVisiblePolling } from './polling.js';
+
 (() => {
-  const shell = document.querySelector('[data-project-shell], [data-server-shell]');
+  const shell = document.querySelector(
+    '[data-project-shell], [data-server-shell]',
+  );
   const dialog = shell?.querySelector('[data-share-dialog]');
   if (!shell) return;
 
   document.addEventListener('htmx:beforeSwap', (event) => {
     const target = event.detail?.target;
-    if (!(target instanceof Element) || !target.matches('[data-project-list]')) return;
+    if (!(target instanceof Element) || !target.matches('[data-project-list]'))
+      return;
 
     const incoming = new DOMParser().parseFromString(
       event.detail.xhr?.responseText || '',
@@ -53,11 +58,13 @@
       const payload = await response.json();
       const projects = projectName ? [payload] : payload.projects;
       projects.forEach((project) => {
-        shell.querySelectorAll('[data-project-git-status]').forEach((container) => {
-          if (container.dataset.projectGitStatus === project.name) {
-            renderGitStatus(container, project);
-          }
-        });
+        shell
+          .querySelectorAll('[data-project-git-status]')
+          .forEach((container) => {
+            if (container.dataset.projectGitStatus === project.name) {
+              renderGitStatus(container, project);
+            }
+          });
       });
     } catch {
       // Keep the current status visible while the server or remote is unavailable.
@@ -68,7 +75,12 @@
 
   function renderGitStatus(container, project) {
     container.replaceChildren();
-    if (!project.git_dirty && project.git_ahead === 0 && project.git_behind === 0) return;
+    if (
+      !project.git_dirty &&
+      project.git_ahead === 0 &&
+      project.git_behind === 0
+    )
+      return;
 
     const badge = document.createElement('span');
     badge.className = 'git-status';
@@ -89,11 +101,21 @@
     }
     if (project.git_behind > 0) {
       labels.push(commitLabel(project.git_behind, 'pull'));
-      appendStat(badge, 'git-behind', `↓${project.git_behind}`, 'Commits to pull');
+      appendStat(
+        badge,
+        'git-behind',
+        `↓${project.git_behind}`,
+        'Commits to pull',
+      );
     }
     if (project.git_ahead > 0) {
       labels.push(commitLabel(project.git_ahead, 'push'));
-      appendStat(badge, 'git-ahead', `↑${project.git_ahead}`, 'Commits to push');
+      appendStat(
+        badge,
+        'git-ahead',
+        `↑${project.git_ahead}`,
+        'Commits to push',
+      );
     }
     badge.setAttribute('aria-label', labels.join(', '));
     badge.title = labels.join(', ');
@@ -112,12 +134,11 @@
     return `${count} ${count === 1 ? 'commit' : 'commits'} to ${action}`;
   }
 
-  window.setInterval(() => void refreshGitStatuses(false, true), 2000);
-  window.setInterval(() => void refreshGitStatuses(true, true), 30000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) void refreshGitStatuses(true);
+  startVisiblePolling(() => refreshGitStatuses(false, true), 2000);
+  startVisiblePolling(() => refreshGitStatuses(true, true), 30000, {
+    immediate: true,
+    runOnVisible: true,
   });
-  void refreshGitStatuses(true);
 
   shell.addEventListener('click', async (event) => {
     const target = event.target instanceof Element ? event.target : null;
@@ -136,7 +157,8 @@
     const shareButton = target?.closest('[data-share-url]');
     if (!shareButton) return;
 
-    const url = new URL(shareButton.dataset.shareUrl, window.location.origin).href;
+    const url = new URL(shareButton.dataset.shareUrl, window.location.origin)
+      .href;
     try {
       if (navigator.share) {
         await navigator.share({ title: 'Latitude share link', url });
@@ -147,7 +169,8 @@
         window.prompt('Copy this share link', url);
       }
     } catch (error) {
-      if (error?.name !== 'AbortError') showStatus('The share link could not be shared.', true);
+      if (error?.name !== 'AbortError')
+        showStatus('The share link could not be shared.', true);
     }
   });
 

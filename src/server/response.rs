@@ -106,7 +106,10 @@ pub(super) fn html_status_response(
     let builder = Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::CONTENT_LENGTH, bytes.len());
+        .header(header::CONTENT_LENGTH, bytes.len())
+        .header(header::CACHE_CONTROL, "no-store")
+        .header("x-content-type-options", "nosniff")
+        .header("referrer-policy", "same-origin");
 
     if method == Method::HEAD {
         builder

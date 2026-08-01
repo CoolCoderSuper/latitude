@@ -1,3 +1,5 @@
+import { startVisiblePolling } from './polling.js';
+
 (() => {
   const workspace = document.querySelector('[data-diff-workspace]');
   if (!workspace) return;
@@ -21,7 +23,8 @@
     return section && path ? `${section}:${path}` : null;
   };
 
-  const requestVerb = (event) => event.detail.requestConfig?.verb?.toLowerCase();
+  const requestVerb = (event) =>
+    event.detail.requestConfig?.verb?.toLowerCase();
 
   workspace.addEventListener('htmx:beforeRequest', (event) => {
     if (requestVerb(event) !== 'patch') return;
@@ -36,7 +39,10 @@
     event.detail.elt.querySelector('button')?.removeAttribute('aria-busy');
     if (!event.detail.successful) return;
 
-    if (event.detail.xhr.status === 200 && applyFileUpdate(event.detail.xhr.responseText)) {
+    if (
+      event.detail.xhr.status === 200 &&
+      applyFileUpdate(event.detail.xhr.responseText)
+    ) {
       hideStatus();
     } else {
       scheduleFullRefresh();
@@ -46,8 +52,8 @@
   workspace.addEventListener('htmx:beforeSwap', (event) => {
     if (requestVerb(event) !== 'get') return;
     if (
-      (!forceNextRefresh && userIsInteracting())
-      || !diffContentChanged(event.detail.xhr?.responseText || '')
+      (!forceNextRefresh && userIsInteracting()) ||
+      !diffContentChanged(event.detail.xhr?.responseText || '')
     ) {
       forceNextRefresh = false;
       event.detail.shouldSwap = false;
@@ -56,7 +62,8 @@
       return;
     }
     forceNextRefresh = false;
-    commitMessage = workspace.querySelector('[data-commit-message]')?.value || '';
+    commitMessage =
+      workspace.querySelector('[data-commit-message]')?.value || '';
     captureSelections();
     openKeys = new Set(
       Array.from(workspace.querySelectorAll('details.file-card[open]'))
@@ -98,14 +105,19 @@
   });
 
   workspace.addEventListener('scroll', () => blockRefreshFor(3000), true);
-  window.addEventListener('scroll', () => blockRefreshFor(3000), { passive: true });
-  workspace.addEventListener('wheel', () => blockRefreshFor(3000), { passive: true });
+  window.addEventListener('scroll', () => blockRefreshFor(3000), {
+    passive: true,
+  });
+  workspace.addEventListener('wheel', () => blockRefreshFor(3000), {
+    passive: true,
+  });
 
   workspace.addEventListener('htmx:responseError', (event) => {
     autoRefreshPending = false;
     forceNextRefresh = false;
-    const message = event.detail.xhr?.responseText?.trim()
-      || 'The Git action could not be completed.';
+    const message =
+      event.detail.xhr?.responseText?.trim() ||
+      'The Git action could not be completed.';
     showStatus(message, true);
   });
 
@@ -115,32 +127,35 @@
     if (!update) return false;
     const path = update.dataset.path;
 
-    update.querySelectorAll('template[data-file-section-update]').forEach((template) => {
-      const section = template.dataset.fileSectionUpdate;
-      const panel = workspace.querySelector(`[data-file-panel="${section}"]`);
-      if (!panel) return;
-      const existing = Array.from(panel.querySelectorAll('details.file-card'))
-        .find((card) => card.dataset.filePath === path);
-      const replacement = template.content.querySelector('details.file-card');
-      const wasOpen = Boolean(existing?.open);
+    update
+      .querySelectorAll('template[data-file-section-update]')
+      .forEach((template) => {
+        const section = template.dataset.fileSectionUpdate;
+        const panel = workspace.querySelector(`[data-file-panel="${section}"]`);
+        if (!panel) return;
+        const existing = Array.from(
+          panel.querySelectorAll('details.file-card'),
+        ).find((card) => card.dataset.filePath === path);
+        const replacement = template.content.querySelector('details.file-card');
+        const wasOpen = Boolean(existing?.open);
 
-      if (existing && replacement) {
-        const next = replacement.cloneNode(true);
-        next.open = wasOpen;
-        existing.replaceWith(next);
-      } else if (existing) {
-        existing.remove();
-      } else if (replacement) {
-        let list = panel.querySelector('.file-list');
-        if (!list) {
-          list = document.createElement('div');
-          list.className = 'file-list';
-          panel.querySelector('.empty')?.replaceWith(list);
+        if (existing && replacement) {
+          const next = replacement.cloneNode(true);
+          next.open = wasOpen;
+          existing.replaceWith(next);
+        } else if (existing) {
+          existing.remove();
+        } else if (replacement) {
+          let list = panel.querySelector('.file-list');
+          if (!list) {
+            list = document.createElement('div');
+            list.className = 'file-list';
+            panel.querySelector('.empty')?.replaceWith(list);
+          }
+          list.append(replacement.cloneNode(true));
         }
-        list.append(replacement.cloneNode(true));
-      }
-      updatePanel(panel);
-    });
+        updatePanel(panel);
+      });
     htmx.process(workspace);
     restoreSelection();
     return true;
@@ -158,7 +173,9 @@
     });
     for (const kind of ['unstaged', 'staged']) {
       selectedPaths[kind] = new Set(
-        Array.from(selectedPaths[kind]).filter((path) => availablePaths[kind].has(path)),
+        Array.from(selectedPaths[kind]).filter((path) =>
+          availablePaths[kind].has(path),
+        ),
       );
     }
     updateSelectionActions();
@@ -167,9 +184,11 @@
   function captureSelections() {
     for (const kind of ['unstaged', 'staged']) {
       selectedPaths[kind] = new Set(
-        Array.from(workspace.querySelectorAll(
-          `[data-file-select][data-selection-kind="${kind}"]:checked`,
-        )).map((checkbox) => checkbox.value),
+        Array.from(
+          workspace.querySelectorAll(
+            `[data-file-select][data-selection-kind="${kind}"]:checked`,
+          ),
+        ).map((checkbox) => checkbox.value),
       );
     }
   }
@@ -183,10 +202,14 @@
     const button = workspace.querySelector(`[data-${actionVerb}-action]`);
     if (!button) return;
     const form = button.closest('form');
-    form.querySelectorAll('[data-selected-path]').forEach((input) => input.remove());
-    const paths = Array.from(workspace.querySelectorAll(
-      `[data-file-select][data-selection-kind="${kind}"]:checked`,
-    )).map((checkbox) => checkbox.value);
+    form
+      .querySelectorAll('[data-selected-path]')
+      .forEach((input) => input.remove());
+    const paths = Array.from(
+      workspace.querySelectorAll(
+        `[data-file-select][data-selection-kind="${kind}"]:checked`,
+      ),
+    ).map((checkbox) => checkbox.value);
     for (const path of paths) {
       const input = document.createElement('input');
       input.type = 'hidden';
@@ -199,9 +222,8 @@
     const action = count > 0 ? `${actionVerb}_selected` : `${actionVerb}_all`;
     button.value = action;
     button.dataset.gitAction = action;
-    button.textContent = count > 0
-      ? `${labelVerb} selected (${count})`
-      : `${labelVerb} all`;
+    button.textContent =
+      count > 0 ? `${labelVerb} selected (${count})` : `${labelVerb} all`;
   }
 
   function diffContentChanged(responseText) {
@@ -211,40 +233,48 @@
 
   function diffSnapshot(root) {
     const overview = root.querySelector('.git-overview')?.outerHTML || '';
-    const collectionError = root.querySelector('[data-git-collection-error]')?.outerHTML || '';
-    const panels = Array.from(root.querySelectorAll('[data-file-panel]')).map((panel) => {
-      const clone = panel.cloneNode(true);
-      clone.querySelectorAll('details[open]').forEach((details) => details.removeAttribute('open'));
-      clone.querySelectorAll('[data-file-select]').forEach((checkbox) => {
-        checkbox.checked = false;
-      });
-      const button = clone.querySelector('[data-stage-action]');
-      if (button) {
-        button.value = 'stage_all';
-        button.dataset.gitAction = 'stage_all';
-        button.textContent = 'Stage all';
-      }
-      return clone.outerHTML;
-    });
+    const collectionError =
+      root.querySelector('[data-git-collection-error]')?.outerHTML || '';
+    const panels = Array.from(root.querySelectorAll('[data-file-panel]')).map(
+      (panel) => {
+        const clone = panel.cloneNode(true);
+        clone
+          .querySelectorAll('details[open]')
+          .forEach((details) => details.removeAttribute('open'));
+        clone.querySelectorAll('[data-file-select]').forEach((checkbox) => {
+          checkbox.checked = false;
+        });
+        const button = clone.querySelector('[data-stage-action]');
+        if (button) {
+          button.value = 'stage_all';
+          button.dataset.gitAction = 'stage_all';
+          button.textContent = 'Stage all';
+        }
+        return clone.outerHTML;
+      },
+    );
     return `${overview}\n${collectionError}\n${panels.join('\n')}`;
   }
 
   function blockRefreshFor(milliseconds) {
-    interactionBlockedUntil = Math.max(interactionBlockedUntil, Date.now() + milliseconds);
+    interactionBlockedUntil = Math.max(
+      interactionBlockedUntil,
+      Date.now() + milliseconds,
+    );
   }
 
   function userIsInteracting() {
     const selection = window.getSelection();
     const selectionIsInsideWorkspace = Boolean(
-      selection
-      && !selection.isCollapsed
-      && selection.anchorNode
-      && workspace.contains(selection.anchorNode),
+      selection &&
+        !selection.isCollapsed &&
+        selection.anchorNode &&
+        workspace.contains(selection.anchorNode),
     );
     return (
-      pointerInteractionActive
-      || Date.now() < interactionBlockedUntil
-      || selectionIsInsideWorkspace
+      pointerInteractionActive ||
+      Date.now() < interactionBlockedUntil ||
+      selectionIsInsideWorkspace
     );
   }
 
@@ -284,12 +314,13 @@
 
   function refreshChanges() {
     if (
-      autoRefreshPending
-      || document.hidden
-      || userIsInteracting()
-      || workspace.querySelector('.git-action-pending')
-      || document.activeElement?.matches('[data-commit-message]')
-    ) return;
+      autoRefreshPending ||
+      document.hidden ||
+      userIsInteracting() ||
+      workspace.querySelector('.git-action-pending') ||
+      document.activeElement?.matches('[data-commit-message]')
+    )
+      return;
     autoRefreshPending = true;
     htmx.ajax('GET', actionUrl, {
       source: workspace,
@@ -299,14 +330,17 @@
   }
 
   async function fetchRemote() {
-    if (document.hidden || workspace.querySelector('.git-action-pending')) return;
+    if (document.hidden || workspace.querySelector('.git-action-pending'))
+      return;
     try {
       const body = new URLSearchParams({ action: 'fetch' });
       const response = await fetch(actionUrl, {
         method: 'PATCH',
         body,
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+        },
       });
       if (response.ok) refreshChanges();
     } catch {
@@ -314,15 +348,11 @@
     }
   }
 
-  window.setInterval(refreshChanges, 2000);
-  window.setInterval(fetchRemote, 30000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      void fetchRemote();
-      refreshChanges();
-    }
+  startVisiblePolling(refreshChanges, 2000, { runOnVisible: true });
+  startVisiblePolling(fetchRemote, 30000, {
+    immediate: true,
+    runOnVisible: true,
   });
-  void fetchRemote();
   restoreSelection();
 
   function showStatus(message, isError) {

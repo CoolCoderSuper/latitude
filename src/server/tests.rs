@@ -8,7 +8,7 @@ use std::{
 use axum::{
     body::{Body, to_bytes},
     extract::State,
-    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     response::IntoResponse,
 };
 use tower::ServiceExt;
@@ -66,6 +66,7 @@ use super::{
         render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
         render_server_home, render_share_dialog_shell, syntax_name_for_path,
     },
+    response::html_response,
     terminal_api::{PublicTerminalInfoResponse, parse_terminal_command_payload},
 };
 
@@ -486,8 +487,8 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
     );
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
-    assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js?v=2\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js?v=2\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js\""));
     assert!(!rendered.contains("var cookieName"));
 }
 
@@ -497,8 +498,39 @@ fn project_git_polling_marks_only_periodic_requests_as_auto_refresh() {
 
     assert!(script.contains("refreshGitStatuses(false, true)"));
     assert!(script.contains("refreshGitStatuses(true, true)"));
-    assert!(script.contains("void refreshGitStatuses(true);"));
+    assert!(script.contains("startVisiblePolling"));
+    assert!(!script.contains("setInterval"));
     assert!(script.contains("params.set('refresh', 'auto')"));
+}
+
+#[test]
+fn browser_tools_use_checked_in_bundles_and_visible_focus() {
+    let file_viewer = include_str!("assets/file-viewer.js");
+    let terminal_viewer = include_str!("assets/terminal-viewer.js");
+    let desktop_style = include_str!("assets/desktop-viewer.css");
+
+    assert!(!file_viewer.contains("https://"));
+    assert!(!terminal_viewer.contains("https://"));
+    assert!(file_viewer.contains("LatestRequest"));
+    assert!(desktop_style.contains(".desktop-canvas:focus-visible"));
+}
+
+#[test]
+fn generated_html_responses_disable_storage_and_sniffing() {
+    let response = html_response(&Method::GET, "<p>Latitude</p>".to_string());
+
+    assert_eq!(
+        response.headers().get(header::CACHE_CONTROL),
+        Some(&HeaderValue::from_static("no-store"))
+    );
+    assert_eq!(
+        response.headers().get("x-content-type-options"),
+        Some(&HeaderValue::from_static("nosniff"))
+    );
+    assert_eq!(
+        response.headers().get("referrer-policy"),
+        Some(&HeaderValue::from_static("same-origin"))
+    );
 }
 
 #[test]
@@ -512,12 +544,16 @@ fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
     assert!(bootstrap.contains("URLSearchParams(window.location.search)"));
     assert!(bootstrap.contains("window.sessionStorage.setItem(marker, '1')"));
     assert!(theme_toggle.contains("dataset.latitudeT3codeEmbed === 'true'"));
-    assert!(common_theme.contains("[data-latitude-t3code-embed=\"true\"] [data-t3code-open]"));
+    assert!(common_theme.contains("[data-latitude-t3code-embed="));
+    assert!(common_theme.contains("[data-t3code-open]"));
 }
 
 #[tokio::test]
 async fn serves_embedded_assets_with_cache_validation() {
     assert!(embedded_asset_names().any(|name| name == "htmx.min.js"));
+    assert!(embedded_asset_names().any(|name| name == "file-viewer.bundle.js"));
+    assert!(embedded_asset_names().any(|name| name == "terminal-viewer.bundle.js"));
+    assert!(embedded_asset_names().any(|name| name == "terminal-viewer.bundle.css"));
     let response = public_asset(
         axum::extract::Path("htmx.min.js".to_string()),
         HeaderMap::new(),
@@ -950,7 +986,7 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("data-share-dialog"));
     assert!(rendered.contains("hx-get=\"/__latitude/ui/shares/demo/website\""));
     assert!(rendered.contains("hx-target=\"[data-share-dialog-shell]\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/project-home.js?v=3\""));
+    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/project-home.js\""));
     assert!(!rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
     assert!(!rendered.contains("data-deployment=\"draft\""));
@@ -1271,7 +1307,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-git-action=\"pull\""));
     assert!(rendered.contains("href=\"/demo/_diff/history\""));
     assert!(rendered.contains("hx-patch=\"/demo/_diff\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/diff-viewer.js?v=2\""));
+    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/diff-viewer.js\""));
     assert!(!rendered.contains("method=\"post\""));
     assert!(!rendered.contains("Done."));
     assert!(rendered.contains("class=\"line remove\">-<span class=\"tok-keyword\">let</span> old"));
@@ -1503,7 +1539,7 @@ fn renders_project_files_with_htmx_save_form() {
     assert!(rendered.contains("data-file-workspace"));
     assert!(rendered.contains("hx-put=\"/__latitude/ui/files/demo\""));
     assert!(rendered.contains("hx-target=\"[data-save-state]\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/file-viewer.js?v=2\""));
+    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/file-viewer.bundle.js\""));
     assert!(rendered.contains("data-find-file"));
     assert!(rendered.contains("data-grep-search"));
     assert!(rendered.contains("data-search-palette"));
@@ -1592,7 +1628,11 @@ fn renders_project_terminal_page() {
     assert!(rendered.contains("data-terminal-stack"));
     assert!(rendered.contains("data-ws-path=\"/demo/_terminal/ws\""));
     assert!(rendered.contains("data-ws-token=\"signed-token\""));
-    assert!(rendered.contains("@xterm/xterm"));
+    assert!(rendered.contains("href=\"/__latitude/assets/terminal-viewer.bundle.css\""));
+    assert!(
+        rendered.contains("type=\"module\" src=\"/__latitude/assets/terminal-viewer.bundle.js\"")
+    );
+    assert!(!rendered.contains("cdn.jsdelivr.net"));
     assert!(rendered.contains("C:/work/demo"));
 }
 
@@ -1645,8 +1685,8 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-view-only=\"true\""));
     assert!(rendered.contains("data-screen-layout=\"[]\""));
     assert!(rendered.contains("data-resolution-options=\"[]\""));
-    assert!(rendered.contains("href=\"/__latitude/assets/desktop-viewer.css?v=3\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js?v=14\""));
+    assert!(rendered.contains("href=\"/__latitude/assets/desktop-viewer.css\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js\""));
 }
 
 #[tokio::test]
@@ -2030,7 +2070,9 @@ fn groups_linked_worktrees_on_server_home() {
     assert!(!rendered.contains(r"\\?\C:\work\latitude-mobile-fix"));
     assert!(rendered.contains("data-project-list"));
     assert!(rendered.contains("hx-get=\"/?refresh=auto\""));
-    assert!(rendered.contains("hx-trigger=\"every 5s, worktreeArchived from:body\""));
+    assert!(rendered.contains(
+        "hx-trigger=\"every 5s [document.visibilityState === 'visible'], worktreeArchived from:body\""
+    ));
     assert!(rendered.contains("hx-target=\"#project-list\""));
     assert!(rendered.contains("hx-sync=\"this:drop\""));
     assert!(rendered.contains("id=\"project-git-status-latitude--mobile-fix\""));

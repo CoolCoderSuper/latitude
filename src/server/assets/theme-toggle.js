@@ -1,8 +1,9 @@
-(function() {
-  var cookieName = "latitude_theme";
+(function () {
+  var cookieName = 'latitude_theme';
   var toggle = document.querySelector('[data-latitude-theme-toggle]');
 
-  var embeddedInT3Code = document.documentElement.dataset.latitudeT3codeEmbed === 'true';
+  var embeddedInT3Code =
+    document.documentElement.dataset.latitudeT3codeEmbed === 'true';
   if (embeddedInT3Code) {
     if (toggle) {
       toggle.remove();
@@ -27,7 +28,8 @@
   }
 
   function persistTheme(theme) {
-    document.cookie = cookieName + '=' + theme + '; Path=/; Max-Age=31536000; SameSite=Lax';
+    document.cookie =
+      cookieName + '=' + theme + '; Path=/; Max-Age=31536000; SameSite=Lax';
   }
 
   function placeToggle() {
@@ -50,7 +52,10 @@
     if (toggle) {
       var next = clean === 'dark' ? 'light' : 'dark';
       toggle.dataset.latitudeThemeCurrent = clean;
-      toggle.setAttribute('aria-label', next === 'dark' ? 'Use dark mode' : 'Use light mode');
+      toggle.setAttribute(
+        'aria-label',
+        next === 'dark' ? 'Use dark mode' : 'Use light mode',
+      );
       toggle.title = next === 'dark' ? 'Use dark mode' : 'Use light mode';
     }
     if (persist) {
@@ -59,11 +64,15 @@
   }
 
   placeToggle();
-  applyTheme(cleanTheme(document.documentElement.dataset.latitudeTheme) || cookieTheme(), false);
+  applyTheme(
+    cleanTheme(document.documentElement.dataset.latitudeTheme) || cookieTheme(),
+    false,
+  );
 
   if (toggle) {
-    toggle.addEventListener('click', function() {
-      var current = cleanTheme(document.documentElement.dataset.latitudeTheme) || 'light';
+    toggle.addEventListener('click', function () {
+      var current =
+        cleanTheme(document.documentElement.dataset.latitudeTheme) || 'light';
       applyTheme(current === 'dark' ? 'light' : 'dark', true);
     });
   }

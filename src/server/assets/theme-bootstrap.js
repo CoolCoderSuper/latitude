@@ -1,10 +1,12 @@
-(function() {
-  var cookieName = "latitude_theme";
+(function () {
+  var cookieName = 'latitude_theme';
 
   function hasCookie(name, value) {
-    return (document.cookie ? document.cookie.split(';') : []).some(function(part) {
-      return part.trim() === name + '=' + value;
-    });
+    return (document.cookie ? document.cookie.split(';') : []).some(
+      function (part) {
+        return part.trim() === name + '=' + value;
+      },
+    );
   }
 
   function cleanTheme(value) {
@@ -42,7 +44,8 @@
   ) {
     root.dataset.latitudeT3codeEmbed = 'true';
   }
-  var theme = cleanTheme(root.dataset.latitudeTheme) || cookieTheme() || 'light';
+  var theme =
+    cleanTheme(root.dataset.latitudeTheme) || cookieTheme() || 'light';
   root.dataset.latitudeTheme = theme;
   root.style.colorScheme = theme;
 })();

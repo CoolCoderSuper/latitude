@@ -71,19 +71,19 @@ fn render_terminal_page(page: TerminalPage<'_>) -> String {
         page.title,
         page.device_hostname,
         TERMINAL_VIEWER_STYLE_HREF,
-        html! { link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css"; },
+        html! {},
         html! {
             main {
-                header {
-                    a href=(page.back_href) { (page.back_label) }
-                    h1 { (page.heading) }
-                    p { (page.description) }
-                    p class="project-path" { (&page.info.cwd) }
-                }
+                (html_page::page_header(html_page::PageHeader {
+                    class_name: None,
+                    back_href: page.back_href,
+                    back_label: page.back_label,
+                    heading: page.heading,
+                    description: page.description,
+                    path: Some(&page.info.cwd),
+                }))
                 (terminal_workspace(page.info, page.websocket_path, page.websocket_token))
-                script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js" {}
-                script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js" {}
-                script src=(TERMINAL_VIEWER_SCRIPT_SRC) {}
+                script type="module" src=(TERMINAL_VIEWER_SCRIPT_SRC) {}
             }
         },
     )

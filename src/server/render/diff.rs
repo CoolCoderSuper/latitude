@@ -29,6 +29,8 @@ pub(in crate::server) fn render_project_git_history(
     device_hostname: &str,
 ) -> String {
     let page_title = format!("{} Git history - Latitude", project.name);
+    let description = format!("{} on {device_hostname}", project.name);
+    let repo_path = display_path(&report.repo_dir);
     html_page::document(
         &page_title,
         device_hostname,
@@ -36,12 +38,14 @@ pub(in crate::server) fn render_project_git_history(
         html! {},
         html! {
             main {
-                header {
-                    a href=(format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT)) { "Back to code changes" }
-                    h1 { "Git history" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&report.repo_dir)) }
-                }
+                (html_page::page_header(html_page::PageHeader {
+                    class_name: None,
+                    back_href: &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+                    back_label: "Back to code changes",
+                    heading: "Git history",
+                    description: &description,
+                    path: Some(&repo_path),
+                }))
                 section class="history-panel" {
                     @if report.commits.is_empty() {
                         div class="empty" { "No commits found." }
@@ -73,6 +77,8 @@ pub(in crate::server) fn render_project_git_commit(
         (totals.0 + counts.0, totals.1 + counts.1)
     });
     let page_title = format!("{} {} - Latitude", project.name, commit.short_hash);
+    let description = format!("{} on {device_hostname}", project.name);
+    let repo_path = display_path(&report.repo_dir);
     html_page::document(
         &page_title,
         device_hostname,
@@ -80,12 +86,14 @@ pub(in crate::server) fn render_project_git_commit(
         html! {},
         html! {
             main {
-                header {
-                    a href=(format!("/{}/{}/history", project.name, DIFF_ROUTE_SEGMENT)) { "Back to Git history" }
-                    h1 { (&commit.subject) }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&report.repo_dir)) }
-                }
+                (html_page::page_header(html_page::PageHeader {
+                    class_name: None,
+                    back_href: &format!("/{}/{}/history", project.name, DIFF_ROUTE_SEGMENT),
+                    back_label: "Back to Git history",
+                    heading: &commit.subject,
+                    description: &description,
+                    path: Some(&repo_path),
+                }))
                 section class="commit-header" {
                     div class="commit-meta" {
                         code title=(&commit.hash) { (&commit.short_hash) }
@@ -169,6 +177,8 @@ pub(in crate::server) fn render_project_diff(
 ) -> String {
     let page_title = format!("{} code changes - Latitude", project.name);
     let action_url = format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT);
+    let description = format!("{} on {device_hostname}", project.name);
+    let repo_path = display_path(&report.repo_dir);
 
     html_page::document(
         &page_title,
@@ -177,16 +187,18 @@ pub(in crate::server) fn render_project_diff(
         html! { script src=(HTMX_SCRIPT_SRC) {} },
         html! {
             main {
-                header {
-                    a href=(format!("/{}", project.name)) { "Back to project" }
-                    h1 { "Code changes" }
-                    p { (&project.name) " on " (device_hostname) }
-                    p class="project-path" { (display_path(&report.repo_dir)) }
-                }
+                (html_page::page_header(html_page::PageHeader {
+                    class_name: None,
+                    back_href: &format!("/{}", project.name),
+                    back_label: "Back to project",
+                    heading: "Code changes",
+                    description: &description,
+                    path: Some(&repo_path),
+                }))
                 div class="diff-workspace" data-diff-workspace data-action-url=(&action_url) {
                     (render_diff_workspace_fragment(report, &action_url))
                 }
-                script src=(DIFF_VIEWER_SCRIPT_SRC) {}
+                script type="module" src=(DIFF_VIEWER_SCRIPT_SRC) {}
             }
         },
     )

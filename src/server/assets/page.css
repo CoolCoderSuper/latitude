@@ -1,15 +1,22 @@
 :root {
   color-scheme: light;
-  --latitude-page-bg: #f7f8fb;
-  --latitude-page-text: #1c2433;
-  --latitude-page-heading: #111827;
-  --latitude-page-muted: #475569;
-  --latitude-page-accent: #0f766e;
+  --latitude-page-bg: var(--latitude-color-canvas);
+  --latitude-page-text: var(--latitude-color-text);
+  --latitude-page-heading: var(--latitude-color-heading);
+  --latitude-page-muted: var(--latitude-color-muted);
+  --latitude-page-accent: var(--latitude-color-accent);
   --latitude-page-inline-code-bg: #e8edf3;
   --latitude-page-code-bg: #111827;
   --latitude-page-code-text: #f8fafc;
-  --latitude-page-border: #d7dde8;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --latitude-page-border: var(--latitude-color-border);
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   background: var(--latitude-page-bg);
   color: var(--latitude-page-text);
 }
@@ -167,28 +174,9 @@ body {
   }
 }
 
-:root[data-latitude-theme="light"] {
-  color-scheme: light;
-  --latitude-page-bg: #f7f8fb;
-  --latitude-page-text: #1c2433;
-  --latitude-page-heading: #111827;
-  --latitude-page-muted: #475569;
-  --latitude-page-accent: #0f766e;
-  --latitude-page-inline-code-bg: #e8edf3;
-  --latitude-page-code-bg: #111827;
-  --latitude-page-code-text: #f8fafc;
-  --latitude-page-border: #d7dde8;
-}
-
-:root[data-latitude-theme="dark"] {
+:root[data-latitude-theme='dark'] {
   color-scheme: dark;
-  --latitude-page-bg: #10141d;
-  --latitude-page-text: #dbe4ef;
-  --latitude-page-heading: #f8fafc;
-  --latitude-page-muted: #b8c3d1;
-  --latitude-page-accent: #2aa79c;
   --latitude-page-inline-code-bg: #1f2937;
   --latitude-page-code-bg: #151b19;
   --latitude-page-code-text: #edf4f1;
-  --latitude-page-border: #2f3a4a;
 }

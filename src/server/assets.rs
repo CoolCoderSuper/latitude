@@ -10,7 +10,7 @@ pub(super) const ASSET_BASE_PATH: &str = "/__latitude/assets";
 
 macro_rules! asset_href {
     ($name:literal) => {
-        concat!("/__latitude/assets/", $name, "?v=2")
+        concat!("/__latitude/assets/", $name)
     };
 }
 
@@ -20,15 +20,15 @@ pub(super) const THEME_TOGGLE_SCRIPT_SRC: &str = asset_href!("theme-toggle.js");
 pub(super) const HTMX_SCRIPT_SRC: &str = asset_href!("htmx.min.js");
 pub(super) const AUTH_PAGE_STYLE_HREF: &str = asset_href!("auth.css");
 pub(super) const PROJECT_HOME_STYLE_HREF: &str = asset_href!("project-home.css");
-pub(super) const PROJECT_HOME_SCRIPT_SRC: &str = "/__latitude/assets/project-home.js?v=3";
+pub(super) const PROJECT_HOME_SCRIPT_SRC: &str = asset_href!("project-home.js");
 pub(super) const DIFF_VIEWER_STYLE_HREF: &str = asset_href!("diff-viewer.css");
 pub(super) const DIFF_VIEWER_SCRIPT_SRC: &str = asset_href!("diff-viewer.js");
 pub(super) const FILE_VIEWER_STYLE_HREF: &str = asset_href!("file-viewer.css");
-pub(super) const FILE_VIEWER_SCRIPT_SRC: &str = asset_href!("file-viewer.js");
-pub(super) const TERMINAL_VIEWER_STYLE_HREF: &str = asset_href!("terminal-viewer.css");
-pub(super) const TERMINAL_VIEWER_SCRIPT_SRC: &str = asset_href!("terminal-viewer.js");
-pub(super) const DESKTOP_VIEWER_STYLE_HREF: &str = "/__latitude/assets/desktop-viewer.css?v=3";
-pub(super) const DESKTOP_VIEWER_SCRIPT_SRC: &str = "/__latitude/assets/desktop-viewer.js?v=14";
+pub(super) const FILE_VIEWER_SCRIPT_SRC: &str = asset_href!("file-viewer.bundle.js");
+pub(super) const TERMINAL_VIEWER_STYLE_HREF: &str = asset_href!("terminal-viewer.bundle.css");
+pub(super) const TERMINAL_VIEWER_SCRIPT_SRC: &str = asset_href!("terminal-viewer.bundle.js");
+pub(super) const DESKTOP_VIEWER_STYLE_HREF: &str = asset_href!("desktop-viewer.css");
+pub(super) const DESKTOP_VIEWER_SCRIPT_SRC: &str = asset_href!("desktop-viewer.js");
 pub(super) const PAGE_STYLE_HREF: &str = asset_href!("page.css");
 
 struct EmbeddedAsset {
@@ -57,12 +57,16 @@ embedded_assets!(
     ("auth.css", "text/css; charset=utf-8"),
     ("project-home.css", "text/css; charset=utf-8"),
     ("project-home.js", "text/javascript; charset=utf-8"),
+    ("polling.js", "text/javascript; charset=utf-8"),
     ("diff-viewer.css", "text/css; charset=utf-8"),
     ("diff-viewer.js", "text/javascript; charset=utf-8"),
     ("file-viewer.css", "text/css; charset=utf-8"),
-    ("file-viewer.js", "text/javascript; charset=utf-8"),
-    ("terminal-viewer.css", "text/css; charset=utf-8"),
-    ("terminal-viewer.js", "text/javascript; charset=utf-8"),
+    ("file-viewer.bundle.js", "text/javascript; charset=utf-8"),
+    ("terminal-viewer.bundle.css", "text/css; charset=utf-8"),
+    (
+        "terminal-viewer.bundle.js",
+        "text/javascript; charset=utf-8"
+    ),
     ("desktop-viewer.css", "text/css; charset=utf-8"),
     ("desktop-viewer.js", "text/javascript; charset=utf-8"),
     ("desktop-input.js", "text/javascript; charset=utf-8"),

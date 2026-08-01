@@ -57,7 +57,7 @@ fn workspace_markup(
                 div class="desktop-status" data-desktop-status { "Connecting" }
             }
             div class="desktop-frame" {
-                div class="desktop-target" data-desktop-target tabindex="0" {}
+                div class="desktop-target" data-desktop-target {}
             }
         }
     }

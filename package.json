@@ -1,0 +1,23 @@
+{
+  "name": "latitude-web-assets",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "check": "prettier --check package.json scripts/*.mjs src/server/assets/*.css src/server/assets/*.js web-tests/*.mjs && node scripts/check-web-bundles.mjs",
+    "test": "node --test web-tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.6",
+    "@replit/codemirror-vim": "6.3.0",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0",
+    "codemirror": "6.0.2",
+    "diff": "8.0.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.8",
+    "prettier": "3.6.2"
+  }
+}

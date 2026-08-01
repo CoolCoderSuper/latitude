@@ -23,6 +23,21 @@ Open `http://127.0.0.1:8080/` and sign in with the configured public password. T
 
 Latitude stores projects, deployments, page content, and share links in the configured data directory. The config file contains boot settings such as listener binds, public password, desktop options, and `data_dir`.
 
+### Web UI development
+
+Latitude checks its generated browser bundles into `src/server/assets`, so normal Rust builds do not require Node.js. When changing the file viewer or terminal viewer sources, rebuild and verify the bundles with:
+
+```powershell
+npm ci
+npm run build
+npm run check
+npm test
+```
+
+Edit `file-viewer.js` and `terminal-viewer.js`, not their generated `*.bundle.js` or `*.bundle.css` files. The build keeps CodeMirror and xterm self-contained inside the Latitude binary.
+
+Bundled dependency licenses are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## Desktop Control
 
 Latitude can expose a root-level desktop viewer at `/_desktop` when `desktop.enabled` is set to `true`.

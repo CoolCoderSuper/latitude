@@ -1,3 +1,8 @@
+import { FitAddon } from '@xterm/addon-fit';
+import { Terminal } from '@xterm/xterm';
+import '@xterm/xterm/css/xterm.css';
+import './terminal-viewer.css';
+
 const workspace = document.querySelector('[data-terminal-workspace]');
 
 if (workspace) {
@@ -39,7 +44,11 @@ if (workspace) {
   };
 
   const sessionsUrl = () =>
-    new URL(workspace.dataset.sessionsPath || '/__latitude/api/projects/terminal/sessions', window.location.href);
+    new URL(
+      workspace.dataset.sessionsPath ||
+        '/__latitude/api/projects/terminal/sessions',
+      window.location.href,
+    );
 
   const sessionUrl = (sessionId) => {
     const url = sessionsUrl();
@@ -48,7 +57,11 @@ if (workspace) {
   };
 
   const buildSocketUrl = (sessionId) => {
-    const url = new URL(workspace.dataset.wsPath || `${window.location.pathname.replace(/\/$/, '')}/ws`, window.location.href);
+    const url = new URL(
+      workspace.dataset.wsPath ||
+        `${window.location.pathname.replace(/\/$/, '')}/ws`,
+      window.location.href,
+    );
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     if (workspace.dataset.wsToken) {
       url.searchParams.set('token', workspace.dataset.wsToken);
@@ -108,7 +121,11 @@ if (workspace) {
       background: terminalCssValue(styles, '--terminal-xterm-bg', '#101514'),
       foreground: terminalCssValue(styles, '--terminal-xterm-fg', '#edf4f1'),
       cursor: terminalCssValue(styles, '--terminal-xterm-cursor', '#2aa79c'),
-      selectionBackground: terminalCssValue(styles, '--terminal-xterm-selection', '#2e3936'),
+      selectionBackground: terminalCssValue(
+        styles,
+        '--terminal-xterm-selection',
+        '#2e3936',
+      ),
       black: terminalCssValue(styles, '--terminal-xterm-black', '#101514'),
       red: terminalCssValue(styles, '--terminal-xterm-red', '#ff9d87'),
       green: terminalCssValue(styles, '--terminal-xterm-green', '#8fe0ad'),
@@ -117,14 +134,46 @@ if (workspace) {
       magenta: terminalCssValue(styles, '--terminal-xterm-magenta', '#c9b6ff'),
       cyan: terminalCssValue(styles, '--terminal-xterm-cyan', '#73d7e7'),
       white: terminalCssValue(styles, '--terminal-xterm-white', '#edf4f1'),
-      brightBlack: terminalCssValue(styles, '--terminal-xterm-bright-black', '#8f9b97'),
-      brightRed: terminalCssValue(styles, '--terminal-xterm-bright-red', '#ffd0ca'),
-      brightGreen: terminalCssValue(styles, '--terminal-xterm-bright-green', '#c8f2d5'),
-      brightYellow: terminalCssValue(styles, '--terminal-xterm-bright-yellow', '#ffd98b'),
-      brightBlue: terminalCssValue(styles, '--terminal-xterm-bright-blue', '#c8e4ff'),
-      brightMagenta: terminalCssValue(styles, '--terminal-xterm-bright-magenta', '#e0d6ff'),
-      brightCyan: terminalCssValue(styles, '--terminal-xterm-bright-cyan', '#bdf4fb'),
-      brightWhite: terminalCssValue(styles, '--terminal-xterm-bright-white', '#ffffff'),
+      brightBlack: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-black',
+        '#8f9b97',
+      ),
+      brightRed: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-red',
+        '#ffd0ca',
+      ),
+      brightGreen: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-green',
+        '#c8f2d5',
+      ),
+      brightYellow: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-yellow',
+        '#ffd98b',
+      ),
+      brightBlue: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-blue',
+        '#c8e4ff',
+      ),
+      brightMagenta: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-magenta',
+        '#e0d6ff',
+      ),
+      brightCyan: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-cyan',
+        '#bdf4fb',
+      ),
+      brightWhite: terminalCssValue(
+        styles,
+        '--terminal-xterm-bright-white',
+        '#ffffff',
+      ),
     };
   };
 
@@ -175,8 +224,8 @@ if (workspace) {
     view.append(surface);
     stack.append(view);
 
-    const terminal = new window.Terminal(terminalOptions());
-    const fitAddon = new window.FitAddon.FitAddon();
+    const terminal = new Terminal(terminalOptions());
+    const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(surface);
 
@@ -241,7 +290,10 @@ if (workspace) {
           this.reconnectTimer = null;
           this.connect();
         }, delay);
-        this.reconnectDelay = Math.min(8000, Math.floor(this.reconnectDelay * 1.6));
+        this.reconnectDelay = Math.min(
+          8000,
+          Math.floor(this.reconnectDelay * 1.6),
+        );
       },
       connect() {
         if (this.destroyed || socketIsActive(this.socket)) {
@@ -250,7 +302,9 @@ if (workspace) {
 
         this.clearReconnectTimer();
         showStatus(`${this.session.title} connecting...`, false, false);
-        const nextSocket = new WebSocket(buildSocketUrl(this.session.id).toString());
+        const nextSocket = new WebSocket(
+          buildSocketUrl(this.session.id).toString(),
+        );
         this.socket = nextSocket;
 
         nextSocket.addEventListener('open', () => {
@@ -306,7 +360,11 @@ if (workspace) {
       reconnect(force) {
         this.clearReconnectTimer();
         this.reconnectDelay = 1000;
-        if (force && this.socket && this.socket.readyState !== WebSocket.CLOSED) {
+        if (
+          force &&
+          this.socket &&
+          this.socket.readyState !== WebSocket.CLOSED
+        ) {
           const staleSocket = this.socket;
           this.socket = null;
           try {
@@ -499,7 +557,7 @@ if (workspace) {
   };
 
   const startTerminal = () => {
-    if (!sessionList || !newButton || !stack || !empty || !window.Terminal || !window.FitAddon) {
+    if (!sessionList || !newButton || !stack || !empty) {
       showStatus('Terminal assets did not load.', true);
       return;
     }
@@ -513,10 +571,13 @@ if (workspace) {
         reconnectAll(false);
       }
     });
-    new MutationObserver(applyTerminalThemes).observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-latitude-theme'],
-    });
+    new MutationObserver(applyTerminalThemes).observe(
+      document.documentElement,
+      {
+        attributes: true,
+        attributeFilter: ['data-latitude-theme'],
+      },
+    );
 
     loadSessions().catch((error) => {
       showStatus(error.message || 'Could not load terminals.', true, false);

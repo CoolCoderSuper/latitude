@@ -85,7 +85,7 @@ pub(in crate::server) fn render_project_home(
                         div class="share-list" { "Loading…" }
                     }
                 }
-                script src=(PROJECT_HOME_SCRIPT_SRC) {}
+                script type="module" src=(PROJECT_HOME_SCRIPT_SRC) {}
             }
         },
     )
@@ -117,7 +117,7 @@ pub(in crate::server) fn render_server_home(
                     id="project-list"
                     data-project-list
                     hx-get="/?refresh=auto"
-                    hx-trigger="every 5s, worktreeArchived from:body"
+                    hx-trigger="every 5s [document.visibilityState === 'visible'], worktreeArchived from:body"
                     hx-select="[data-project-list]"
                     hx-target="#project-list"
                     hx-sync="this:drop"
@@ -157,7 +157,7 @@ pub(in crate::server) fn render_server_home(
                     }
                     @if no_enabled_projects { li class="empty" { "No enabled projects yet." } }
                 }
-                script src=(PROJECT_HOME_SCRIPT_SRC) {}
+                script type="module" src=(PROJECT_HOME_SCRIPT_SRC) {}
             }
         },
     )

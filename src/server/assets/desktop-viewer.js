@@ -2,8 +2,8 @@ import {
   isExtendedKey,
   pointerButtonMask,
   virtualKeyFor,
-} from './desktop-input.js?v=1';
-import { DesktopPeer } from './desktop-peer.js?v=1';
+} from './desktop-input.js';
+import { DesktopPeer } from './desktop-peer.js';
 
 const workspace = document.querySelector('[data-desktop-workspace]');
 
@@ -94,7 +94,10 @@ if (workspace) {
 
   function buildSocketUrl() {
     const fallback = `${window.location.pathname.replace(/\/$/, '')}/ws`;
-    const url = new URL(workspace.dataset.wsPath || fallback, window.location.href);
+    const url = new URL(
+      workspace.dataset.wsPath || fallback,
+      window.location.href,
+    );
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     if (workspace.dataset.wsToken) {
       url.searchParams.set('token', workspace.dataset.wsToken);
@@ -138,7 +141,11 @@ if (workspace) {
 
   function selectedScreen() {
     const options = screenOptions();
-    return options.find((screen) => screen.id === selectedScreenId) || options[0] || null;
+    return (
+      options.find((screen) => screen.id === selectedScreenId) ||
+      options[0] ||
+      null
+    );
   }
 
   function renderScreenSwitcher() {
@@ -152,7 +159,10 @@ if (workspace) {
       button.textContent = screen.label;
       button.title = screen.title;
       button.classList.toggle('active', screen.id === selectedScreenId);
-      button.setAttribute('aria-pressed', String(screen.id === selectedScreenId));
+      button.setAttribute(
+        'aria-pressed',
+        String(screen.id === selectedScreenId),
+      );
       button.addEventListener('click', () => {
         selectedScreenId = screen.id;
         renderScreenSwitcher();
@@ -189,7 +199,11 @@ if (workspace) {
 
   function renderFrame() {
     const screen = selectedScreen();
-    if (!context || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !screen) {
+    if (
+      !context ||
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+      !screen
+    ) {
       return;
     }
     if (canvas.width !== screen.width || canvas.height !== screen.height) {
@@ -240,11 +254,23 @@ if (workspace) {
   function pointerPosition(event) {
     const screen = selectedScreen();
     const bounds = canvas.getBoundingClientRect();
-    if (!screen || bounds.width <= 0 || bounds.height <= 0 || !frameWidth || !frameHeight) {
+    if (
+      !screen ||
+      bounds.width <= 0 ||
+      bounds.height <= 0 ||
+      !frameWidth ||
+      !frameHeight
+    ) {
       return null;
     }
-    const localX = Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width));
-    const localY = Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height));
+    const localX = Math.min(
+      1,
+      Math.max(0, (event.clientX - bounds.left) / bounds.width),
+    );
+    const localY = Math.min(
+      1,
+      Math.max(0, (event.clientY - bounds.top) / bounds.height),
+    );
     return {
       x: (screen.x + localX * screen.width) / frameWidth,
       y: (screen.y + localY * screen.height) / frameHeight,
@@ -327,7 +353,11 @@ if (workspace) {
     }
     const nextWidth = Math.max(1, Number(message.width) || 1);
     const nextHeight = Math.max(1, Number(message.height) || 1);
-    if (frameWidth === nextWidth && frameHeight === nextHeight && !screensChanged) {
+    if (
+      frameWidth === nextWidth &&
+      frameHeight === nextHeight &&
+      !screensChanged
+    ) {
       return;
     }
     frameWidth = nextWidth;
@@ -352,7 +382,9 @@ if (workspace) {
     if (message.type === 'geometry') {
       updateGeometry(message);
     } else if (message.type === 'cursor') {
-      canvas.style.cursor = cursorStyles.has(message.cursor) ? message.cursor : 'default';
+      canvas.style.cursor = cursorStyles.has(message.cursor)
+        ? message.cursor
+        : 'default';
     } else if (message.type === 'control') {
       controlState = message.state === 'granted' ? 'granted' : 'waiting';
       if (hasControl()) {
@@ -397,9 +429,12 @@ if (workspace) {
       },
       onTrack: (event) => {
         video.srcObject = event.streams[0] || new MediaStream([event.track]);
-        void video.play().then(scheduleVideoFrame).catch((error) => {
-          setStatus(error?.message || 'Desktop video could not start', true);
-        });
+        void video
+          .play()
+          .then(scheduleVideoFrame)
+          .catch((error) => {
+            setStatus(error?.message || 'Desktop video could not start', true);
+          });
       },
       onConnectionState: (state) => {
         if (state === 'connected') {
@@ -453,7 +488,10 @@ if (workspace) {
       if (message.type === 'hello') {
         updateGeometry(message);
         try {
-          await startPeerConnection(message.ice_servers, message.h264_profile_level_id);
+          await startPeerConnection(
+            message.ice_servers,
+            message.h264_profile_level_id,
+          );
         } catch (error) {
           setStatus(error?.message || 'WebRTC could not be started', true);
           nextSocket.close();
@@ -472,7 +510,10 @@ if (workspace) {
         try {
           await peerSession.addCandidate(message.candidate);
         } catch (error) {
-          setStatus(error?.message || 'WebRTC ICE candidate was rejected', true);
+          setStatus(
+            error?.message || 'WebRTC ICE candidate was rejected',
+            true,
+          );
           nextSocket.close();
         }
       } else if (message.type === 'error') {
@@ -602,14 +643,18 @@ if (workspace) {
         headers,
         body: JSON.stringify({
           action: 'set_resolution',
-          screen_id: selectedScreenId.startsWith('display-') ? selectedScreenId : null,
+          screen_id: selectedScreenId.startsWith('display-')
+            ? selectedScreenId
+            : null,
           width,
           height,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(payload.error || `Resolution change failed (${response.status})`);
+        throw new Error(
+          payload.error || `Resolution change failed (${response.status})`,
+        );
       }
       if (Array.isArray(payload.resolutions)) {
         resolutionOptions = payload.resolutions;

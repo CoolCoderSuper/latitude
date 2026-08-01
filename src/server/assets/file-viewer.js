@@ -1,73 +1,770 @@
-import {EditorView, basicSetup} from 'https://esm.sh/codemirror@6.0.2?deps=@codemirror/state@6.7.1,@codemirror/view@6.43.6';
-import {Compartment, EditorState, RangeSet, StateEffect, StateField} from 'https://esm.sh/@codemirror/state@6.7.1';
-import {Decoration, GutterMarker, gutter} from 'https://esm.sh/@codemirror/view@6.43.6?deps=@codemirror/state@6.7.1';
-import {vim} from 'https://esm.sh/@replit/codemirror-vim@6.3.0?deps=@codemirror/state@6.7.1,@codemirror/view@6.43.6';
-import {diffLines} from 'https://esm.sh/diff@8.0.2';
+import { basicSetup } from 'codemirror';
+import {
+  Compartment,
+  EditorState,
+  RangeSet,
+  StateEffect,
+  StateField,
+} from '@codemirror/state';
+import { Decoration, EditorView, GutterMarker, gutter } from '@codemirror/view';
+import { vim } from '@replit/codemirror-vim';
+import { diffLines } from 'diff';
+import { LatestRequest } from './latest-request.js';
 
-const root=document.querySelector('[data-file-workspace]');
-if(root){
-  const api=root.dataset.apiUrl,tree=root.querySelector('[data-file-tree]'),preview=root.querySelector('[data-file-preview]'),title=root.querySelector('[data-file-title]'),actions=root.querySelector('[data-file-actions]'),save=root.querySelector('[data-save]'),vimToggle=root.querySelector('[data-vim-toggle]'),status=root.querySelector('[data-save-state]'),workspace=root.querySelector('.file-workspace'),resizer=root.querySelector('[data-file-resizer]'),findFile=root.querySelector('[data-find-file]'),grepSearch=root.querySelector('[data-grep-search]'),palette=root.querySelector('[data-search-palette]'),searchTitle=root.querySelector('[data-search-title]'),searchInput=root.querySelector('[data-search-input]'),searchResults=root.querySelector('[data-search-results]'),searchPreviewPath=root.querySelector('[data-search-preview-path]'),searchPreviewContent=root.querySelector('[data-search-preview-content]'),searchHelp=root.querySelector('[data-search-help]');
-  let editor=null,current=null,gitBase=null,dirty=false,highlightTimer=null,diffTimer=null,highlightVersion=0;
-  const vimKey='latitude.fileEditorVimMode',vimCompartment=new Compartment();
-  let vimEnabled=localStorage.getItem(vimKey)==='true';
-  const setHighlights=StateEffect.define();
-  const highlightField=StateField.define({create:()=>Decoration.none,update:(value,tr)=>{value=value.map(tr.changes);for(const effect of tr.effects)if(effect.is(setHighlights))value=effect.value;return value},provide:field=>EditorView.decorations.from(field)});
-  const setDiffMarkers=StateEffect.define();
-  class DiffMarker extends GutterMarker{constructor(kinds){super();this.kinds=kinds}eq(other){return this.kinds===other.kinds}toDOM(){const marker=document.createElement('span');marker.className=`diff-gutter-marker ${this.kinds.split(' ').map(kind=>`is-${kind}`).join(' ')}`;marker.title=this.kinds.split(' ').map(kind=>`${kind[0].toUpperCase()}${kind.slice(1)} line`).join(', ');return marker}}
-  const diffField=StateField.define({create:()=>RangeSet.empty,update:(value,tr)=>{for(const effect of tr.effects)if(effect.is(setDiffMarkers))return effect.value;return value.map(tr.changes)}});
-  const diffGutter=gutter({class:'cm-diff-gutter',markers:view=>view.state.field(diffField)});
-  const url=(path,raw=false)=>`${api}?path=${encodeURIComponent(path)}${raw?'&raw=true':''}`;
-  const searchUrl=(kind,query)=>`${api}?search_kind=${kind}&search=${encodeURIComponent(query)}`;
-  async function request(target,options){const response=await fetch(target,options);if(!response.ok){let message='Request failed';try{message=(await response.json()).error||message}catch{}throw Error(message)}return response}
-  async function loadDir(path='',container=tree){container.textContent='Loading…';try{const data=await(await request(url(path))).json();container.textContent='';for(const item of data.entries){const wrap=document.createElement('div'),row=document.createElement('button');row.className=`tree-row ${item.kind}`;row.dataset.path=item.path;row.innerHTML=`<span class="tree-icon">${item.kind==='directory'?'›':''}</span><span></span>`;row.lastChild.textContent=item.name;wrap.append(row);if(item.kind==='directory'){let open=false;const children=document.createElement('div');children.className='tree-children';children.hidden=true;wrap.append(children);row.openDirectory=async()=>{if(!open){open=true;children.hidden=false;row.firstChild.textContent='⌄'}if(!children.dataset.loaded){children.dataset.loaded='1';await loadDir(item.path,children)}return children};row.onclick=async()=>{if(open){open=false;children.hidden=true;row.firstChild.textContent='›'}else await row.openDirectory()}}else row.onclick=()=>openFile(item.path,row);container.append(wrap)}}catch(error){container.innerHTML='<div class="file-error"></div>';container.firstChild.textContent=error.message}}
-  async function openRequestedPath(){const requested=new URLSearchParams(location.search).get('path');if(!requested)return;const parts=requested.split('/').filter(Boolean);let container=tree,prefix='';for(let index=0;index<parts.length;index++){prefix=prefix?`${prefix}/${parts[index]}`:parts[index];const row=Array.from(container.querySelectorAll(':scope > div > .tree-row')).find(candidate=>candidate.dataset.path===prefix);if(!row)return;if(index===parts.length-1){await openFile(requested,row);row.scrollIntoView({block:'nearest'});return}if(typeof row.openDirectory!=='function')return;container=await row.openDirectory()}}
-  function decorationsFor(lines,doc){const ranges=[];for(let index=0;index<lines.length&&index<doc.lines;index++){const line=doc.line(index+1);let position=line.from;for(const token of lines[index].tokens||[]){const end=Math.min(line.to,position+token.text.length);if(token.kind&&end>position)ranges.push(Decoration.mark({class:`tok-${token.kind}`}).range(position,end));position=end}}return Decoration.set(ranges,true)}
-  async function refreshHighlights(){if(!editor||!current)return;const version=++highlightVersion,content=editor.state.doc.toString();try{const lines=await(await request(api,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:current,content})})).json();if(version!==highlightVersion||!editor)return;editor.dispatch({effects:setHighlights.of(decorationsFor(lines,editor.state.doc))})}catch(error){if(version===highlightVersion)status.textContent=`Highlighting: ${error.message}`}}
-  function scheduleHighlights(){clearTimeout(highlightTimer);highlightTimer=setTimeout(refreshHighlights,180)}
-  function diffMarkersFor(base,content,doc){const lines=new Map(),mark=(line,kind)=>{line=Math.max(1,Math.min(line,doc.lines));if(!lines.has(line))lines.set(line,new Set());lines.get(line).add(kind)};let currentLine=1,pendingRemoved=0;const flush=added=>{const modified=Math.min(pendingRemoved,added);for(let index=0;index<modified;index++)mark(currentLine+index,'modified');for(let index=modified;index<added;index++)mark(currentLine+index,'added');if(pendingRemoved>added)mark(currentLine+added,'deleted');currentLine+=added;pendingRemoved=0};for(const change of diffLines(base,content)){const count=change.count||0;if(change.removed){pendingRemoved+=count;continue}if(change.added){flush(count);continue}flush(0);currentLine+=count}flush(0);const ranges=Array.from(lines.entries()).sort((a,b)=>a[0]-b[0]).map(([number,kinds])=>new DiffMarker(Array.from(kinds).sort().join(' ')).range(doc.line(number).from));return RangeSet.of(ranges,true)}
-  function refreshDiffMarkers(){if(!editor)return;const markers=typeof gitBase==='string'?diffMarkersFor(gitBase,editor.state.doc.toString(),editor.state.doc):RangeSet.empty;editor.dispatch({effects:setDiffMarkers.of(markers)})}
-  function scheduleDiffMarkers(){clearTimeout(diffTimer);diffTimer=setTimeout(refreshDiffMarkers,80)}
-  function createEditor(host,content){editor=new EditorView({parent:host,state:EditorState.create({doc:content,extensions:[vimCompartment.of(vimEnabled?vim():[]),basicSetup,highlightField,diffField,diffGutter,EditorView.lineWrapping,EditorView.updateListener.of(update=>{if(update.docChanged){dirty=true;save.disabled=false;status.textContent='Unsaved changes';scheduleHighlights();scheduleDiffMarkers()}})]})});refreshHighlights();refreshDiffMarkers()}
-  async function openFile(path,row){if(dirty&&!confirm('Discard unsaved changes?'))return;document.querySelectorAll('.tree-row.active').forEach(element=>element.classList.remove('active'));if(row)row.classList.add('active');title.textContent=path;status.textContent='';save.disabled=true;actions.hidden=true;dirty=false;current=path;gitBase=null;highlightVersion++;clearTimeout(highlightTimer);clearTimeout(diffTimer);if(editor){editor.destroy();editor=null}preview.innerHTML='<div class="file-empty">Loading…</div>';try{const data=await(await request(url(path))).json();if(data.editable&&typeof data.content==='string'){gitBase=data.git_base_content;actions.hidden=false;preview.innerHTML='<div class="editor-host"></div>';createEditor(preview.firstChild,data.content)}else showMedia(path,data.media_type)}catch(error){preview.innerHTML='<div class="file-error"></div>';preview.firstChild.textContent=error.message}}
-  function showMedia(path,type=''){const source=url(path,true);if(type.startsWith('image/')){preview.innerHTML='<div class="media-preview"><img alt=""></div>';preview.querySelector('img').src=source}else if(type.startsWith('video/')||type.startsWith('audio/')){preview.innerHTML='<div class="media-preview"><video controls></video></div>';preview.querySelector('video').src=source}else if(type==='application/pdf'){preview.innerHTML='<div class="media-preview"><iframe title="PDF preview"></iframe></div>';preview.querySelector('iframe').src=source}else{preview.innerHTML='<div class="download-preview"><a target="_blank">Open or download this file</a></div>';preview.querySelector('a').href=source}}
-  function saveCurrentFile(){if(!editor||!current)return;actions.requestSubmit()}
-  function updateVimToggle(){vimToggle.setAttribute('aria-pressed',String(vimEnabled));vimToggle.title=`${vimEnabled?'Disable':'Enable'} Vim keybindings`}
-  function toggleVimMode(){vimEnabled=!vimEnabled;localStorage.setItem(vimKey,String(vimEnabled));updateVimToggle();if(editor){editor.dispatch({effects:vimCompartment.reconfigure(vimEnabled?vim():[])});editor.focus()}}
-  let searchKind='file',searchTimer=null,searchRequest=null,previewRequest=null,previewVersion=0,selectedResult=0;
-  function resetSearchPreview(message='Select a result to preview it.'){previewRequest?.abort();previewVersion++;searchPreviewPath.textContent='Preview';searchPreviewContent.innerHTML='<div class="search-preview-empty"></div>';searchPreviewContent.firstChild.textContent=message}
-  function renderSearchPreviewCode(content,result,highlighted=[]){const lines=content.split(/\r?\n/),target=Math.max(1,Math.min(result.line||1,lines.length)),start=result.line?Math.max(1,target-24):1,end=Math.min(lines.length,result.line?target+24:80),code=document.createElement('div');code.className='search-preview-code';for(let number=start;number<=end;number++){const row=document.createElement('div'),lineNumber=document.createElement('span'),text=document.createElement('span');row.className=`search-preview-line${number===target&&result.line?' is-match':''}`;lineNumber.className='search-preview-line-number';lineNumber.textContent=number;text.className='search-preview-line-text';const tokens=highlighted[number-1]?.tokens||[];if(tokens.length){for(const token of tokens){const span=document.createElement('span');if(token.kind)span.className=`tok-${token.kind}`;span.textContent=token.text;text.append(span)}}else text.textContent=lines[number-1]||' ';row.append(lineNumber,text);code.append(row)}searchPreviewContent.textContent='';searchPreviewContent.append(code);code.querySelector('.is-match')?.scrollIntoView({block:'center'})}
-  async function showSearchPreview(result){const version=++previewVersion;previewRequest?.abort();previewRequest=new AbortController();searchPreviewPath.textContent=`${result.path}${result.line?`:${result.line}`:''}`;searchPreviewContent.innerHTML='<div class="search-preview-empty">Loading preview…</div>';try{const data=await(await request(url(result.path),{signal:previewRequest.signal})).json();if(version!==previewVersion)return;if(typeof data.content==='string'){renderSearchPreviewCode(data.content,result);try{const highlighted=await(await request(api,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({path:result.path,content:data.content}),signal:previewRequest.signal})).json();if(version===previewVersion)renderSearchPreviewCode(data.content,result,highlighted)}catch(error){if(error.name==='AbortError')throw error}}else if((data.media_type||'').startsWith('image/')){searchPreviewContent.innerHTML='<div class="search-preview-media"><img alt=""></div>';searchPreviewContent.querySelector('img').src=url(result.path,true)}else{resetSearchPreview('Preview is not available for this file type.');searchPreviewPath.textContent=result.path}}catch(error){if(error.name!=='AbortError'&&version===previewVersion){resetSearchPreview(error.message);searchPreviewPath.textContent=result.path}}}
-  function setSelectedResult(index){const rows=Array.from(searchResults.querySelectorAll('.search-result'));if(!rows.length)return;selectedResult=Math.max(0,Math.min(index,rows.length-1));rows.forEach((row,rowIndex)=>{row.classList.toggle('is-selected',rowIndex===selectedResult);row.setAttribute('aria-selected',String(rowIndex===selectedResult))});rows[selectedResult].scrollIntoView({block:'nearest'});void showSearchPreview(rows[selectedResult].searchResult)}
-  async function openSearchResult(result){closeSearch();await openFile(result.path,null);if(!editor||!result.line)return;const line=editor.state.doc.line(Math.min(result.line,editor.state.doc.lines));const position=Math.min(line.to,line.from+Math.max(0,(result.column||1)-1));editor.dispatch({selection:{anchor:position},effects:EditorView.scrollIntoView(position,{y:'center'})});editor.focus()}
-  function renderSearchResults(data){searchResults.textContent='';const results=data.results||[];if(!results.length){searchResults.innerHTML='<div class="search-results-empty">No matches found.</div>';resetSearchPreview('No file to preview.');return}for(const result of results){const button=document.createElement('button'),path=document.createElement('span');button.type='button';button.className='search-result';button.setAttribute('role','option');button.searchResult=result;path.className='search-result-path';path.textContent=`${result.path}${result.line?`:${result.line}:${result.column}`:''}`;button.append(path);if(result.preview){const previewLine=document.createElement('span');previewLine.className='search-result-preview';previewLine.textContent=result.preview;button.append(previewLine)}button.onpointerenter=()=>setSelectedResult(Array.from(searchResults.children).indexOf(button));button.onclick=()=>void openSearchResult(result);searchResults.append(button)}selectedResult=0;setSelectedResult(0);searchHelp.textContent=`${results.length}${data.limited?'+':''} result${results.length===1?'':'s'} · Enter to open · Esc to close`}
-  async function runSearch(){const query=searchInput.value.trim();searchRequest?.abort();if(!query){searchResults.innerHTML=`<div class="search-results-empty">${searchKind==='grep'?'Type text to search file contents.':'Type part of a file name.'}</div>`;resetSearchPreview();searchHelp.textContent='Enter to open · Esc to close';return}searchResults.innerHTML='<div class="search-results-empty">Searching…</div>';resetSearchPreview('Searching…');searchRequest=new AbortController();try{const data=await(await request(searchUrl(searchKind,query),{signal:searchRequest.signal})).json();renderSearchResults(data)}catch(error){if(error.name!=='AbortError'){searchResults.innerHTML=`<div class="search-results-empty"></div>`;searchResults.firstChild.textContent=error.message;resetSearchPreview('Preview unavailable.')}}}
-  function scheduleSearch(){clearTimeout(searchTimer);searchTimer=setTimeout(runSearch,160)}
-  function openSearch(kind){searchKind=kind;searchTitle.textContent=kind==='grep'?'Search in files':'Find file';searchInput.placeholder=kind==='grep'?'Search file contents…':'Type a file name…';searchInput.value='';searchResults.innerHTML=`<div class="search-results-empty">${kind==='grep'?'Type text to search file contents.':'Type part of a file name.'}</div>`;resetSearchPreview();searchHelp.textContent='Enter to open · Esc to close';palette.hidden=false;requestAnimationFrame(()=>searchInput.focus())}
-  function closeSearch(){clearTimeout(searchTimer);searchRequest?.abort();previewRequest?.abort();palette.hidden=true;if(editor)editor.focus()}
-  actions.addEventListener('htmx:configRequest',event=>{if(!editor||!current){event.preventDefault();return}event.detail.parameters.path=current;event.detail.parameters.content=editor.state.doc.toString()});
-  actions.addEventListener('htmx:beforeRequest',()=>{save.disabled=true;status.textContent='Saving…'});
-  actions.addEventListener('htmx:afterSwap',()=>{const result=status.querySelector('[data-file-save-result]');if(!result)return;const ok=result.dataset.ok==='true';const message=result.textContent;status.textContent=message;if(ok){dirty=false;save.disabled=true}else save.disabled=false});
-  actions.addEventListener('htmx:responseError',()=>{save.disabled=false;status.textContent='File could not be saved'});
-  vimToggle.onclick=toggleVimMode;
-  findFile.onclick=()=>openSearch('file');
-  grepSearch.onclick=()=>openSearch('grep');
-  palette.querySelectorAll('[data-search-close]').forEach(button=>button.onclick=closeSearch);
-  searchInput.addEventListener('input',scheduleSearch);
-  searchInput.addEventListener('keydown',event=>{if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();setSelectedResult(selectedResult+(event.key==='ArrowDown'?1:-1))}else if(event.key==='Enter'){const rows=searchResults.querySelectorAll('.search-result');if(rows[selectedResult]){event.preventDefault();rows[selectedResult].click()}}});
+const root = document.querySelector('[data-file-workspace]');
+if (root) {
+  const api = root.dataset.apiUrl,
+    tree = root.querySelector('[data-file-tree]'),
+    preview = root.querySelector('[data-file-preview]'),
+    title = root.querySelector('[data-file-title]'),
+    actions = root.querySelector('[data-file-actions]'),
+    save = root.querySelector('[data-save]'),
+    vimToggle = root.querySelector('[data-vim-toggle]'),
+    status = root.querySelector('[data-save-state]'),
+    workspace = root.querySelector('.file-workspace'),
+    resizer = root.querySelector('[data-file-resizer]'),
+    findFile = root.querySelector('[data-find-file]'),
+    grepSearch = root.querySelector('[data-grep-search]'),
+    palette = root.querySelector('[data-search-palette]'),
+    searchTitle = root.querySelector('[data-search-title]'),
+    searchInput = root.querySelector('[data-search-input]'),
+    searchResults = root.querySelector('[data-search-results]'),
+    searchPreviewPath = root.querySelector('[data-search-preview-path]'),
+    searchPreviewContent = root.querySelector('[data-search-preview-content]'),
+    searchHelp = root.querySelector('[data-search-help]');
+  let editor = null,
+    current = null,
+    gitBase = null,
+    dirty = false,
+    highlightTimer = null,
+    diffTimer = null,
+    highlightVersion = 0,
+    savingPath = null,
+    searchReturnFocus = null;
+  const fileLoads = new LatestRequest();
+  const vimKey = 'latitude.fileEditorVimMode',
+    vimCompartment = new Compartment();
+  let vimEnabled = localStorage.getItem(vimKey) === 'true';
+  const setHighlights = StateEffect.define();
+  const highlightField = StateField.define({
+    create: () => Decoration.none,
+    update: (value, tr) => {
+      value = value.map(tr.changes);
+      for (const effect of tr.effects)
+        if (effect.is(setHighlights)) value = effect.value;
+      return value;
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+  const setDiffMarkers = StateEffect.define();
+  class DiffMarker extends GutterMarker {
+    constructor(kinds) {
+      super();
+      this.kinds = kinds;
+    }
+    eq(other) {
+      return this.kinds === other.kinds;
+    }
+    toDOM() {
+      const marker = document.createElement('span');
+      marker.className = `diff-gutter-marker ${this.kinds
+        .split(' ')
+        .map((kind) => `is-${kind}`)
+        .join(' ')}`;
+      marker.title = this.kinds
+        .split(' ')
+        .map((kind) => `${kind[0].toUpperCase()}${kind.slice(1)} line`)
+        .join(', ');
+      return marker;
+    }
+  }
+  const diffField = StateField.define({
+    create: () => RangeSet.empty,
+    update: (value, tr) => {
+      for (const effect of tr.effects)
+        if (effect.is(setDiffMarkers)) return effect.value;
+      return value.map(tr.changes);
+    },
+  });
+  const diffGutter = gutter({
+    class: 'cm-diff-gutter',
+    markers: (view) => view.state.field(diffField),
+  });
+  const url = (path, raw = false) =>
+    `${api}?path=${encodeURIComponent(path)}${raw ? '&raw=true' : ''}`;
+  const searchUrl = (kind, query) =>
+    `${api}?search_kind=${kind}&search=${encodeURIComponent(query)}`;
+  async function request(target, options) {
+    const response = await fetch(target, options);
+    if (!response.ok) {
+      let message = 'Request failed';
+      try {
+        message = (await response.json()).error || message;
+      } catch {}
+      throw Error(message);
+    }
+    return response;
+  }
+  async function loadDir(path = '', container = tree) {
+    container.textContent = 'Loading…';
+    try {
+      const data = await (await request(url(path))).json();
+      container.textContent = '';
+      for (const item of data.entries) {
+        const wrap = document.createElement('div'),
+          row = document.createElement('button');
+        row.className = `tree-row ${item.kind}`;
+        row.dataset.path = item.path;
+        row.innerHTML = `<span class="tree-icon">${item.kind === 'directory' ? '›' : ''}</span><span></span>`;
+        row.lastChild.textContent = item.name;
+        wrap.append(row);
+        if (item.kind === 'directory') {
+          let open = false;
+          const children = document.createElement('div');
+          children.className = 'tree-children';
+          children.hidden = true;
+          wrap.append(children);
+          row.openDirectory = async () => {
+            if (!open) {
+              open = true;
+              children.hidden = false;
+              row.firstChild.textContent = '⌄';
+            }
+            if (!children.dataset.loaded) {
+              children.dataset.loaded = '1';
+              await loadDir(item.path, children);
+            }
+            return children;
+          };
+          row.onclick = async () => {
+            if (open) {
+              open = false;
+              children.hidden = true;
+              row.firstChild.textContent = '›';
+            } else await row.openDirectory();
+          };
+        } else row.onclick = () => openFile(item.path, row);
+        container.append(wrap);
+      }
+    } catch (error) {
+      container.innerHTML = '<div class="file-error"></div>';
+      container.firstChild.textContent = error.message;
+    }
+  }
+  async function openRequestedPath() {
+    const requested = new URLSearchParams(location.search).get('path');
+    if (!requested) return;
+    const parts = requested.split('/').filter(Boolean);
+    let container = tree,
+      prefix = '';
+    for (let index = 0; index < parts.length; index++) {
+      prefix = prefix ? `${prefix}/${parts[index]}` : parts[index];
+      const row = Array.from(
+        container.querySelectorAll(':scope > div > .tree-row'),
+      ).find((candidate) => candidate.dataset.path === prefix);
+      if (!row) return;
+      if (index === parts.length - 1) {
+        await openFile(requested, row);
+        row.scrollIntoView({ block: 'nearest' });
+        return;
+      }
+      if (typeof row.openDirectory !== 'function') return;
+      container = await row.openDirectory();
+    }
+  }
+  function decorationsFor(lines, doc) {
+    const ranges = [];
+    for (let index = 0; index < lines.length && index < doc.lines; index++) {
+      const line = doc.line(index + 1);
+      let position = line.from;
+      for (const token of lines[index].tokens || []) {
+        const end = Math.min(line.to, position + token.text.length);
+        if (token.kind && end > position)
+          ranges.push(
+            Decoration.mark({ class: `tok-${token.kind}` }).range(
+              position,
+              end,
+            ),
+          );
+        position = end;
+      }
+    }
+    return Decoration.set(ranges, true);
+  }
+  async function refreshHighlights() {
+    if (!editor || !current) return;
+    const version = ++highlightVersion,
+      content = editor.state.doc.toString();
+    try {
+      const lines = await (
+        await request(api, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ path: current, content }),
+        })
+      ).json();
+      if (version !== highlightVersion || !editor) return;
+      editor.dispatch({
+        effects: setHighlights.of(decorationsFor(lines, editor.state.doc)),
+      });
+    } catch (error) {
+      if (version === highlightVersion)
+        status.textContent = `Highlighting: ${error.message}`;
+    }
+  }
+  function scheduleHighlights() {
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(refreshHighlights, 180);
+  }
+  function diffMarkersFor(base, content, doc) {
+    const lines = new Map(),
+      mark = (line, kind) => {
+        line = Math.max(1, Math.min(line, doc.lines));
+        if (!lines.has(line)) lines.set(line, new Set());
+        lines.get(line).add(kind);
+      };
+    let currentLine = 1,
+      pendingRemoved = 0;
+    const flush = (added) => {
+      const modified = Math.min(pendingRemoved, added);
+      for (let index = 0; index < modified; index++)
+        mark(currentLine + index, 'modified');
+      for (let index = modified; index < added; index++)
+        mark(currentLine + index, 'added');
+      if (pendingRemoved > added) mark(currentLine + added, 'deleted');
+      currentLine += added;
+      pendingRemoved = 0;
+    };
+    for (const change of diffLines(base, content)) {
+      const count = change.count || 0;
+      if (change.removed) {
+        pendingRemoved += count;
+        continue;
+      }
+      if (change.added) {
+        flush(count);
+        continue;
+      }
+      flush(0);
+      currentLine += count;
+    }
+    flush(0);
+    const ranges = Array.from(lines.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([number, kinds]) =>
+        new DiffMarker(Array.from(kinds).sort().join(' ')).range(
+          doc.line(number).from,
+        ),
+      );
+    return RangeSet.of(ranges, true);
+  }
+  function refreshDiffMarkers() {
+    if (!editor) return;
+    const markers =
+      typeof gitBase === 'string'
+        ? diffMarkersFor(gitBase, editor.state.doc.toString(), editor.state.doc)
+        : RangeSet.empty;
+    editor.dispatch({ effects: setDiffMarkers.of(markers) });
+  }
+  function scheduleDiffMarkers() {
+    clearTimeout(diffTimer);
+    diffTimer = setTimeout(refreshDiffMarkers, 80);
+  }
+  function createEditor(host, content) {
+    editor = new EditorView({
+      parent: host,
+      state: EditorState.create({
+        doc: content,
+        extensions: [
+          vimCompartment.of(vimEnabled ? vim() : []),
+          basicSetup,
+          highlightField,
+          diffField,
+          diffGutter,
+          EditorView.lineWrapping,
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+              dirty = true;
+              save.disabled = false;
+              status.textContent = 'Unsaved changes';
+              scheduleHighlights();
+              scheduleDiffMarkers();
+            }
+          }),
+        ],
+      }),
+    });
+    refreshHighlights();
+    refreshDiffMarkers();
+  }
+  async function openFile(path, row) {
+    if (dirty && !confirm('Discard unsaved changes?')) return false;
+
+    const { controller: requestController, version } = fileLoads.begin();
+
+    document
+      .querySelectorAll('.tree-row.active')
+      .forEach((element) => element.classList.remove('active'));
+    if (row) row.classList.add('active');
+    title.textContent = path;
+    status.textContent = '';
+    save.disabled = true;
+    actions.hidden = true;
+    dirty = false;
+    current = null;
+    gitBase = null;
+    highlightVersion++;
+    clearTimeout(highlightTimer);
+    clearTimeout(diffTimer);
+    if (editor) {
+      editor.destroy();
+      editor = null;
+    }
+    preview.innerHTML = '<div class="file-empty">Loading…</div>';
+    try {
+      const data = await (
+        await request(url(path), { signal: requestController.signal })
+      ).json();
+      if (!fileLoads.isCurrent(version)) return false;
+
+      current = path;
+      if (data.editable && typeof data.content === 'string') {
+        gitBase = data.git_base_content;
+        actions.hidden = false;
+        preview.innerHTML = '<div class="editor-host"></div>';
+        createEditor(preview.firstChild, data.content);
+      } else showMedia(path, data.media_type);
+      return true;
+    } catch (error) {
+      if (error.name === 'AbortError' || !fileLoads.isCurrent(version)) {
+        return false;
+      }
+      preview.innerHTML = '<div class="file-error"></div>';
+      preview.firstChild.textContent = error.message;
+      return false;
+    } finally {
+      fileLoads.finish(version);
+    }
+  }
+  function showMedia(path, type = '') {
+    const source = url(path, true);
+    const container = document.createElement('div');
+    container.className = 'media-preview';
+    preview.replaceChildren(container);
+
+    if (type.startsWith('image/')) {
+      const image = document.createElement('img');
+      image.alt = path;
+      image.src = source;
+      container.append(image);
+    } else if (type.startsWith('video/') || type.startsWith('audio/')) {
+      const media = document.createElement(
+        type.startsWith('audio/') ? 'audio' : 'video',
+      );
+      media.controls = true;
+      media.src = source;
+      container.append(media);
+    } else if (type === 'application/pdf') {
+      const frame = document.createElement('iframe');
+      frame.title = `PDF preview: ${path}`;
+      frame.src = source;
+      container.append(frame);
+    } else {
+      container.className = 'download-preview';
+      const link = document.createElement('a');
+      link.href = source;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Open or download this file';
+      container.append(link);
+    }
+  }
+  function saveCurrentFile() {
+    if (!editor || !current) return;
+    actions.requestSubmit();
+  }
+  function updateVimToggle() {
+    vimToggle.setAttribute('aria-pressed', String(vimEnabled));
+    vimToggle.title = `${vimEnabled ? 'Disable' : 'Enable'} Vim keybindings`;
+  }
+  function toggleVimMode() {
+    vimEnabled = !vimEnabled;
+    localStorage.setItem(vimKey, String(vimEnabled));
+    updateVimToggle();
+    if (editor) {
+      editor.dispatch({
+        effects: vimCompartment.reconfigure(vimEnabled ? vim() : []),
+      });
+      editor.focus();
+    }
+  }
+  let searchKind = 'file',
+    searchTimer = null,
+    searchRequest = null,
+    previewRequest = null,
+    previewVersion = 0,
+    selectedResult = 0;
+  function resetSearchPreview(message = 'Select a result to preview it.') {
+    previewRequest?.abort();
+    previewVersion++;
+    searchPreviewPath.textContent = 'Preview';
+    searchPreviewContent.innerHTML = '<div class="search-preview-empty"></div>';
+    searchPreviewContent.firstChild.textContent = message;
+  }
+  function renderSearchPreviewCode(content, result, highlighted = []) {
+    const lines = content.split(/\r?\n/),
+      target = Math.max(1, Math.min(result.line || 1, lines.length)),
+      start = result.line ? Math.max(1, target - 24) : 1,
+      end = Math.min(lines.length, result.line ? target + 24 : 80),
+      code = document.createElement('div');
+    code.className = 'search-preview-code';
+    for (let number = start; number <= end; number++) {
+      const row = document.createElement('div'),
+        lineNumber = document.createElement('span'),
+        text = document.createElement('span');
+      row.className = `search-preview-line${number === target && result.line ? ' is-match' : ''}`;
+      lineNumber.className = 'search-preview-line-number';
+      lineNumber.textContent = number;
+      text.className = 'search-preview-line-text';
+      const tokens = highlighted[number - 1]?.tokens || [];
+      if (tokens.length) {
+        for (const token of tokens) {
+          const span = document.createElement('span');
+          if (token.kind) span.className = `tok-${token.kind}`;
+          span.textContent = token.text;
+          text.append(span);
+        }
+      } else text.textContent = lines[number - 1] || ' ';
+      row.append(lineNumber, text);
+      code.append(row);
+    }
+    searchPreviewContent.textContent = '';
+    searchPreviewContent.append(code);
+    code.querySelector('.is-match')?.scrollIntoView({ block: 'center' });
+  }
+  async function showSearchPreview(result) {
+    const version = ++previewVersion;
+    previewRequest?.abort();
+    previewRequest = new AbortController();
+    searchPreviewPath.textContent = `${result.path}${result.line ? `:${result.line}` : ''}`;
+    searchPreviewContent.innerHTML =
+      '<div class="search-preview-empty">Loading preview…</div>';
+    try {
+      const data = await (
+        await request(url(result.path), { signal: previewRequest.signal })
+      ).json();
+      if (version !== previewVersion) return;
+      if (typeof data.content === 'string') {
+        renderSearchPreviewCode(data.content, result);
+        try {
+          const highlighted = await (
+            await request(api, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                path: result.path,
+                content: data.content,
+              }),
+              signal: previewRequest.signal,
+            })
+          ).json();
+          if (version === previewVersion)
+            renderSearchPreviewCode(data.content, result, highlighted);
+        } catch (error) {
+          if (error.name === 'AbortError') throw error;
+        }
+      } else if ((data.media_type || '').startsWith('image/')) {
+        searchPreviewContent.innerHTML =
+          '<div class="search-preview-media"><img alt=""></div>';
+        const image = searchPreviewContent.querySelector('img');
+        image.alt = result.path;
+        image.src = url(result.path, true);
+      } else {
+        resetSearchPreview('Preview is not available for this file type.');
+        searchPreviewPath.textContent = result.path;
+      }
+    } catch (error) {
+      if (error.name !== 'AbortError' && version === previewVersion) {
+        resetSearchPreview(error.message);
+        searchPreviewPath.textContent = result.path;
+      }
+    }
+  }
+  function setSelectedResult(index) {
+    const rows = Array.from(searchResults.querySelectorAll('.search-result'));
+    if (!rows.length) return;
+    selectedResult = Math.max(0, Math.min(index, rows.length - 1));
+    rows.forEach((row, rowIndex) => {
+      row.classList.toggle('is-selected', rowIndex === selectedResult);
+      row.setAttribute('aria-selected', String(rowIndex === selectedResult));
+    });
+    rows[selectedResult].scrollIntoView({ block: 'nearest' });
+    void showSearchPreview(rows[selectedResult].searchResult);
+  }
+  async function openSearchResult(result) {
+    closeSearch(false);
+    const opened = await openFile(result.path, null);
+    if (!opened || !editor) return;
+    if (result.line) {
+      const line = editor.state.doc.line(
+        Math.min(result.line, editor.state.doc.lines),
+      );
+      const position = Math.min(
+        line.to,
+        line.from + Math.max(0, (result.column || 1) - 1),
+      );
+      editor.dispatch({
+        selection: { anchor: position },
+        effects: EditorView.scrollIntoView(position, { y: 'center' }),
+      });
+    }
+    editor.focus();
+  }
+  function renderSearchResults(data) {
+    searchResults.textContent = '';
+    const results = data.results || [];
+    if (!results.length) {
+      searchResults.innerHTML =
+        '<div class="search-results-empty">No matches found.</div>';
+      resetSearchPreview('No file to preview.');
+      return;
+    }
+    for (const result of results) {
+      const button = document.createElement('button'),
+        path = document.createElement('span');
+      button.type = 'button';
+      button.className = 'search-result';
+      button.setAttribute('role', 'option');
+      button.searchResult = result;
+      path.className = 'search-result-path';
+      path.textContent = `${result.path}${result.line ? `:${result.line}:${result.column}` : ''}`;
+      button.append(path);
+      if (result.preview) {
+        const previewLine = document.createElement('span');
+        previewLine.className = 'search-result-preview';
+        previewLine.textContent = result.preview;
+        button.append(previewLine);
+      }
+      button.onpointerenter = () =>
+        setSelectedResult(Array.from(searchResults.children).indexOf(button));
+      button.onclick = () => void openSearchResult(result);
+      searchResults.append(button);
+    }
+    selectedResult = 0;
+    setSelectedResult(0);
+    searchHelp.textContent = `${results.length}${data.limited ? '+' : ''} result${results.length === 1 ? '' : 's'} · Enter to open · Esc to close`;
+  }
+  async function runSearch() {
+    const query = searchInput.value.trim();
+    searchRequest?.abort();
+    if (!query) {
+      searchResults.innerHTML = `<div class="search-results-empty">${searchKind === 'grep' ? 'Type text to search file contents.' : 'Type part of a file name.'}</div>`;
+      resetSearchPreview();
+      searchHelp.textContent = 'Enter to open · Esc to close';
+      return;
+    }
+    searchResults.innerHTML =
+      '<div class="search-results-empty">Searching…</div>';
+    resetSearchPreview('Searching…');
+    searchRequest = new AbortController();
+    try {
+      const data = await (
+        await request(searchUrl(searchKind, query), {
+          signal: searchRequest.signal,
+        })
+      ).json();
+      renderSearchResults(data);
+    } catch (error) {
+      if (error.name !== 'AbortError') {
+        searchResults.innerHTML = `<div class="search-results-empty"></div>`;
+        searchResults.firstChild.textContent = error.message;
+        resetSearchPreview('Preview unavailable.');
+      }
+    }
+  }
+  function scheduleSearch() {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(runSearch, 160);
+  }
+  function openSearch(kind) {
+    if (palette.hidden && document.activeElement instanceof HTMLElement) {
+      searchReturnFocus = document.activeElement;
+    }
+    searchKind = kind;
+    searchTitle.textContent = kind === 'grep' ? 'Search in files' : 'Find file';
+    searchInput.placeholder =
+      kind === 'grep' ? 'Search file contents…' : 'Type a file name…';
+    searchInput.value = '';
+    searchResults.innerHTML = `<div class="search-results-empty">${kind === 'grep' ? 'Type text to search file contents.' : 'Type part of a file name.'}</div>`;
+    resetSearchPreview();
+    searchHelp.textContent = 'Enter to open · Esc to close';
+    palette.hidden = false;
+    requestAnimationFrame(() => searchInput.focus());
+  }
+  function closeSearch(restoreFocus = true) {
+    clearTimeout(searchTimer);
+    searchRequest?.abort();
+    previewRequest?.abort();
+    palette.hidden = true;
+    if (restoreFocus) {
+      if (searchReturnFocus?.isConnected) searchReturnFocus.focus();
+      else if (editor) editor.focus();
+      else findFile.focus();
+    }
+    searchReturnFocus = null;
+  }
+  actions.addEventListener('htmx:configRequest', (event) => {
+    if (!editor || !current) {
+      event.preventDefault();
+      return;
+    }
+    event.detail.parameters.path = current;
+    event.detail.parameters.content = editor.state.doc.toString();
+  });
+  actions.addEventListener('htmx:beforeRequest', () => {
+    savingPath = current;
+    save.disabled = true;
+    status.textContent = 'Saving…';
+  });
+  actions.addEventListener('htmx:beforeSwap', (event) => {
+    if (savingPath !== current) event.detail.shouldSwap = false;
+  });
+  actions.addEventListener('htmx:afterSwap', () => {
+    if (savingPath !== current) return;
+    const result = status.querySelector('[data-file-save-result]');
+    if (!result) return;
+    const ok = result.dataset.ok === 'true';
+    const message = result.textContent;
+    status.textContent = message;
+    if (ok) {
+      dirty = false;
+      save.disabled = true;
+    } else save.disabled = false;
+  });
+  actions.addEventListener('htmx:responseError', () => {
+    if (savingPath !== current) return;
+    save.disabled = false;
+    status.textContent = 'File could not be saved';
+  });
+  actions.addEventListener('htmx:afterRequest', () => {
+    savingPath = null;
+  });
+  vimToggle.onclick = toggleVimMode;
+  findFile.onclick = () => openSearch('file');
+  grepSearch.onclick = () => openSearch('grep');
+  palette
+    .querySelectorAll('[data-search-close]')
+    .forEach((button) => (button.onclick = () => closeSearch()));
+  searchInput.addEventListener('input', scheduleSearch);
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setSelectedResult(selectedResult + (event.key === 'ArrowDown' ? 1 : -1));
+    } else if (event.key === 'Enter') {
+      const rows = searchResults.querySelectorAll('.search-result');
+      if (rows[selectedResult]) {
+        event.preventDefault();
+        rows[selectedResult].click();
+      }
+    }
+  });
   updateVimToggle();
-  addEventListener('keydown',event=>{if(event.key==='Escape'&&!palette.hidden){event.preventDefault();closeSearch();return}if((event.ctrlKey||event.metaKey)&&!event.altKey&&event.key.toLowerCase()==='p'){event.preventDefault();openSearch('file');return}if((event.ctrlKey||event.metaKey)&&event.shiftKey&&!event.altKey&&event.key.toLowerCase()==='f'){event.preventDefault();openSearch('grep');return}if(event.key.toLowerCase()!=='s'||(!event.ctrlKey&&!event.metaKey)||event.altKey)return;if(!editor||!current)return;event.preventDefault();void saveCurrentFile()});
-  addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue=''}});
-  const widthKey='latitude.fileSidebarWidth';
-  const clampWidth=value=>Math.max(180,Math.min(value,Math.max(180,workspace.clientWidth-260)));
-  const setSidebarWidth=(value,persist=false)=>{const width=clampWidth(value);workspace.style.setProperty('--file-sidebar-width',`${width}px`);resizer.setAttribute('aria-valuenow',String(Math.round(width)));if(persist)localStorage.setItem(widthKey,String(Math.round(width)))};
-  const storedWidth=Number(localStorage.getItem(widthKey));if(Number.isFinite(storedWidth)&&storedWidth>0)setSidebarWidth(storedWidth);
-  resizer.addEventListener('pointerdown',event=>{if(matchMedia('(max-width: 720px)').matches)return;event.preventDefault();resizer.setPointerCapture(event.pointerId);workspace.classList.add('is-resizing')});
-  resizer.addEventListener('pointermove',event=>{if(!resizer.hasPointerCapture(event.pointerId))return;setSidebarWidth(event.clientX-workspace.getBoundingClientRect().left)});
-  const finishResize=event=>{if(!resizer.hasPointerCapture(event.pointerId))return;resizer.releasePointerCapture(event.pointerId);workspace.classList.remove('is-resizing');const width=parseFloat(getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'));setSidebarWidth(width,true)};
-  resizer.addEventListener('pointerup',finishResize);resizer.addEventListener('pointercancel',finishResize);
-  resizer.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home'].includes(event.key))return;event.preventDefault();const current=parseFloat(getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'));setSidebarWidth(event.key==='Home'?280:current+(event.key==='ArrowLeft'?-20:20),true)});
-  addEventListener('resize',()=>{if(!matchMedia('(max-width: 720px)').matches){const width=parseFloat(getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'));setSidebarWidth(width)}});
-  window.latitudeOpenFile=path=>openFile(path,null);
+  addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !palette.hidden) {
+      event.preventDefault();
+      closeSearch();
+      return;
+    }
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      !event.altKey &&
+      event.key.toLowerCase() === 'p'
+    ) {
+      event.preventDefault();
+      openSearch('file');
+      return;
+    }
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      event.shiftKey &&
+      !event.altKey &&
+      event.key.toLowerCase() === 'f'
+    ) {
+      event.preventDefault();
+      openSearch('grep');
+      return;
+    }
+    if (
+      event.key.toLowerCase() !== 's' ||
+      (!event.ctrlKey && !event.metaKey) ||
+      event.altKey
+    )
+      return;
+    if (!editor || !current) return;
+    event.preventDefault();
+    void saveCurrentFile();
+  });
+  addEventListener('beforeunload', (event) => {
+    if (dirty) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+  const widthKey = 'latitude.fileSidebarWidth';
+  const clampWidth = (value) =>
+    Math.max(180, Math.min(value, Math.max(180, workspace.clientWidth - 260)));
+  const setSidebarWidth = (value, persist = false) => {
+    const width = clampWidth(value);
+    workspace.style.setProperty('--file-sidebar-width', `${width}px`);
+    resizer.setAttribute('aria-valuenow', String(Math.round(width)));
+    if (persist) localStorage.setItem(widthKey, String(Math.round(width)));
+  };
+  const storedWidth = Number(localStorage.getItem(widthKey));
+  if (Number.isFinite(storedWidth) && storedWidth > 0)
+    setSidebarWidth(storedWidth);
+  resizer.addEventListener('pointerdown', (event) => {
+    if (matchMedia('(max-width: 720px)').matches) return;
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId);
+    workspace.classList.add('is-resizing');
+  });
+  resizer.addEventListener('pointermove', (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    setSidebarWidth(event.clientX - workspace.getBoundingClientRect().left);
+  });
+  const finishResize = (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    resizer.releasePointerCapture(event.pointerId);
+    workspace.classList.remove('is-resizing');
+    const width = parseFloat(
+      getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'),
+    );
+    setSidebarWidth(width, true);
+  };
+  resizer.addEventListener('pointerup', finishResize);
+  resizer.addEventListener('pointercancel', finishResize);
+  resizer.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home'].includes(event.key)) return;
+    event.preventDefault();
+    const current = parseFloat(
+      getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'),
+    );
+    setSidebarWidth(
+      event.key === 'Home'
+        ? 280
+        : current + (event.key === 'ArrowLeft' ? -20 : 20),
+      true,
+    );
+  });
+  addEventListener('resize', () => {
+    if (!matchMedia('(max-width: 720px)').matches) {
+      const width = parseFloat(
+        getComputedStyle(workspace).getPropertyValue('--file-sidebar-width'),
+      );
+      setSidebarWidth(width);
+    }
+  });
+  window.latitudeOpenFile = (path) => openFile(path, null);
   window.dispatchEvent(new Event('latitude-files-ready'));
   loadDir().then(openRequestedPath);
 }
