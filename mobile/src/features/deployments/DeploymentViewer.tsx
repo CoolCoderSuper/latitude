@@ -3,11 +3,7 @@ import { useEvent } from 'expo';
 import { Image } from 'expo-image';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 import WebView from 'react-native-webview';
 
 import { absoluteUrl, authHeaders } from '../../api';
@@ -21,6 +17,9 @@ import {
   isVideoMediaType,
   normalizeMediaType,
 } from './media';
+import { withRawMedia } from '../../webview/urls';
+import { deploymentThemeScript } from './deploymentDocument';
+import { viewerStyles } from './viewerStyles';
 
 export function DeploymentViewer({
   baseUrl,
@@ -42,7 +41,7 @@ export function DeploymentViewer({
   if (isVideoMediaType(mediaType)) {
     return (
       <NativeVideoViewer
-        mediaUri={rawMediaUrl(uri)}
+        mediaUri={withRawMedia(uri)}
         deviceHostname={deviceHostname}
         title={viewer.title}
         token={token}
@@ -55,7 +54,7 @@ export function DeploymentViewer({
   if (isImageMediaType(mediaType)) {
     return (
       <NativeImageViewer
-        mediaUri={rawMediaUrl(uri)}
+        mediaUri={withRawMedia(uri)}
         deviceHostname={deviceHostname}
         title={viewer.title}
         token={token}
@@ -180,7 +179,7 @@ function NativeVideoViewer({
   });
   const playerError =
     statusChange.status === 'error'
-      ? statusChange.error?.message ?? 'Could not load this video.'
+      ? (statusChange.error?.message ?? 'Could not load this video.')
       : null;
 
   return (
@@ -196,18 +195,18 @@ function NativeVideoViewer({
         }
         title={title}
       />
-      <View style={styles.videoViewer}>
+      <View style={viewerStyles.viewer}>
         <VideoView
           allowsPictureInPicture
           contentFit="contain"
           fullscreenOptions={{ enable: true }}
           nativeControls
           player={player}
-          style={styles.videoPlayer}
+          style={viewerStyles.media}
         />
         {playerError && (
-          <View style={styles.mediaStatusOverlay}>
-            <Text style={styles.imageErrorText}>{playerError}</Text>
+          <View style={viewerStyles.statusOverlay}>
+            <Text style={viewerStyles.errorText}>{playerError}</Text>
           </View>
         )}
       </View>
@@ -255,7 +254,7 @@ function NativeImageViewer({
         }
         title={title}
       />
-      <View style={styles.imageViewer}>
+      <View style={viewerStyles.viewer}>
         <Image
           accessibilityLabel={title}
           cachePolicy="memory-disk"
@@ -275,66 +274,20 @@ function NativeImageViewer({
             setLoading(true);
           }}
           source={source}
-          style={styles.nativeImage}
+          style={viewerStyles.media}
         />
         {loading && (
-          <View style={styles.mediaStatusOverlay}>
+          <View style={viewerStyles.statusOverlay}>
             <ActivityIndicator color={colors.onAccent} />
-            <Text style={styles.imageStatusText}>Loading image</Text>
+            <Text style={viewerStyles.statusText}>Loading image</Text>
           </View>
         )}
         {error && (
-          <View style={styles.mediaStatusOverlay}>
-            <Text style={styles.imageErrorText}>{error}</Text>
+          <View style={viewerStyles.statusOverlay}>
+            <Text style={viewerStyles.errorText}>{error}</Text>
           </View>
         )}
       </View>
     </View>
   );
-}
-
-function rawMediaUrl(uri: string): string {
-  const url = new URL(uri);
-  url.searchParams.set('raw', '1');
-  return url.toString();
-}
-
-function deploymentThemeScript(mode: ThemeMode, colors: ThemeColors): string {
-  const theme = {
-    mode,
-    variables: {
-      '--latitude-page-bg': colors.background,
-      '--latitude-page-text': colors.text,
-      '--latitude-page-heading': colors.text,
-      '--latitude-page-muted': colors.softText,
-      '--latitude-page-accent': colors.accent,
-      '--latitude-page-inline-code-bg': colors.panel,
-      '--latitude-page-code-bg': colors.codeBg,
-      '--latitude-page-code-text': colors.codeText,
-      '--latitude-page-border': colors.border,
-    },
-  };
-
-  return `
-(function() {
-  var theme = ${JSON.stringify(theme)};
-  var applyTheme = function() {
-    var root = document.documentElement;
-    if (!root) {
-      return;
-    }
-
-    root.dataset.latitudeTheme = theme.mode;
-    root.style.colorScheme = theme.mode;
-
-    Object.keys(theme.variables).forEach(function(name) {
-      root.style.setProperty(name, theme.variables[name]);
-    });
-  };
-
-  applyTheme();
-  document.addEventListener('DOMContentLoaded', applyTheme);
-})();
-true;
-`;
 }

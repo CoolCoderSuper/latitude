@@ -90,6 +90,7 @@ pub(in crate::server) struct PublicProjectDetail {
     pub(in crate::server) diff: PublicProjectDiffLink,
     pub(in crate::server) terminal: PublicProjectTerminalLink,
     pub(in crate::server) deployments: Vec<PublicDeploymentSummary>,
+    pub(in crate::server) archived_deployments: Vec<PublicDeploymentSummary>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,6 +198,12 @@ pub(in crate::server) fn public_project_detail(
         .filter(|deployment| deployment.enabled)
         .map(public_deployment_summary(project))
         .collect::<Vec<_>>();
+    let archived_deployments = project
+        .deployments
+        .iter()
+        .filter(|deployment| !deployment.enabled)
+        .map(public_deployment_summary(project))
+        .collect::<Vec<_>>();
 
     PublicProjectDetail {
         name: project.name.clone(),
@@ -227,6 +234,7 @@ pub(in crate::server) fn public_project_detail(
             description: "Run commands in the project directory",
         },
         deployments,
+        archived_deployments,
     }
 }
 

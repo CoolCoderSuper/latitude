@@ -10,6 +10,8 @@ import type {
   LoginResponse,
   ProjectDetail,
   ProjectDirectoryResponse,
+  ProjectFileSearchKind,
+  ProjectFileSearchResponse,
   ProjectListResponse,
   SessionResponse,
   TerminalCommandPayload,
@@ -129,11 +131,28 @@ export class LatitudePublicApi {
     );
   }
 
+  async setDeploymentArchived(
+    projectName: string,
+    deploymentName: string,
+    archived: boolean,
+  ): Promise<void> {
+    await this.request(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/deployments/${encodeURIComponent(deploymentName)}/archive`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ archived }),
+        headers: { 'Content-Type': 'application/json' },
+      },
+    );
+  }
+
   async shares(): Promise<DeploymentShare[]> {
     return this.get<DeploymentShare[]>(`${PUBLIC_API_PREFIX}/shares`);
   }
 
-  async createShare(payload: CreateDeploymentSharePayload): Promise<DeploymentShare> {
+  async createShare(
+    payload: CreateDeploymentSharePayload,
+  ): Promise<DeploymentShare> {
     return this.request<DeploymentShare>(`${PUBLIC_API_PREFIX}/shares`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -150,7 +169,10 @@ export class LatitudePublicApi {
     );
   }
 
-  async diff(projectName: string, signal?: AbortSignal): Promise<GitDiffResponse> {
+  async diff(
+    projectName: string,
+    signal?: AbortSignal,
+  ): Promise<GitDiffResponse> {
     return this.get<GitDiffResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff`,
       true,
@@ -164,15 +186,41 @@ export class LatitudePublicApi {
     );
   }
 
-  async gitCommit(projectName: string, hash: string): Promise<GitCommitResponse> {
+  async gitCommit(
+    projectName: string,
+    hash: string,
+  ): Promise<GitCommitResponse> {
     return this.get<GitCommitResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/diff/history/${encodeURIComponent(hash)}`,
     );
   }
 
-  async files(projectName: string, path = ''): Promise<ProjectDirectoryResponse> {
+  async files(
+    projectName: string,
+    path = '',
+    signal?: AbortSignal,
+  ): Promise<ProjectDirectoryResponse> {
     return this.get<ProjectDirectoryResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/files?path=${encodeURIComponent(path)}`,
+      true,
+      signal,
+    );
+  }
+
+  async searchFiles(
+    projectName: string,
+    search: string,
+    searchKind: ProjectFileSearchKind,
+    signal?: AbortSignal,
+  ): Promise<ProjectFileSearchResponse> {
+    const params = new URLSearchParams({
+      search,
+      search_kind: searchKind,
+    });
+    return this.get<ProjectFileSearchResponse>(
+      `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/files?${params.toString()}`,
+      true,
+      signal,
     );
   }
 
@@ -237,7 +285,9 @@ export class LatitudePublicApi {
     );
   }
 
-  async terminalSessions(projectName: string): Promise<TerminalSessionListResponse> {
+  async terminalSessions(
+    projectName: string,
+  ): Promise<TerminalSessionListResponse> {
     return this.get<TerminalSessionListResponse>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/terminal/sessions`,
     );
@@ -249,7 +299,9 @@ export class LatitudePublicApi {
     );
   }
 
-  async createTerminalSession(projectName: string): Promise<TerminalSessionSummary> {
+  async createTerminalSession(
+    projectName: string,
+  ): Promise<TerminalSessionSummary> {
     return this.request<TerminalSessionSummary>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/terminal/sessions`,
       { method: 'POST' },
@@ -263,7 +315,10 @@ export class LatitudePublicApi {
     );
   }
 
-  async closeTerminalSession(projectName: string, sessionId: string): Promise<void> {
+  async closeTerminalSession(
+    projectName: string,
+    sessionId: string,
+  ): Promise<void> {
     await this.request<void>(
       `${PUBLIC_API_PREFIX}/projects/${encodeURIComponent(projectName)}/terminal/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
@@ -314,7 +369,9 @@ export class LatitudePublicApi {
     if (externalSignal?.aborted) {
       controller.abort();
     } else {
-      externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+      externalSignal?.addEventListener('abort', abortFromCaller, {
+        once: true,
+      });
     }
     const timeout = setTimeout(() => {
       timedOut = true;
@@ -350,7 +407,8 @@ export class LatitudePublicApi {
       if (externalSignal?.aborted || controller.signal.aborted) {
         throw new LatitudeRequestCancelledError();
       }
-      const reason = error instanceof Error ? error.message : 'Could not reach Latitude.';
+      const reason =
+        error instanceof Error ? error.message : 'Could not reach Latitude.';
       throw new LatitudeApiError(
         0,
         `Could not reach ${this.baseUrl}. ${reason}`,

@@ -1,7 +1,10 @@
 import type { AppStyles } from '../../theme';
 import type { DiffLine, DiffLineKind, DiffTokenKind } from '../../types';
 
-export function diffLineStyle(kind: DiffLineKind | undefined, styles: AppStyles) {
+export function diffLineStyle(
+  kind: DiffLineKind | undefined,
+  styles: AppStyles,
+) {
   switch (kind) {
     case 'file':
       return styles.diffLineFile;

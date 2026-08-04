@@ -26,6 +26,7 @@ import {
 import { useTheme } from '../theme';
 import type { SessionRecord } from '../types';
 import { appendDeviceHostname } from '../utils/headers';
+import { reorderSessions, sessionLabel } from '../core/session/sessionModel';
 
 export function ServersScreen({
   activeBaseUrl,
@@ -88,7 +89,9 @@ export function ServersScreen({
 
   const targetIndexForDrag = (session: SessionRecord, dy: number): number => {
     const list = orderedSessionsRef.current;
-    const sourceIndex = list.findIndex((item) => item.baseUrl === session.baseUrl);
+    const sourceIndex = list.findIndex(
+      (item) => item.baseUrl === session.baseUrl,
+    );
     const fallbackIndex = clampIndex(sourceIndex + Math.round(dy / 88), list);
     const draggedLayout = rowLayouts.current.get(session.baseUrl);
 
@@ -158,7 +161,10 @@ export function ServersScreen({
   return (
     <View style={styles.flex}>
       <ScreenHeader
-        eyebrow={appendDeviceHostname(`${sessions.length} saved`, deviceHostname)}
+        eyebrow={appendDeviceHostname(
+          `${sessions.length} saved`,
+          deviceHostname,
+        )}
         left={
           <IconButton
             accessibilityLabel="Back"
@@ -184,7 +190,7 @@ export function ServersScreen({
           <View style={styles.serverManagerList}>
             {orderedSessions.map((session, index) => {
               const active = session.baseUrl === activeBaseUrl;
-              const label = serverLabel(session);
+              const label = sessionLabel(session);
               const dragging = draggingBaseUrl === session.baseUrl;
               const dropTarget =
                 draggingBaseUrl !== null && dropIndex === index && !dragging;
@@ -192,7 +198,10 @@ export function ServersScreen({
                 <Animated.View
                   key={session.baseUrl}
                   onLayout={(event) => {
-                    rowLayouts.current.set(session.baseUrl, event.nativeEvent.layout);
+                    rowLayouts.current.set(
+                      session.baseUrl,
+                      event.nativeEvent.layout,
+                    );
                   }}
                   style={[
                     styles.serverManagerRow,
@@ -268,34 +277,10 @@ export function ServersScreen({
   );
 }
 
-function serverLabel(session: SessionRecord): string {
-  const hostname = session.deviceHostname?.trim();
-  if (hostname) {
-    return hostname;
-  }
-
-  try {
-    return new URL(session.baseUrl).host;
-  } catch {
-    return session.baseUrl;
-  }
-}
-
 function clampIndex(index: number, sessions: SessionRecord[]): number {
   if (sessions.length === 0) {
     return -1;
   }
 
   return Math.max(0, Math.min(sessions.length - 1, index));
-}
-
-function reorderSessions(
-  sessions: SessionRecord[],
-  sourceIndex: number,
-  targetIndex: number,
-): SessionRecord[] {
-  const reorderedSessions = [...sessions];
-  const [session] = reorderedSessions.splice(sourceIndex, 1);
-  reorderedSessions.splice(targetIndex, 0, session);
-  return reorderedSessions;
 }

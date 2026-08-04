@@ -44,7 +44,8 @@ export function terminalDocumentTheme(
       '--terminal-border': colors.border,
       '--terminal-status-text': colors.success,
       '--terminal-error-text': colors.danger,
-      '--terminal-xterm-bg': mode === 'dark' ? colors.background : colors.codeBg,
+      '--terminal-xterm-bg':
+        mode === 'dark' ? colors.background : colors.codeBg,
       '--terminal-xterm-fg': colors.codeText,
     },
     xterm:
@@ -116,18 +117,31 @@ export function terminalDocument(
   projectName: string,
   websocketUrl: string,
   theme: TerminalDocumentTheme,
+  serverBaseUrl: string,
 ): string {
   const projectNameJson = JSON.stringify(projectName);
   const websocketUrlJson = JSON.stringify(websocketUrl);
   const themeJson = JSON.stringify(theme);
   const cssVariables = terminalCssVariables(theme);
+  const terminalStyleUrl = htmlAttribute(
+    new URL(
+      '/__latitude/assets/terminal-viewer.bundle.css',
+      serverBaseUrl,
+    ).toString(),
+  );
+  const terminalScriptUrl = htmlAttribute(
+    new URL(
+      '/__latitude/assets/terminal-viewer.bundle.js',
+      serverBaseUrl,
+    ).toString(),
+  );
 
   return `<!doctype html>
 <html lang="en" data-latitude-theme="${theme.mode}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <link rel="stylesheet" href="${terminalStyleUrl}" />
   <style>
     :root {
       color-scheme: ${theme.mode};
@@ -213,8 +227,7 @@ ${cssVariables}
     <span class="status">Connecting</span>
   </div>
   <div id="terminal"></div>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script type="module" src="${terminalScriptUrl}"></script>
   <script>
     const projectName = ${projectNameJson};
     const websocketUrl = ${websocketUrlJson};
@@ -477,4 +490,12 @@ function terminalCssVariables(theme: TerminalDocumentTheme): string {
   return Object.entries(theme.variables)
     .map(([name, value]) => `      ${name}: ${value};`)
     .join('\n');
+}
+
+function htmlAttribute(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
 }

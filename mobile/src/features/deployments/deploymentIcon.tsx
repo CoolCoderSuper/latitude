@@ -10,7 +10,10 @@ import type { ThemeColors } from '../../theme';
 import type { DeploymentSummary } from '../../types';
 import { isImageMediaType, isVideoMediaType } from './media';
 
-export function deploymentIcon(deployment: DeploymentSummary, colors: ThemeColors) {
+export function deploymentIcon(
+  deployment: DeploymentSummary,
+  colors: ThemeColors,
+) {
   if (isVideoMediaType(deployment.media_type)) {
     return <Film color={colors.coral} size={21} />;
   }

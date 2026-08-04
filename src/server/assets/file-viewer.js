@@ -97,6 +97,8 @@ if (root) {
   function filePageUrl(path) {
     const target = new URL(location.href);
     target.searchParams.set('path', path);
+    target.searchParams.delete('line');
+    target.searchParams.delete('column');
     target.hash = '';
     return target;
   }
@@ -184,13 +186,19 @@ if (root) {
     return true;
   }
   async function openRequestedPath(fromHistory = false) {
-    const requested = new URLSearchParams(location.search).get('path');
+    const params = new URLSearchParams(location.search);
+    const requested = params.get('path');
+    const line = Number(params.get('line'));
+    const column = Number(params.get('column'));
     if (!requested) {
       if (fromHistory && !clearCurrentFile() && current)
         updateFilePageUrl(current, true);
       return;
     }
-    if (requested === current) return;
+    if (requested === current) {
+      focusEditorLocation(line, column);
+      return;
+    }
     const parts = requested.split('/').filter(Boolean);
     let container = tree,
       prefix = '';
@@ -203,6 +211,7 @@ if (root) {
       if (index === parts.length - 1) {
         const opened = await openFile(requested, row, false);
         if (!opened && fromHistory && current) updateFilePageUrl(current, true);
+        if (opened) focusEditorLocation(line, column);
         row.scrollIntoView({ block: 'nearest' });
         return;
       }
@@ -540,24 +549,30 @@ if (root) {
     rows[selectedResult].scrollIntoView({ block: 'nearest' });
     void showSearchPreview(rows[selectedResult].searchResult);
   }
+  function focusEditorLocation(lineNumber, columnNumber = 1) {
+    if (!editor) return;
+    if (!Number.isFinite(lineNumber) || lineNumber < 1) {
+      editor.focus();
+      return;
+    }
+    const line = editor.state.doc.line(
+      Math.min(Math.floor(lineNumber), editor.state.doc.lines),
+    );
+    const column = Number.isFinite(columnNumber)
+      ? Math.max(1, Math.floor(columnNumber))
+      : 1;
+    const position = Math.min(line.to, line.from + column - 1);
+    editor.dispatch({
+      selection: { anchor: position },
+      effects: EditorView.scrollIntoView(position, { y: 'center' }),
+    });
+    editor.focus();
+  }
   async function openSearchResult(result) {
     closeSearch(false);
     const opened = await openFile(result.path, null);
     if (!opened || !editor) return;
-    if (result.line) {
-      const line = editor.state.doc.line(
-        Math.min(result.line, editor.state.doc.lines),
-      );
-      const position = Math.min(
-        line.to,
-        line.from + Math.max(0, (result.column || 1) - 1),
-      );
-      editor.dispatch({
-        selection: { anchor: position },
-        effects: EditorView.scrollIntoView(position, { y: 'center' }),
-      });
-    }
-    editor.focus();
+    focusEditorLocation(result.line, result.column);
   }
   function renderSearchResults(data) {
     searchResults.textContent = '';

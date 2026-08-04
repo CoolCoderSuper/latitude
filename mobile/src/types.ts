@@ -126,6 +126,7 @@ export type ProjectDetail = {
   diff: ProjectDiffLink;
   terminal: ProjectTerminalLink;
   deployments: DeploymentSummary[];
+  archived_deployments?: DeploymentSummary[];
 };
 
 export type ProjectFileEntry = {
@@ -138,6 +139,20 @@ export type ProjectFileEntry = {
 export type ProjectDirectoryResponse = {
   path: string;
   entries: ProjectFileEntry[];
+};
+
+export type ProjectFileSearchKind = 'file' | 'grep';
+
+export type ProjectFileSearchResult = {
+  path: string;
+  line: number | null;
+  column: number | null;
+  preview: string | null;
+};
+
+export type ProjectFileSearchResponse = {
+  results: ProjectFileSearchResult[];
+  limited: boolean;
 };
 
 export type DiffLineKind = 'file' | 'hunk' | 'add' | 'remove';

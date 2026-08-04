@@ -1,5 +1,12 @@
 import * as SecureStore from 'expo-secure-store';
 
+import {
+  mergeSessions,
+  normalizeStoredBaseUrl,
+  parseSessions,
+  sanitizeSession,
+  upsertSession,
+} from './core/session/sessionModel';
 import type { SessionRecord } from './types';
 
 const BASE_URL_KEY = 'latitude.baseUrl';
@@ -47,99 +54,6 @@ async function deleteItem(key: string): Promise<void> {
   delete fallbackStore[key];
 }
 
-function normalizeStoredBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/+$/, '');
-}
-
-function normalizeStoredHostname(hostname: unknown): string | undefined {
-  if (typeof hostname !== 'string') {
-    return undefined;
-  }
-
-  const normalized = hostname.trim();
-  return normalized ? normalized : undefined;
-}
-
-function sanitizeSession(value: unknown): SessionRecord | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const candidate = value as Partial<SessionRecord>;
-  if (
-    typeof candidate.baseUrl !== 'string' ||
-    typeof candidate.token !== 'string'
-  ) {
-    return null;
-  }
-
-  const baseUrl = normalizeStoredBaseUrl(candidate.baseUrl);
-  const token = candidate.token.trim();
-  if (!baseUrl || !token) {
-    return null;
-  }
-
-  const deviceHostname = normalizeStoredHostname(candidate.deviceHostname);
-
-  return {
-    baseUrl,
-    token,
-    ...(deviceHostname ? { deviceHostname } : {}),
-  };
-}
-
-function mergeSessions(sessions: SessionRecord[]): SessionRecord[] {
-  const byBaseUrl = new Map<string, SessionRecord>();
-
-  for (const session of sessions) {
-    byBaseUrl.set(session.baseUrl, session);
-  }
-
-  return Array.from(byBaseUrl.values());
-}
-
-function upsertSession(
-  sessions: SessionRecord[],
-  session: SessionRecord,
-): SessionRecord[] {
-  let replaced = false;
-  const nextSessions = sessions.flatMap((item) => {
-    if (item.baseUrl !== session.baseUrl) {
-      return [item];
-    }
-
-    if (replaced) {
-      return [];
-    }
-
-    replaced = true;
-    return [session];
-  });
-
-  return replaced ? nextSessions : [...nextSessions, session];
-}
-
-function parseSessions(rawSessions: string | null): SessionRecord[] {
-  if (!rawSessions) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(rawSessions);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return mergeSessions(
-      parsed
-        .map((item) => sanitizeSession(item))
-        .filter((item): item is SessionRecord => Boolean(item)),
-    );
-  } catch {
-    return [];
-  }
-}
-
 async function loadSessionFallback(): Promise<SessionRecord | null> {
   const [baseUrl, token] = await Promise.all([
     getItem(BASE_URL_KEY),
@@ -159,10 +73,7 @@ async function saveSessionList(sessions: SessionRecord[]): Promise<void> {
 
 async function saveActiveSession(session: SessionRecord | null): Promise<void> {
   if (!session) {
-    await Promise.all([
-      deleteItem(ACTIVE_BASE_URL_KEY),
-      deleteItem(TOKEN_KEY),
-    ]);
+    await Promise.all([deleteItem(ACTIVE_BASE_URL_KEY), deleteItem(TOKEN_KEY)]);
     return;
   }
 
@@ -220,7 +131,9 @@ export async function saveBaseUrl(baseUrl: string): Promise<void> {
   await setItem(BASE_URL_KEY, normalizeStoredBaseUrl(baseUrl));
 }
 
-export async function saveSession(session: SessionRecord): Promise<SessionRecord[]> {
+export async function saveSession(
+  session: SessionRecord,
+): Promise<SessionRecord[]> {
   const normalizedSession = sanitizeSession(session);
   if (!normalizedSession) {
     return loadSessions();
@@ -293,7 +206,7 @@ export async function removeSession(baseUrl: string): Promise<{
     remainingSessions.some((item) => item.baseUrl === currentSession.baseUrl);
   const activeSession = currentSessionStillSaved
     ? currentSession
-    : remainingSessions[0] ?? null;
+    : (remainingSessions[0] ?? null);
 
   const pendingWrites: Promise<void>[] = [
     saveSessionList(remainingSessions),

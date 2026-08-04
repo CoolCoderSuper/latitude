@@ -13,10 +13,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { absoluteUrl, type LatitudePublicApi } from '../../api';
-import { AppButton, EmptyState, IconButton, InlineNotice, LoadingBlock } from '../../components/ui';
+import {
+  AppButton,
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  LoadingBlock,
+} from '../../components/ui';
 import { useTheme } from '../../theme';
 import type { DeploymentShare, DeploymentSummary } from '../../types';
 import { errorMessage } from '../../utils/errors';
+import { createShareManagerStyles } from './shareManagerStyles';
 
 const EXPIRY_OPTIONS = [
   { label: 'Never', seconds: null },
@@ -39,6 +46,7 @@ export function ShareManagerModal({
   projectName: string;
 }) {
   const { colors, styles } = useTheme();
+  const shareStyles = useMemo(() => createShareManagerStyles(colors), [colors]);
   const [shares, setShares] = useState<DeploymentShare[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -59,7 +67,8 @@ export function ShareManagerModal({
       setShares(
         allShares.filter(
           (share) =>
-            share.project === projectName && share.deployment === deployment.name,
+            share.project === projectName &&
+            share.deployment === deployment.name,
         ),
       );
     } catch (loadError) {
@@ -79,7 +88,10 @@ export function ShareManagerModal({
   }, [deployment, loadShares]);
 
   const activeShares = useMemo(
-    () => [...shares].sort((left, right) => Number(left.expired) - Number(right.expired)),
+    () =>
+      [...shares].sort(
+        (left, right) => Number(left.expired) - Number(right.expired),
+      ),
     [shares],
   );
 
@@ -126,7 +138,9 @@ export function ShareManagerModal({
               void api
                 .deleteShare(share.token)
                 .then(() => {
-                  setShares((current) => current.filter((item) => item.token !== share.token));
+                  setShares((current) =>
+                    current.filter((item) => item.token !== share.token),
+                  );
                   setSuccess('Share link revoked.');
                 })
                 .catch((deleteError) => setError(errorMessage(deleteError)))
@@ -142,7 +156,11 @@ export function ShareManagerModal({
   const sendShare = useCallback(
     async (share: DeploymentShare) => {
       const url = absoluteUrl(baseUrl, share.href);
-      await Share.share({ message: url, title: `Share ${projectName}/${share.deployment}`, url });
+      await Share.share({
+        message: url,
+        title: `Share ${projectName}/${share.deployment}`,
+        url,
+      });
     },
     [baseUrl, projectName],
   );
@@ -154,11 +172,13 @@ export function ShareManagerModal({
       presentationStyle="pageSheet"
       visible={deployment !== null}
     >
-      <SafeAreaView style={styles.shareModalSafeArea}>
-        <View style={styles.shareModalHeader}>
-          <View style={styles.shareModalTitleWrap}>
-            <Text style={styles.shareModalTitle}>Share {deployment?.name ?? ''}</Text>
-            <Text style={styles.shareModalSubtitle}>{projectName}</Text>
+      <SafeAreaView style={shareStyles.safeArea}>
+        <View style={shareStyles.header}>
+          <View style={shareStyles.titleWrap}>
+            <Text style={shareStyles.title}>
+              Share {deployment?.name ?? ''}
+            </Text>
+            <Text style={shareStyles.subtitle}>{projectName}</Text>
           </View>
           <IconButton
             accessibilityLabel="Close share manager"
@@ -166,14 +186,18 @@ export function ShareManagerModal({
             onPress={onClose}
           />
         </View>
-        <ScrollView contentContainerStyle={styles.shareModalContent} keyboardShouldPersistTaps="handled">
+        <ScrollView
+          contentContainerStyle={shareStyles.content}
+          keyboardShouldPersistTaps="handled"
+        >
           {error && <InlineNotice text={error} tone="error" />}
           {success && <InlineNotice text={success} tone="success" />}
 
-          <View style={styles.shareSection}>
-            <Text style={styles.shareSectionTitle}>Create a link</Text>
-            <Text style={styles.shareHelpText}>
-              Leave the password blank for an open link. Share links bypass the server password.
+          <View style={shareStyles.section}>
+            <Text style={shareStyles.sectionTitle}>Create a link</Text>
+            <Text style={shareStyles.helpText}>
+              Leave the password blank for an open link. Share links bypass the
+              server password.
             </Text>
             <View style={styles.formGroup}>
               <Text style={styles.label}>Password (optional)</Text>
@@ -198,12 +222,17 @@ export function ShareManagerModal({
                       key={option.label}
                       onPress={() => setExpirySeconds(option.seconds)}
                       style={({ pressed }) => [
-                        styles.shareOption,
-                        selected && styles.shareOptionSelected,
+                        shareStyles.option,
+                        selected && shareStyles.optionSelected,
                         pressed && styles.pressed,
                       ]}
                     >
-                      <Text style={[styles.shareOptionText, selected && styles.shareOptionTextSelected]}>
+                      <Text
+                        style={[
+                          shareStyles.optionText,
+                          selected && shareStyles.optionTextSelected,
+                        ]}
+                      >
                         {option.label}
                       </Text>
                     </Pressable>
@@ -219,10 +248,16 @@ export function ShareManagerModal({
             />
           </View>
 
-          <View style={styles.shareSection}>
-            <View style={styles.shareSectionHeadingRow}>
-              <Text style={styles.shareSectionTitle}>Existing links</Text>
-              <AppButton compact disabled={loading} label="Refresh" onPress={() => void loadShares()} variant="secondary" />
+          <View style={shareStyles.section}>
+            <View style={shareStyles.sectionHeadingRow}>
+              <Text style={shareStyles.sectionTitle}>Existing links</Text>
+              <AppButton
+                compact
+                disabled={loading}
+                label="Refresh"
+                onPress={() => void loadShares()}
+                variant="secondary"
+              />
             </View>
             {loading && shares.length === 0 ? (
               <LoadingBlock label="Loading share links" />
@@ -231,8 +266,8 @@ export function ShareManagerModal({
             ) : (
               <View style={styles.list}>
                 {activeShares.map((share) => (
-                  <View key={share.token} style={styles.shareCard}>
-                    <View style={styles.shareCardHeading}>
+                  <View key={share.token} style={shareStyles.card}>
+                    <View style={shareStyles.cardHeading}>
                       <View style={styles.cardIcon}>
                         {share.has_password ? (
                           <LockKeyhole color={colors.accent} size={19} />
@@ -241,18 +276,34 @@ export function ShareManagerModal({
                         )}
                       </View>
                       <View style={styles.cardBody}>
-                        <Text numberOfLines={1} style={styles.cardTitle}>{share.token}</Text>
-                        <Text style={[styles.cardMeta, share.expired && styles.shareExpiredText]}>
-                          {share.expired ? 'Expired' : expiryLabel(share.expires_at)}
-                          {share.has_password ? ' · Password protected' : ' · Open link'}
+                        <Text numberOfLines={1} style={styles.cardTitle}>
+                          {share.token}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.cardMeta,
+                            share.expired && shareStyles.expiredText,
+                          ]}
+                        >
+                          {share.expired
+                            ? 'Expired'
+                            : expiryLabel(share.expires_at)}
+                          {share.has_password
+                            ? ' · Password protected'
+                            : ' · Open link'}
                         </Text>
                       </View>
                     </View>
-                    <View style={styles.shareActions}>
+                    <View style={shareStyles.actions}>
                       <AppButton
                         compact
                         disabled={share.expired}
-                        icon={<Share2 color={share.expired ? colors.muted : colors.text} size={17} />}
+                        icon={
+                          <Share2
+                            color={share.expired ? colors.muted : colors.text}
+                            size={17}
+                          />
+                        }
                         label="Share"
                         onPress={() => void sendShare(share)}
                         variant="secondary"
@@ -261,7 +312,9 @@ export function ShareManagerModal({
                         compact
                         disabled={deletingToken === share.token}
                         icon={<Trash2 color={colors.danger} size={17} />}
-                        label={deletingToken === share.token ? 'Revoking…' : 'Revoke'}
+                        label={
+                          deletingToken === share.token ? 'Revoking…' : 'Revoke'
+                        }
                         onPress={() => revokeShare(share)}
                         variant="danger"
                       />

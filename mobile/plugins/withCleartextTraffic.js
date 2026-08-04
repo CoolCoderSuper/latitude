@@ -1,7 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const { withAndroidManifest, withDangerousMod } = require('@expo/config-plugins');
+const {
+  withAndroidManifest,
+  withDangerousMod,
+} = require('@expo/config-plugins');
 
 const networkSecurityConfig = `<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
@@ -15,7 +18,8 @@ module.exports = function withCleartextTraffic(config) {
 
     if (application) {
       application.$['android:usesCleartextTraffic'] = 'true';
-      application.$['android:networkSecurityConfig'] = '@xml/network_security_config';
+      application.$['android:networkSecurityConfig'] =
+        '@xml/network_security_config';
     }
 
     return config;

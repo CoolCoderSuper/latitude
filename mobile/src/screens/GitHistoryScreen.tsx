@@ -3,7 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../api';
-import { EmptyState, IconButton, InlineNotice, LoadingBlock, ScreenHeader } from '../components/ui';
+import {
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  LoadingBlock,
+  ScreenHeader,
+} from '../components/ui';
 import { useRefreshControl, useTheme } from '../theme';
 import type { GitHistoryResponse } from '../types';
 import { errorMessage } from '../utils/errors';
@@ -70,11 +76,16 @@ export function GitHistoryScreen({
                 key={commit.hash}
                 accessibilityRole="button"
                 onPress={() => onOpenCommit(commit.hash)}
-                style={({ pressed }) => [styles.gitHistoryRow, pressed && styles.pressed]}
+                style={({ pressed }) => [
+                  styles.gitHistoryRow,
+                  pressed && styles.pressed,
+                ]}
               >
                 <Text style={styles.gitHash}>{commit.short_hash}</Text>
                 <View style={styles.cardBody}>
-                  <Text numberOfLines={1} style={styles.gitHistorySubject}>{commit.subject}</Text>
+                  <Text numberOfLines={1} style={styles.gitHistorySubject}>
+                    {commit.subject}
+                  </Text>
                   <Text numberOfLines={1} style={styles.gitHistoryMeta}>
                     {commit.author} · {formatCommitDate(commit.authored_at)}
                   </Text>

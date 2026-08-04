@@ -5,7 +5,7 @@ import {
   Globe2,
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../api';
@@ -13,7 +13,10 @@ import { IconButton, ScreenHeader, SegmentButton } from '../components/ui';
 import { PROJECT_TABS } from '../constants';
 import { DeploymentsPanel } from '../features/deployments/DeploymentsPanel';
 import { DiffPanel } from '../features/git/DiffPanel';
-import { FilesPanel, type FilesPanelHandle } from '../features/files/FilesPanel';
+import {
+  FilesPanel,
+  type FilesPanelHandle,
+} from '../features/files/FilesPanel';
 import { TerminalPanel } from '../features/terminal/TerminalPanel';
 import type { ProjectTab } from '../navigationTypes';
 import { useTheme } from '../theme';
@@ -48,7 +51,21 @@ export function ProjectScreen({
   const { colors, styles } = useTheme();
   const [codeInteractionActive, setCodeInteractionActive] = useState(false);
   const [filesCanGoBack, setFilesCanGoBack] = useState(false);
+  const [visitedTabs, setVisitedTabs] = useState<Set<ProjectTab>>(
+    () => new Set([tab]),
+  );
   const filesPanelRef = useRef<FilesPanelHandle>(null);
+
+  useEffect(() => {
+    setVisitedTabs((current) => {
+      if (current.has(tab)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(tab);
+      return next;
+    });
+  }, [tab]);
 
   const selectTab = useCallback(
     (nextTab: ProjectTab) => {
@@ -88,8 +105,7 @@ export function ProjectScreen({
           const absDx = Math.abs(gesture.dx);
           const absDy = Math.abs(gesture.dy);
           const deliberateSwipe =
-            (absDx > 72 || Math.abs(gesture.vx) > 0.45) &&
-            absDx > absDy * 1.2;
+            (absDx > 72 || Math.abs(gesture.vx) > 0.45) && absDx > absDy * 1.2;
 
           if (!deliberateSwipe) {
             return;
@@ -124,25 +140,45 @@ export function ProjectScreen({
       <View style={styles.segmented}>
         <SegmentButton
           active={tab === 'deployments'}
-          icon={<Globe2 color={tab === 'deployments' ? colors.onAccent : colors.text} size={17} />}
+          icon={
+            <Globe2
+              color={tab === 'deployments' ? colors.onAccent : colors.text}
+              size={17}
+            />
+          }
           label="Apps"
           onPress={() => selectTab('deployments')}
         />
         <SegmentButton
           active={tab === 'code'}
-          icon={<GitBranch color={tab === 'code' ? colors.onAccent : colors.text} size={17} />}
+          icon={
+            <GitBranch
+              color={tab === 'code' ? colors.onAccent : colors.text}
+              size={17}
+            />
+          }
           label="Code"
           onPress={() => selectTab('code')}
         />
         <SegmentButton
           active={tab === 'files'}
-          icon={<FolderCode color={tab === 'files' ? colors.onAccent : colors.text} size={17} />}
+          icon={
+            <FolderCode
+              color={tab === 'files' ? colors.onAccent : colors.text}
+              size={17}
+            />
+          }
           label="Files"
           onPress={() => selectTab('files')}
         />
         <SegmentButton
           active={tab === 'terminal'}
-          icon={<TerminalIcon color={tab === 'terminal' ? colors.onAccent : colors.text} size={17} />}
+          icon={
+            <TerminalIcon
+              color={tab === 'terminal' ? colors.onAccent : colors.text}
+              size={17}
+            />
+          }
           label="Terminal"
           onPress={() => selectTab('terminal')}
         />
@@ -155,15 +191,18 @@ export function ProjectScreen({
             tab === 'deployments' ? styles.tabPageActive : styles.tabPageHidden,
           ]}
         >
-          <DeploymentsPanel
-            api={api}
-            baseUrl={session.baseUrl}
-            deployments={project.deployments}
-            onOpenViewer={onOpenViewer}
-            onRefresh={onRefresh}
-            refreshing={projectLoading}
-            projectName={project.name}
-          />
+          {visitedTabs.has('deployments') && (
+            <DeploymentsPanel
+              api={api}
+              archivedDeployments={project.archived_deployments}
+              baseUrl={session.baseUrl}
+              deployments={project.deployments}
+              onOpenViewer={onOpenViewer}
+              onRefresh={onRefresh}
+              refreshing={projectLoading}
+              projectName={project.name}
+            />
+          )}
         </View>
         <View
           pointerEvents={tab === 'code' ? 'auto' : 'none'}
@@ -172,13 +211,15 @@ export function ProjectScreen({
             tab === 'code' ? styles.tabPageActive : styles.tabPageHidden,
           ]}
         >
-          <DiffPanel
-            active={tab === 'code'}
-            api={api}
-            onCodeInteractionChange={handleCodeInteractionChange}
-            onOpenHistory={onOpenGitHistory}
-            projectName={project.name}
-          />
+          {visitedTabs.has('code') && (
+            <DiffPanel
+              active={tab === 'code'}
+              api={api}
+              onCodeInteractionChange={handleCodeInteractionChange}
+              onOpenHistory={onOpenGitHistory}
+              projectName={project.name}
+            />
+          )}
         </View>
         <View
           pointerEvents={tab === 'files' ? 'auto' : 'none'}
@@ -187,14 +228,16 @@ export function ProjectScreen({
             tab === 'files' ? styles.tabPageActive : styles.tabPageHidden,
           ]}
         >
-          <FilesPanel
-            ref={filesPanelRef}
-            active={tab === 'files'}
-            api={api}
-            projectName={project.name}
-            session={session}
-            onFolderNavigationChange={setFilesCanGoBack}
-          />
+          {visitedTabs.has('files') && (
+            <FilesPanel
+              ref={filesPanelRef}
+              active={tab === 'files'}
+              api={api}
+              projectName={project.name}
+              session={session}
+              onFolderNavigationChange={setFilesCanGoBack}
+            />
+          )}
         </View>
         <View
           pointerEvents={tab === 'terminal' ? 'auto' : 'none'}
@@ -203,7 +246,9 @@ export function ProjectScreen({
             tab === 'terminal' ? styles.tabPageActive : styles.tabPageHidden,
           ]}
         >
-          <TerminalPanel api={api} project={project} session={session} />
+          {visitedTabs.has('terminal') && (
+            <TerminalPanel api={api} project={project} session={session} />
+          )}
         </View>
       </View>
     </View>

@@ -3,7 +3,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import type { LatitudePublicApi } from '../api';
-import { EmptyState, IconButton, InlineNotice, LoadingBlock, ScreenHeader } from '../components/ui';
+import {
+  EmptyState,
+  IconButton,
+  InlineNotice,
+  LoadingBlock,
+  ScreenHeader,
+} from '../components/ui';
 import { DiffBlock } from '../features/git/DiffSection';
 import { useRefreshControl, useTheme } from '../theme';
 import type { GitCommitResponse, GitFileDiff } from '../types';
@@ -48,7 +54,11 @@ export function GitCommitScreen({
   const toggleFile = useCallback((path: string) => {
     setExpanded((current) => {
       const next = new Set(current);
-      next.has(path) ? next.delete(path) : next.add(path);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
       return next;
     });
   }, []);
@@ -78,14 +88,17 @@ export function GitCommitScreen({
           <>
             <View style={styles.gitCommitHeader}>
               <View style={styles.cardBody}>
-                <Text selectable style={styles.gitHash}>{commit.short_hash}</Text>
+                <Text selectable style={styles.gitHash}>
+                  {commit.short_hash}
+                </Text>
                 <Text numberOfLines={1} style={styles.gitHistoryMeta}>
                   {commit.author} · {formatCommitDate(commit.authored_at)}
                 </Text>
               </View>
               <View style={styles.gitCommitStats}>
                 <Text style={styles.gitCommitFileCount}>
-                  {commit.files.length} {commit.files.length === 1 ? 'file' : 'files'}
+                  {commit.files.length}{' '}
+                  {commit.files.length === 1 ? 'file' : 'files'}
                 </Text>
                 <Text style={styles.gitAdditionsText}>+{commit.additions}</Text>
                 <Text style={styles.gitDeletionsText}>-{commit.deletions}</Text>
@@ -129,14 +142,19 @@ function CommitFile({
     <View style={styles.fileCard}>
       <Pressable
         onPress={onToggle}
-        style={({ pressed }) => [styles.gitCommitFileRow, pressed && styles.pressed]}
+        style={({ pressed }) => [
+          styles.gitCommitFileRow,
+          pressed && styles.pressed,
+        ]}
       >
         {expanded ? (
           <ChevronDown color={colors.muted} size={16} />
         ) : (
           <ChevronRight color={colors.muted} size={16} />
         )}
-        <Text numberOfLines={1} style={styles.gitCommitFilePath}>{file.path}</Text>
+        <Text numberOfLines={1} style={styles.gitCommitFilePath}>
+          {file.path}
+        </Text>
         <View style={styles.gitCommitStats}>
           <Text style={styles.gitAdditionsText}>+{counts.additions}</Text>
           <Text style={styles.gitDeletionsText}>-{counts.deletions}</Text>

@@ -11,15 +11,8 @@ import {
 
 import { useTheme } from '../../theme';
 import type { DiffLine, GitFileChange, GitFileDiff } from '../../types';
-import {
-  statusLabel,
-  visibleDiffsForSection,
-} from './gitDiffUtils';
-import {
-  diffLineStyle,
-  fallbackDiffLines,
-  tokenStyle,
-} from './diffSyntax';
+import { statusLabel, visibleDiffsForSection } from './gitDiffUtils';
+import { diffLineStyle, fallbackDiffLines, tokenStyle } from './diffSyntax';
 
 const SELECTABLE_DIFF_LINE_LIMIT = 80;
 const SELECTABLE_DIFF_TOKEN_LIMIT = 800;
@@ -313,10 +306,7 @@ function SelectableDiffBlock({ rows }: { rows: DiffRow[] }) {
   return (
     <Text selectable style={styles.diffText}>
       {rows.map((row, lineIndex) => (
-        <Text
-          key={row.key}
-          style={diffLineStyle(row.line.kind, styles)}
-        >
+        <Text key={row.key} style={diffLineStyle(row.line.kind, styles)}>
           {row.line.tokens.map((token, tokenIndex) => (
             <Text
               key={`${lineIndex}:${tokenIndex}:${token.text}`}

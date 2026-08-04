@@ -108,7 +108,10 @@ export function ConnectScreen({
             value={baseUrl}
           />
           <View style={styles.quickRow}>
-            <Chip label="This PC" onPress={() => setBaseUrl(DEFAULT_BASE_URL)} />
+            <Chip
+              label="This PC"
+              onPress={() => setBaseUrl(DEFAULT_BASE_URL)}
+            />
             <Chip
               label="Emulator"
               onPress={() => setBaseUrl(ANDROID_EMULATOR_URL)}
@@ -123,7 +126,9 @@ export function ConnectScreen({
             autoCorrect={false}
             onChangeText={setPassword}
             onFocus={() => {
-              requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+              requestAnimationFrame(() =>
+                scrollRef.current?.scrollToEnd({ animated: true }),
+              );
             }}
             placeholder="Public password"
             placeholderTextColor={colors.muted}

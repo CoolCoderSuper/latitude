@@ -3,6 +3,9 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './terminal-viewer.css';
 
+window.Terminal = Terminal;
+window.FitAddon = { FitAddon };
+
 const workspace = document.querySelector('[data-terminal-workspace]');
 
 if (workspace) {

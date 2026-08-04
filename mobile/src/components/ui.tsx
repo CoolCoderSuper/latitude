@@ -88,6 +88,8 @@ export function AppButton({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -133,6 +135,8 @@ export function IconButton({
   return (
     <Pressable
       accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -162,6 +166,8 @@ export function SegmentButton({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       onPress={onPress}
       style={({ pressed }) => [
         styles.segmentButton,
@@ -172,10 +178,7 @@ export function SegmentButton({
       {icon}
       <Text
         numberOfLines={1}
-        style={[
-          styles.segmentText,
-          active && styles.segmentTextActive,
-        ]}
+        style={[styles.segmentText, active && styles.segmentTextActive]}
       >
         {label}
       </Text>
@@ -183,11 +186,18 @@ export function SegmentButton({
   );
 }
 
-export function Chip({ label, onPress }: { label: string; onPress: () => void }) {
+export function Chip({
+  label,
+  onPress,
+}: {
+  label: string;
+  onPress: () => void;
+}) {
   const { styles } = useTheme();
 
   return (
     <Pressable
+      accessibilityRole="button"
       onPress={onPress}
       style={({ pressed }) => [styles.chip, pressed && styles.pressed]}
     >
@@ -207,6 +217,8 @@ export function InlineNotice({
 
   return (
     <View
+      accessibilityLiveRegion="polite"
+      accessibilityRole="alert"
       style={[
         styles.notice,
         tone === 'error' ? styles.noticeError : styles.noticeSuccess,

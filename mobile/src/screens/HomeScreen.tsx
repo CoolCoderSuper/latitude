@@ -9,8 +9,15 @@ import {
   Terminal as TerminalIcon,
 } from 'lucide-react-native';
 import { useIsFocused } from '@react-navigation/native';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, AppState, PanResponder, Pressable, ScrollView, Text, View } from 'react-native';
+import { useCallback, useMemo, useState } from 'react';
+import {
+  Alert,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
 
 import {
   EmptyState,
@@ -21,6 +28,9 @@ import {
   ScreenHeader,
 } from '../components/ui';
 import { useRefreshControl, useTheme } from '../theme';
+import { useActivePolling } from '../core/lifecycle/useActivePolling';
+import { sessionLabel } from '../core/session/sessionModel';
+import { groupProjects } from '../features/projects/projectGroups';
 import type {
   ProjectSummary,
   RootDesktopLink,
@@ -54,7 +64,10 @@ export function HomeScreen({
   onOpenRootDesktop: () => void;
   onOpenProject: (name: string) => void;
   onOpenRootTerminal: () => void;
-  onSetWorktreeArchived: (name: string, archived: boolean) => void | Promise<void>;
+  onSetWorktreeArchived: (
+    name: string,
+    archived: boolean,
+  ) => void | Promise<void>;
   onRefresh: (
     fetchRemote?: boolean,
     quiet?: boolean,
@@ -81,26 +94,11 @@ export function HomeScreen({
     [activeProjects, projects],
   );
 
-  useEffect(() => {
-    if (!isFocused) return;
-    let appActive = AppState.currentState === 'active';
-    const refresh = (fetchRemote = false) => {
-      if (appActive) void onRefresh(fetchRemote, true, true);
-    };
-    refresh(true);
-    const refreshInterval = setInterval(() => refresh(false), 2_000);
-    const fetchInterval = setInterval(() => refresh(true), 30_000);
-    const subscription = AppState.addEventListener('change', (state) => {
-      const wasActive = appActive;
-      appActive = state === 'active';
-      if (appActive && !wasActive) refresh(true);
-    });
-    return () => {
-      clearInterval(refreshInterval);
-      clearInterval(fetchInterval);
-      subscription.remove();
-    };
-  }, [isFocused, onRefresh]);
+  useActivePolling({
+    enabled: isFocused,
+    onLocalRefresh: () => onRefresh(false, true, true),
+    onRemoteRefresh: () => onRefresh(true, true, true),
+  });
 
   const switchAdjacentServer = useCallback(
     (direction: number) => {
@@ -131,8 +129,7 @@ export function HomeScreen({
           const absDx = Math.abs(gesture.dx);
           const absDy = Math.abs(gesture.dy);
           const deliberateSwipe =
-            (absDx > 76 || Math.abs(gesture.vx) > 0.5) &&
-            absDx > absDy * 1.25;
+            (absDx > 76 || Math.abs(gesture.vx) > 0.5) && absDx > absDy * 1.25;
 
           if (!deliberateSwipe) {
             return;
@@ -173,7 +170,7 @@ export function HomeScreen({
           >
             {serverSessions.map((serverSession) => {
               const active = serverSession.baseUrl === baseUrl;
-              const label = serverLabel(serverSession);
+              const label = sessionLabel(serverSession);
               return (
                 <Pressable
                   accessibilityLabel={`Switch to ${label}`}
@@ -307,7 +304,9 @@ export function HomeScreen({
                   <IconButton
                     accessibilityLabel={`Restore ${project.worktree?.branch ?? project.name}`}
                     icon={<ArchiveRestore color={colors.accent} size={18} />}
-                    onPress={() => void onSetWorktreeArchived(project.name, false)}
+                    onPress={() =>
+                      void onSetWorktreeArchived(project.name, false)
+                    }
                   />
                 </View>
               ))}
@@ -336,10 +335,7 @@ function ProjectCard({
     <View style={styles.projectCard}>
       <Pressable
         onPress={() => onOpen(project.name)}
-        style={({ pressed }) => [
-          styles.projectOpen,
-          pressed && styles.pressed,
-        ]}
+        style={({ pressed }) => [styles.projectOpen, pressed && styles.pressed]}
       >
         <View style={styles.cardIcon}>
           <FolderOpen color={colors.accent} size={21} />
@@ -352,7 +348,9 @@ function ProjectCard({
               : project.summary}
           </Text>
         </View>
-        {(project.git_dirty || project.git_ahead > 0 || project.git_behind > 0) && (
+        {(project.git_dirty ||
+          project.git_ahead > 0 ||
+          project.git_behind > 0) && (
           <View
             accessibilityLabel="Git working tree and remote status"
             accessible
@@ -361,10 +359,14 @@ function ProjectCard({
             {project.git_dirty && (
               <>
                 {project.git_additions > 0 && (
-                  <Text style={styles.gitAdditionsText}>+{project.git_additions}</Text>
+                  <Text style={styles.gitAdditionsText}>
+                    +{project.git_additions}
+                  </Text>
                 )}
                 {project.git_deletions > 0 && (
-                  <Text style={styles.gitDeletionsText}>-{project.git_deletions}</Text>
+                  <Text style={styles.gitDeletionsText}>
+                    -{project.git_deletions}
+                  </Text>
                 )}
                 {project.git_additions === 0 && project.git_deletions === 0 && (
                   <Text style={styles.gitAdditionsText}>changed</Text>
@@ -402,59 +404,4 @@ function ProjectCard({
       )}
     </View>
   );
-}
-
-type ProjectGroup = {
-  key: string;
-  label: string;
-  grouped: boolean;
-  projects: ProjectSummary[];
-};
-
-function groupProjects(
-  visibleProjects: ProjectSummary[],
-  allProjects: ProjectSummary[],
-): ProjectGroup[] {
-  const repositoryLabels = new Map<string, string>();
-  for (const project of allProjects) {
-    const repository = project.worktree?.repository;
-    if (!repository) continue;
-    if (!project.worktree?.discovered) {
-      repositoryLabels.set(repository, project.name);
-    }
-  }
-
-  const groups = new Map<string, ProjectGroup>();
-  for (const project of visibleProjects) {
-    const repository = project.worktree?.repository;
-    const key = repository ?? `project:${project.name}`;
-    let group = groups.get(key);
-    if (!group) {
-      group = {
-        key,
-        label: repositoryLabels.get(key) ?? project.name,
-        grouped: false,
-        projects: [],
-      };
-      groups.set(key, group);
-    }
-    group.projects.push(project);
-  }
-  return [...groups.values()].map((group) => ({
-    ...group,
-    grouped: group.projects.length > 1,
-  }));
-}
-
-function serverLabel(session: SessionRecord): string {
-  const hostname = session.deviceHostname?.trim();
-  if (hostname) {
-    return hostname;
-  }
-
-  try {
-    return new URL(session.baseUrl).host;
-  } catch {
-    return session.baseUrl;
-  }
 }

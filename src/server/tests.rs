@@ -2426,6 +2426,10 @@ fn builds_public_project_detail_with_enabled_deployments() {
     assert_eq!(detail.name, "demo");
     assert_eq!(detail.device_hostname, TEST_HOSTNAME);
     assert_eq!(detail.deployment_count, 4);
+    assert_eq!(detail.deployments.len(), 4);
+    assert_eq!(detail.archived_deployments.len(), 1);
+    assert_eq!(detail.archived_deployments[0].name, "draft");
+    assert_eq!(detail.archived_deployments[0].kind, "static");
     assert_eq!(detail.diff.api_href, "/__latitude/api/projects/demo/diff");
     assert_eq!(
         detail.terminal.api_href,

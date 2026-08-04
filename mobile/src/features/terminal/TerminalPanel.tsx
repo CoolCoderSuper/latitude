@@ -1,9 +1,5 @@
-import {
-  Plus,
-  Terminal as TerminalIcon,
-  X,
-} from 'lucide-react-native';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Terminal as TerminalIcon, X } from 'lucide-react-native';
+import { useEffect, useMemo, useRef } from 'react';
 import { AppState, Pressable, ScrollView, Text, View } from 'react-native';
 import WebView from 'react-native-webview';
 
@@ -17,12 +13,17 @@ import type {
   SessionRecord,
   TerminalSessionSummary,
 } from '../../types';
-import { errorMessage } from '../../utils/errors';
 import {
   terminalDocument,
   terminalDocumentTheme,
   terminalThemeInjectionScript,
 } from './terminalDocument';
+import { authenticatedWebSocketUrl } from '../../webview/urls';
+import {
+  useTerminalSessions,
+  type TerminalTarget,
+} from './useTerminalSessions';
+import { createTerminalStyles } from './terminalStyles';
 
 export function TerminalPanel({
   api,
@@ -72,115 +73,44 @@ export function RootTerminalPanel({
   return <TerminalWorkspace session={session} target={target} />;
 }
 
-type TerminalPanelTarget = {
-  title: string;
-  terminalHref: string;
-  listSessions: () => Promise<{ sessions: TerminalSessionSummary[] }>;
-  createSession: () => Promise<TerminalSessionSummary>;
-  closeSession: (sessionId: string) => Promise<void>;
-};
-
 function TerminalWorkspace({
   session,
   target,
 }: {
   session: SessionRecord;
-  target: TerminalPanelTarget;
+  target: TerminalTarget;
 }) {
   const { colors, styles } = useTheme();
-  const [sessions, setSessions] = useState<TerminalSessionSummary[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const loadSessions = useCallback(async () => {
-    setLoading(true);
-    setNotice(null);
-    try {
-      let nextSessions = (await target.listSessions()).sessions;
-      if (nextSessions.length === 0) {
-        nextSessions = [await target.createSession()];
-      }
-      setSessions(nextSessions);
-      setActiveSessionId((current) =>
-        nextSessions.some((item) => item.id === current)
-          ? current
-          : nextSessions[0]?.id ?? null,
-      );
-    } catch (sessionError) {
-      setNotice(errorMessage(sessionError));
-    } finally {
-      setLoading(false);
-    }
-  }, [target]);
-
-  useEffect(() => {
-    void loadSessions();
-  }, [loadSessions]);
-
-  const createSession = useCallback(async () => {
-    if (creating) {
-      return;
-    }
-
-    setCreating(true);
-    setNotice(null);
-    try {
-      const created = await target.createSession();
-      setSessions((current) => [...current, created]);
-      setActiveSessionId(created.id);
-    } catch (sessionError) {
-      setNotice(errorMessage(sessionError));
-    } finally {
-      setCreating(false);
-    }
-  }, [creating, target]);
-
-  const closeSession = useCallback(
-    async (sessionId: string) => {
-      if (closingSessionId) {
-        return;
-      }
-
-      setClosingSessionId(sessionId);
-      setNotice(null);
-      try {
-        await target.closeSession(sessionId);
-        setSessions((current) => {
-          const next = current.filter((item) => item.id !== sessionId);
-          setActiveSessionId((active) =>
-            active === sessionId ? next[0]?.id ?? null : active,
-          );
-          return next;
-        });
-      } catch (sessionError) {
-        setNotice(errorMessage(sessionError));
-      } finally {
-        setClosingSessionId(null);
-      }
-    },
-    [closingSessionId, target],
-  );
+  const terminalStyles = useMemo(() => createTerminalStyles(colors), [colors]);
+  const {
+    activeSessionId,
+    closeSession,
+    closingSessionId,
+    createSession,
+    creating,
+    loading,
+    notice,
+    sessions,
+    setActiveSessionId,
+  } = useTerminalSessions(target);
 
   return (
-    <View style={styles.terminalPanel}>
-      <View style={styles.terminalSessionBar}>
+    <View style={terminalStyles.panel}>
+      <View style={terminalStyles.sessionBar}>
         <ScrollView
           horizontal
-          contentContainerStyle={styles.terminalSessionList}
+          contentContainerStyle={terminalStyles.sessionList}
           showsHorizontalScrollIndicator={false}
         >
           {sessions.map((terminalSession) => {
             const active = terminalSession.id === activeSessionId;
             return (
-              <View key={terminalSession.id} style={styles.terminalSessionItem}>
+              <View key={terminalSession.id} style={terminalStyles.sessionItem}>
                 <Pressable
                   onPress={() => setActiveSessionId(terminalSession.id)}
                   style={({ pressed }) => [
-                    styles.terminalSessionChip,
-                    active && styles.terminalSessionChipActive,
+                    terminalStyles.sessionChip,
+                    active && terminalStyles.sessionChipActive,
                     pressed && styles.pressed,
                   ]}
                 >
@@ -191,8 +121,8 @@ function TerminalWorkspace({
                   <Text
                     numberOfLines={1}
                     style={[
-                      styles.terminalSessionText,
-                      active && styles.terminalSessionTextActive,
+                      terminalStyles.sessionText,
+                      active && terminalStyles.sessionTextActive,
                     ]}
                   >
                     {terminalSession.title}
@@ -205,7 +135,7 @@ function TerminalWorkspace({
                     void closeSession(terminalSession.id);
                   }}
                   style={({ pressed }) => [
-                    styles.terminalSessionClose,
+                    terminalStyles.sessionClose,
                     pressed && styles.pressed,
                   ]}
                 >
@@ -222,7 +152,7 @@ function TerminalWorkspace({
             void createSession();
           }}
           style={({ pressed }) => [
-            styles.terminalNewButton,
+            terminalStyles.newButton,
             pressed && styles.pressed,
           ]}
         >
@@ -232,7 +162,7 @@ function TerminalWorkspace({
 
       {notice && <InlineNotice tone="error" text={notice} />}
 
-      <View style={styles.terminalStack}>
+      <View style={terminalStyles.stack}>
         {loading ? (
           <LoadingBlock label="Loading terminals" />
         ) : sessions.length === 0 ? (
@@ -255,20 +185,6 @@ function TerminalWorkspace({
   );
 }
 
-function terminalWebSocketUrl(
-  baseUrl: string,
-  terminalHref: string,
-  token: string,
-  sessionId: string,
-): string {
-  const cleanHref = terminalHref.replace(/\/+$/, '');
-  const url = new URL(`${cleanHref}/ws`, `${normalizeBaseUrl(baseUrl)}/`);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('token', token);
-  url.searchParams.set('session', sessionId);
-  return url.toString();
-}
-
 function TerminalSessionView({
   active,
   baseUrl,
@@ -285,6 +201,7 @@ function TerminalSessionView({
   token: string;
 }) {
   const { colors, mode, styles } = useTheme();
+  const terminalStyles = useMemo(() => createTerminalStyles(colors), [colors]);
   const webViewRef = useRef<WebView>(null);
   const terminalTheme = useMemo(
     () => terminalDocumentTheme(mode, colors),
@@ -292,7 +209,13 @@ function TerminalSessionView({
   );
   const initialThemeRef = useRef(terminalTheme);
   const terminalUrl = useMemo(
-    () => terminalWebSocketUrl(baseUrl, terminalHref, token, session.id),
+    () =>
+      authenticatedWebSocketUrl({
+        baseUrl,
+        href: terminalHref,
+        parameters: { session: session.id },
+        token,
+      }),
     [baseUrl, terminalHref, session.id, token],
   );
   const terminalHtml = useMemo(
@@ -301,8 +224,9 @@ function TerminalSessionView({
         `${terminalTitle} - ${session.title}`,
         terminalUrl,
         initialThemeRef.current,
+        normalizeBaseUrl(baseUrl),
       ),
-    [session.title, terminalTitle, terminalUrl],
+    [baseUrl, session.title, terminalTitle, terminalUrl],
   );
   const terminalThemeScript = useMemo(
     () => terminalThemeInjectionScript(terminalTheme),
@@ -331,7 +255,7 @@ function TerminalSessionView({
   return (
     <View
       pointerEvents={active ? 'auto' : 'none'}
-      style={[styles.terminalFrame, active && styles.terminalFrameActive]}
+      style={[terminalStyles.frame, active && terminalStyles.frameActive]}
     >
       <WebView
         ref={webViewRef}

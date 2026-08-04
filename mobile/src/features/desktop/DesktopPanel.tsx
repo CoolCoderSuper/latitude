@@ -30,50 +30,19 @@ import {
 } from 'react-native';
 import WebView from 'react-native-webview';
 
-import { normalizeBaseUrl } from '../../api';
 import { useTheme, type ThemeColors, type ThemeMode } from '../../theme';
-import type { DesktopScreen, RootDesktopLink, SessionRecord } from '../../types';
+import type { RootDesktopLink, SessionRecord } from '../../types';
+import { commandInjectionScript } from '../../webview/bridge';
+import { authenticatedWebSocketUrl } from '../../webview/urls';
+import {
+  DESKTOP_MOUSE_BUTTONS,
+  initialDesktopViewerState,
+  mergeDesktopViewerState,
+  parseDesktopBridgeMessage,
+  type DesktopCommand,
+  type DesktopViewerState,
+} from './desktopBridge';
 import { desktopDocument } from './desktopDocument';
-
-type PointerMode = 'touchpad' | 'direct';
-
-type DesktopViewerScreen = {
-  id: string;
-  label: string;
-  title: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  primary: boolean;
-};
-
-type DesktopViewerState = {
-  ready: boolean;
-  connected: boolean;
-  status: string;
-  statusIsError: boolean;
-  viewOnly: boolean;
-  controlGranted: boolean;
-  autoScale: boolean;
-  zoomLevel: number;
-  selectedScreenId: string;
-  screens: DesktopViewerScreen[];
-  pointerMode: PointerMode;
-  activeMouseButton: number;
-  dragLocked: boolean;
-  pressedModifiers: string[];
-};
-
-type DesktopCommand = Record<string, unknown> & {
-  type: string;
-};
-
-const MOUSE_BUTTONS = [
-  { label: 'L', mask: 0x1, title: 'Left click' },
-  { label: 'M', mask: 0x2, title: 'Middle click' },
-  { label: 'R', mask: 0x4, title: 'Right click' },
-];
 
 const MODIFIER_KEYS = [
   { key: 'control', label: 'Ctrl' },
@@ -136,22 +105,27 @@ export function RootDesktopPanel({
   session: SessionRecord;
 }) {
   const { colors, mode, styles } = useTheme();
-  const chrome = useMemo(() => createDesktopChrome(colors, mode), [colors, mode]);
+  const chrome = useMemo(
+    () => createDesktopChrome(colors, mode),
+    [colors, mode],
+  );
   const controlStyles = useMemo(
     () => createDesktopControlStyles(chrome),
     [chrome],
   );
   const webViewRef = useRef<WebView>(null);
   const [viewerState, setViewerState] = useState<DesktopViewerState>(() =>
-    initialViewerState(
-      rootDesktop.view_only,
-      rootDesktop.screens ?? [],
-    ),
+    initialDesktopViewerState(rootDesktop.view_only, rootDesktop.screens ?? []),
   );
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [keyboardText, setKeyboardText] = useState('');
   const desktopUrl = useMemo(
-    () => desktopWebSocketUrl(session.baseUrl, rootDesktop.href, session.token),
+    () =>
+      authenticatedWebSocketUrl({
+        baseUrl: session.baseUrl,
+        href: rootDesktop.href,
+        token: session.token,
+      }),
     [rootDesktop.href, session.baseUrl, session.token],
   );
   const desktopHtml = useMemo(
@@ -175,9 +149,8 @@ export function RootDesktopPanel({
   const canControl = !viewerState.viewOnly && viewerState.controlGranted;
 
   const sendCommand = useCallback((command: DesktopCommand) => {
-    const payload = JSON.stringify(command);
     webViewRef.current?.injectJavaScript(
-      `window.latitudeMobileCommand && window.latitudeMobileCommand(${payload}); true;`,
+      commandInjectionScript('latitudeMobileCommand', command),
     );
   }, []);
 
@@ -187,7 +160,7 @@ export function RootDesktopPanel({
 
   useEffect(() => {
     setViewerState(
-      initialViewerState(
+      initialDesktopViewerState(
         rootDesktop.view_only,
         rootDesktop.screens ?? [],
       ),
@@ -207,14 +180,19 @@ export function RootDesktopPanel({
     return () => subscription.remove();
   }, [sendCommand]);
 
-  const handleMessage = useCallback((event: { nativeEvent: { data: string } }) => {
-    const message = parseBridgeMessage(event.nativeEvent.data);
-    if (message?.type !== 'desktop-state') {
-      return;
-    }
+  const handleMessage = useCallback(
+    (event: { nativeEvent: { data: string } }) => {
+      const message = parseDesktopBridgeMessage(event.nativeEvent.data);
+      if (!message) {
+        return;
+      }
 
-    setViewerState((current) => mergeViewerState(current, message.state));
-  }, []);
+      setViewerState((current) =>
+        mergeDesktopViewerState(current, message.state),
+      );
+    },
+    [],
+  );
 
   const sendKeyboardText = useCallback(() => {
     if (!keyboardText || !canControl) {
@@ -228,7 +206,7 @@ export function RootDesktopPanel({
   return (
     <View
       style={[
-        styles.desktopPanel,
+        controlStyles.panel,
         { backgroundColor: chrome.viewerBackground },
       ]}
     >
@@ -248,7 +226,7 @@ export function RootDesktopPanel({
         setSupportMultipleWindows={false}
         showsHorizontalScrollIndicator={false}
         showsVerticalScrollIndicator={false}
-        source={{ html: desktopHtml, baseUrl: normalizeBaseUrl(session.baseUrl) }}
+        source={{ html: desktopHtml, baseUrl: session.baseUrl }}
         startInLoadingState
         style={[styles.webView, { backgroundColor: chrome.viewerBackground }]}
       />
@@ -267,11 +245,7 @@ export function RootDesktopPanel({
             ]}
           >
             <CircleDot
-              color={
-                viewerState.statusIsError
-                  ? chrome.danger
-                  : chrome.success
-              }
+              color={viewerState.statusIsError ? chrome.danger : chrome.success}
               size={14}
             />
             <Text
@@ -281,7 +255,8 @@ export function RootDesktopPanel({
                 viewerState.statusIsError && controlStyles.statusTextError,
               ]}
             >
-              {viewerState.status || (viewerState.connected ? 'Connected' : 'Desktop')}
+              {viewerState.status ||
+                (viewerState.connected ? 'Connected' : 'Desktop')}
             </Text>
           </View>
           {viewerState.screens.length > 1 && (
@@ -306,8 +281,17 @@ export function RootDesktopPanel({
             active={viewerState.autoScale && viewerState.zoomLevel <= 1.01}
             controlStyles={controlStyles}
             disabled={controlsDisabled}
-            icon={<Monitor color={buttonColor(chrome, viewerState.autoScale)} size={16} />}
-            label={viewerState.autoScale && viewerState.zoomLevel <= 1.01 ? 'Fit' : '1:1'}
+            icon={
+              <Monitor
+                color={buttonColor(chrome, viewerState.autoScale)}
+                size={16}
+              />
+            }
+            label={
+              viewerState.autoScale && viewerState.zoomLevel <= 1.01
+                ? 'Fit'
+                : '1:1'
+            }
             onPress={() => sendCommand({ type: 'toggleScale' })}
           />
           <View style={controlStyles.zoomGroup}>
@@ -383,28 +367,34 @@ export function RootDesktopPanel({
                     active: viewerState.pressedModifiers.includes(item.key),
                     label: item.label,
                     onPress: () =>
-                      sendCommand({ type: 'toggleModifier', modifier: item.key }),
+                      sendCommand({
+                        type: 'toggleModifier',
+                        modifier: item.key,
+                      }),
                   }))}
                 />
                 <KeyRow
                   controlStyles={controlStyles}
                   items={SPECIAL_KEYS.map((item) => ({
                     label: item.label,
-                    onPress: () => sendCommand({ type: 'pressKey', key: item.key }),
+                    onPress: () =>
+                      sendCommand({ type: 'pressKey', key: item.key }),
                   }))}
                 />
                 <KeyRow
                   controlStyles={controlStyles}
                   items={NAVIGATION_KEYS.map((item) => ({
                     label: item.label,
-                    onPress: () => sendCommand({ type: 'pressKey', key: item.key }),
+                    onPress: () =>
+                      sendCommand({ type: 'pressKey', key: item.key }),
                   }))}
                 />
                 <KeyRow
                   controlStyles={controlStyles}
                   items={ARROW_KEYS.map((item) => ({
                     label: item.label,
-                    onPress: () => sendCommand({ type: 'pressKey', key: item.key }),
+                    onPress: () =>
+                      sendCommand({ type: 'pressKey', key: item.key }),
                   }))}
                 />
                 <KeyRow
@@ -412,7 +402,10 @@ export function RootDesktopPanel({
                   items={SHORTCUT_KEYS.map((item) => ({
                     label: item.label,
                     onPress: () =>
-                      sendCommand({ type: 'shortcut', shortcut: item.shortcut }),
+                      sendCommand({
+                        type: 'shortcut',
+                        shortcut: item.shortcut,
+                      }),
                   }))}
                 />
               </ScrollView>
@@ -436,7 +429,10 @@ export function RootDesktopPanel({
                   disabled={controlsDisabled}
                   icon={
                     <Touchpad
-                      color={buttonColor(chrome, viewerState.pointerMode === 'touchpad')}
+                      color={buttonColor(
+                        chrome,
+                        viewerState.pointerMode === 'touchpad',
+                      )}
                       size={16}
                     />
                   }
@@ -451,7 +447,10 @@ export function RootDesktopPanel({
                   disabled={controlsDisabled}
                   icon={
                     <MousePointer2
-                      color={buttonColor(chrome, viewerState.pointerMode === 'direct')}
+                      color={buttonColor(
+                        chrome,
+                        viewerState.pointerMode === 'direct',
+                      )}
                       size={16}
                     />
                   }
@@ -462,7 +461,7 @@ export function RootDesktopPanel({
                 />
               </View>
               <View style={controlStyles.segment}>
-                {MOUSE_BUTTONS.map((button) => (
+                {DESKTOP_MOUSE_BUTTONS.map((button) => (
                   <ControlButton
                     active={viewerState.activeMouseButton === button.mask}
                     controlStyles={controlStyles}
@@ -497,7 +496,12 @@ export function RootDesktopPanel({
                 active={keyboardOpen}
                 controlStyles={controlStyles}
                 disabled={controlsDisabled}
-                icon={<Keyboard color={buttonColor(chrome, keyboardOpen)} size={17} />}
+                icon={
+                  <Keyboard
+                    color={buttonColor(chrome, keyboardOpen)}
+                    size={17}
+                  />
+                }
                 label="Keys"
                 onPress={() => setKeyboardOpen((open) => !open)}
               />
@@ -578,11 +582,11 @@ function KeyRow({
   items,
 }: {
   controlStyles: DesktopControlStyles;
-  items: Array<{
+  items: {
     active?: boolean;
     label: string;
     onPress: () => void;
-  }>;
+  }[];
 }) {
   return (
     <View style={controlStyles.keyRow}>
@@ -597,151 +601,6 @@ function KeyRow({
       ))}
     </View>
   );
-}
-
-function desktopWebSocketUrl(
-  baseUrl: string,
-  desktopHref: string,
-  token: string,
-): string {
-  const cleanHref = desktopHref.replace(/\/+$/, '');
-  const url = new URL(`${cleanHref}/ws`, `${normalizeBaseUrl(baseUrl)}/`);
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-  url.searchParams.set('token', token);
-  return url.toString();
-}
-
-function initialViewerState(
-  viewOnly: boolean,
-  screens: DesktopScreen[],
-): DesktopViewerState {
-  const normalizedScreens = normalizeScreens(screens);
-  return {
-    ready: false,
-    connected: false,
-    status: 'Connecting',
-    statusIsError: false,
-    viewOnly,
-    controlGranted: false,
-    autoScale: true,
-    zoomLevel: 1,
-    selectedScreenId: preferredScreenId(normalizedScreens),
-    screens: normalizedScreens,
-    pointerMode: 'touchpad',
-    activeMouseButton: 0x1,
-    dragLocked: false,
-    pressedModifiers: [],
-  };
-}
-
-function preferredScreenId(screens: DesktopViewerScreen[]): string {
-  if (screens.length < 2) {
-    return 'all';
-  }
-
-  return screens.find((screen) => screen.primary)?.id || screens[0]?.id || 'all';
-}
-
-function parseBridgeMessage(value: string): { type: string; state?: unknown } | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (isRecord(parsed) && typeof parsed.type === 'string') {
-      return {
-        type: parsed.type,
-        state: parsed.state,
-      };
-    }
-  } catch {}
-
-  return null;
-}
-
-function mergeViewerState(
-  current: DesktopViewerState,
-  incoming: unknown,
-): DesktopViewerState {
-  if (!isRecord(incoming)) {
-    return current;
-  }
-
-  return {
-    ...current,
-    ready: booleanValue(incoming.ready, current.ready),
-    connected: booleanValue(incoming.connected, current.connected),
-    status:
-      typeof incoming.status === 'string' ? incoming.status : current.status,
-    statusIsError: booleanValue(incoming.statusIsError, current.statusIsError),
-    viewOnly: booleanValue(incoming.viewOnly, current.viewOnly),
-    controlGranted: booleanValue(incoming.controlGranted, current.controlGranted),
-    autoScale: booleanValue(incoming.autoScale, current.autoScale),
-    zoomLevel: finiteNumber(incoming.zoomLevel, current.zoomLevel),
-    selectedScreenId:
-      typeof incoming.selectedScreenId === 'string'
-        ? incoming.selectedScreenId
-        : current.selectedScreenId,
-    screens: Array.isArray(incoming.screens)
-      ? normalizeScreens(incoming.screens)
-      : current.screens,
-    pointerMode: incoming.pointerMode === 'direct' ? 'direct' : 'touchpad',
-    activeMouseButton: mouseButtonMask(incoming.activeMouseButton, current.activeMouseButton),
-    dragLocked: booleanValue(incoming.dragLocked, current.dragLocked),
-    pressedModifiers: Array.isArray(incoming.pressedModifiers)
-      ? incoming.pressedModifiers.filter((modifier): modifier is string => typeof modifier === 'string')
-      : current.pressedModifiers,
-  };
-}
-
-function normalizeScreens(value: unknown): DesktopViewerScreen[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((screen, index) => {
-      if (!isRecord(screen)) {
-        return null;
-      }
-
-      const width = finiteNumber(screen.width, 0);
-      const height = finiteNumber(screen.height, 0);
-      if (width <= 0 || height <= 0) {
-        return null;
-      }
-
-      return {
-        id: stringValue(screen.id, `screen-${index + 1}`),
-        label: stringValue(screen.label, String(index + 1)),
-        title: stringValue(screen.title, `Screen ${index + 1}`),
-        x: finiteNumber(screen.x, 0),
-        y: finiteNumber(screen.y, 0),
-        width,
-        height,
-        primary: Boolean(screen.primary),
-      };
-    })
-    .filter((screen): screen is DesktopViewerScreen => Boolean(screen));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-function stringValue(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value ? value : fallback;
-}
-
-function booleanValue(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
-}
-
-function finiteNumber(value: unknown, fallback: number): number {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function mouseButtonMask(value: unknown, fallback: number): number {
-  const mask = Number(value);
-  return MOUSE_BUTTONS.some((button) => button.mask === mask) ? mask : fallback;
 }
 
 function createDesktopChrome(
@@ -789,6 +648,10 @@ type DesktopControlStyles = ReturnType<typeof createDesktopControlStyles>;
 
 function createDesktopControlStyles(chrome: DesktopChrome) {
   return StyleSheet.create({
+    panel: {
+      flex: 1,
+      backgroundColor: chrome.viewerBackground,
+    },
     overlay: {
       ...StyleSheet.absoluteFillObject,
       justifyContent: 'space-between',
