@@ -94,6 +94,20 @@ if (root) {
     `${api}?path=${encodeURIComponent(path)}${raw ? '&raw=true' : ''}`;
   const searchUrl = (kind, query) =>
     `${api}?search_kind=${kind}&search=${encodeURIComponent(query)}`;
+  function filePageUrl(path) {
+    const target = new URL(location.href);
+    target.searchParams.set('path', path);
+    target.hash = '';
+    return target;
+  }
+  function updateFilePageUrl(path, replace = false) {
+    if (new URLSearchParams(location.search).get('path') === path) return;
+    history[replace ? 'replaceState' : 'pushState'](
+      { latitudeFilePath: path },
+      '',
+      filePageUrl(path),
+    );
+  }
   async function request(target, options) {
     const response = await fetch(target, options);
     if (!response.ok) {
@@ -151,9 +165,32 @@ if (root) {
       container.firstChild.textContent = error.message;
     }
   }
-  async function openRequestedPath() {
+  function clearCurrentFile() {
+    if (dirty && !confirm('Discard unsaved changes?')) return false;
+    fileLoads.begin();
+    document
+      .querySelectorAll('.tree-row.active')
+      .forEach((element) => element.classList.remove('active'));
+    if (editor) editor.destroy();
+    editor = null;
+    current = null;
+    gitBase = null;
+    dirty = false;
+    actions.hidden = true;
+    title.textContent = 'Select a file to preview';
+    status.textContent = '';
+    preview.innerHTML =
+      '<div class="file-empty">Choose a file from the explorer.</div>';
+    return true;
+  }
+  async function openRequestedPath(fromHistory = false) {
     const requested = new URLSearchParams(location.search).get('path');
-    if (!requested) return;
+    if (!requested) {
+      if (fromHistory && !clearCurrentFile() && current)
+        updateFilePageUrl(current, true);
+      return;
+    }
+    if (requested === current) return;
     const parts = requested.split('/').filter(Boolean);
     let container = tree,
       prefix = '';
@@ -164,7 +201,8 @@ if (root) {
       ).find((candidate) => candidate.dataset.path === prefix);
       if (!row) return;
       if (index === parts.length - 1) {
-        await openFile(requested, row);
+        const opened = await openFile(requested, row, false);
+        if (!opened && fromHistory && current) updateFilePageUrl(current, true);
         row.scrollIntoView({ block: 'nearest' });
         return;
       }
@@ -297,7 +335,7 @@ if (root) {
     refreshHighlights();
     refreshDiffMarkers();
   }
-  async function openFile(path, row) {
+  async function openFile(path, row, updateUrl = true) {
     if (dirty && !confirm('Discard unsaved changes?')) return false;
 
     const { controller: requestController, version } = fileLoads.begin();
@@ -334,6 +372,7 @@ if (root) {
         preview.innerHTML = '<div class="editor-host"></div>';
         createEditor(preview.firstChild, data.content);
       } else showMedia(path, data.media_type);
+      if (updateUrl) updateFilePageUrl(path);
       return true;
     } catch (error) {
       if (error.name === 'AbortError' || !fileLoads.isCurrent(version)) {
@@ -686,9 +725,8 @@ if (root) {
     }
     if (
       (event.ctrlKey || event.metaKey) &&
-      event.shiftKey &&
       !event.altKey &&
-      event.key.toLowerCase() === 'f'
+      event.key.toLowerCase() === 'g'
     ) {
       event.preventDefault();
       openSearch('grep');
@@ -710,6 +748,7 @@ if (root) {
       event.returnValue = '';
     }
   });
+  addEventListener('popstate', () => void openRequestedPath(true));
   const widthKey = 'latitude.fileSidebarWidth';
   const clampWidth = (value) =>
     Math.max(180, Math.min(value, Math.max(180, workspace.clientWidth - 260)));

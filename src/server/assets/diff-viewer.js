@@ -39,6 +39,12 @@ import { startVisiblePolling } from './polling.js';
     event.detail.elt.querySelector('button')?.removeAttribute('aria-busy');
     if (!event.detail.successful) return;
 
+    if (event.detail.elt.matches('.commit-form')) {
+      commitMessage = '';
+      const messageInput = workspace.querySelector('[data-commit-message]');
+      if (messageInput) messageInput.value = '';
+    }
+
     if (
       event.detail.xhr.status === 200 &&
       applyFileUpdate(event.detail.xhr.responseText)

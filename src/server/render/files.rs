@@ -34,7 +34,7 @@ pub(in crate::server) fn render_project_files(
                     aside class="file-sidebar" {
                         div class="file-search-actions" {
                             button type="button" data-find-file title="Find file (Ctrl+P)" { "Find file" }
-                            button type="button" data-grep-search title="Search in files (Ctrl+Shift+F)" { "Grep" }
+                            button type="button" data-grep-search title="Search in files (Ctrl+G)" { "Grep" }
                         }
                         div class="file-tree" data-file-tree { "Loading…" }
                     }
