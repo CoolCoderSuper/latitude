@@ -1,6 +1,8 @@
 use maud::{DOCTYPE, Markup, html};
 
-use super::assets::{COMMON_THEME_STYLE_HREF, THEME_BOOTSTRAP_SCRIPT_SRC, THEME_TOGGLE_SCRIPT_SRC};
+use super::assets::{
+    COMMON_THEME_STYLE_HREF, FAVICON_HREF, THEME_BOOTSTRAP_SCRIPT_SRC, THEME_TOGGLE_SCRIPT_SRC,
+};
 
 pub(super) struct PageHeader<'a> {
     pub(super) class_name: Option<&'a str>,
@@ -65,6 +67,7 @@ fn document_head(
             meta charset="utf-8";
             meta name="viewport" content="width=device-width, initial-scale=1";
             title { (document_title) }
+            link rel="icon" type="image/png" href=(FAVICON_HREF);
             script src=(THEME_BOOTSTRAP_SCRIPT_SRC) {}
             link rel="stylesheet" href=(COMMON_THEME_STYLE_HREF);
             link rel="stylesheet" href=(style_href);

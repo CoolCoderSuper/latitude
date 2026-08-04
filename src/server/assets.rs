@@ -15,6 +15,7 @@ macro_rules! asset_href {
 }
 
 pub(super) const COMMON_THEME_STYLE_HREF: &str = asset_href!("common-theme.css");
+pub(super) const FAVICON_HREF: &str = asset_href!("favicon.png");
 pub(super) const THEME_BOOTSTRAP_SCRIPT_SRC: &str = asset_href!("theme-bootstrap.js");
 pub(super) const THEME_TOGGLE_SCRIPT_SRC: &str = asset_href!("theme-toggle.js");
 pub(super) const HTMX_SCRIPT_SRC: &str = asset_href!("htmx.min.js");
@@ -50,6 +51,7 @@ macro_rules! embedded_assets {
 }
 
 embedded_assets!(
+    ("favicon.png", "image/png"),
     ("common-theme.css", "text/css; charset=utf-8"),
     ("theme-bootstrap.js", "text/javascript; charset=utf-8"),
     ("theme-toggle.js", "text/javascript; charset=utf-8"),

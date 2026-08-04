@@ -493,6 +493,10 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
     );
     assert!(!rendered.contains("prefers-color-scheme"));
     assert!(!rendered.contains("matchMedia('(prefers-color-scheme"));
+    assert!(
+        rendered
+            .contains("rel=\"icon\" type=\"image/png\" href=\"/__latitude/assets/favicon.png\"")
+    );
     assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js\""));
     assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js\""));
     assert!(!rendered.contains("var cookieName"));
@@ -563,6 +567,7 @@ fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
 
 #[tokio::test]
 async fn serves_embedded_assets_with_cache_validation() {
+    assert!(embedded_asset_names().any(|name| name == "favicon.png"));
     assert!(embedded_asset_names().any(|name| name == "htmx.min.js"));
     assert!(embedded_asset_names().any(|name| name == "file-viewer.bundle.js"));
     assert!(embedded_asset_names().any(|name| name == "terminal-viewer.bundle.js"));
@@ -597,6 +602,22 @@ async fn serves_embedded_assets_with_cache_validation() {
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty());
+
+    let response = public_asset(
+        axum::extract::Path("favicon.png".to_string()),
+        HeaderMap::new(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("image/png")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(body.starts_with(b"\x89PNG\r\n\x1a\n"));
 }
 
 #[test]
