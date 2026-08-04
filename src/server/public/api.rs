@@ -4,7 +4,7 @@ mod terminals;
 use axum::{
     Json,
     body::{Body, to_bytes},
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
     http::{Method, Request, Response, StatusCode, header},
     response::IntoResponse,
 };
@@ -210,6 +210,11 @@ struct WorktreeArchivePayload {
     archived: bool,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub(in crate::server) struct WorktreeArchiveQuery {
+    archived: Option<bool>,
+}
+
 pub(in crate::server) async fn public_api_patch_project_archive(
     AxumPath(project): AxumPath<String>,
     State(state): State<AppState>,
@@ -292,9 +297,15 @@ pub(super) async fn refresh_project_list(
 
 pub(in crate::server) async fn public_ui_archive_project(
     AxumPath(project): AxumPath<String>,
+    Query(query): Query<WorktreeArchiveQuery>,
     State(state): State<AppState>,
 ) -> Response<Body> {
-    match state.catalog().set_worktree_archived(&project, true).await {
+    let archived = query.archived.unwrap_or(true);
+    match state
+        .catalog()
+        .set_worktree_archived(&project, archived)
+        .await
+    {
         Ok(true) => Response::builder()
             .status(StatusCode::NO_CONTENT)
             .header("HX-Trigger", "worktreeArchived")

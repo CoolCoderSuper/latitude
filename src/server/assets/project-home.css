@@ -116,6 +116,87 @@ li {
   cursor: pointer;
 }
 
+.worktree-restore {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 8px;
+  border: 1px solid var(--latitude-color-border-strong);
+  border-radius: 7px;
+  padding: 0;
+  color: var(--latitude-color-accent);
+  background: var(--latitude-color-canvas);
+  cursor: pointer;
+}
+
+.worktree-restore svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.worktree-restore:hover {
+  border-color: #0f766e;
+  background: #e5f4f1;
+}
+
+.worktree-restore:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.archived-projects-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.archived-projects-toggle {
+  display: inline-flex;
+  border: 1px solid var(--latitude-color-border-strong);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--latitude-color-accent);
+  background: var(--latitude-color-surface);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.archived-projects {
+  margin-top: 22px;
+  border-top: 1px solid var(--latitude-color-border);
+  padding-top: 18px;
+}
+
+.archived-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.archived-projects-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.archived-projects-header span {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.archived-project-item {
+  opacity: 0.88;
+}
+
 .worktree-archive svg {
   display: block;
   fill: none;
@@ -519,6 +600,19 @@ span {
   border-color: #465568;
   color: #aeb9c7;
   background: #111824;
+}
+
+:root[data-latitude-theme='dark'] .worktree-restore,
+:root[data-latitude-theme='dark'] .archived-projects-toggle {
+  border-color: #465568;
+  color: #6dd4ca;
+  background: #111824;
+}
+
+:root[data-latitude-theme='dark'] .worktree-restore:hover,
+:root[data-latitude-theme='dark'] .archived-projects-toggle:hover {
+  border-color: #2aa79c;
+  background: #1d2d2f;
 }
 
 :root[data-latitude-theme='dark'] .worktree-archive:hover {

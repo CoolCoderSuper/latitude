@@ -483,6 +483,7 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         &[],
         &HashMap::new(),
         &[],
+        false,
         TEST_HOSTNAME,
     );
     assert!(!rendered.contains("prefers-color-scheme"));
@@ -2002,6 +2003,7 @@ fn renders_server_home_with_enabled_projects() {
             },
         )]),
         &[],
+        false,
         TEST_HOSTNAME,
     );
 
@@ -2065,6 +2067,7 @@ fn groups_linked_worktrees_on_server_home() {
         &projects,
         &HashMap::new(),
         &worktrees,
+        false,
         TEST_HOSTNAME,
     );
 
@@ -2091,6 +2094,75 @@ fn groups_linked_worktrees_on_server_home() {
 }
 
 #[test]
+fn renders_and_restores_archived_projects_on_server_home() {
+    let projects = vec![
+        ProjectConfig {
+            name: "latitude".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("C:/work/latitude"),
+            deployments: Vec::new(),
+        },
+        ProjectConfig {
+            name: "latitude--finished".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("C:/work/latitude-finished"),
+            deployments: Vec::new(),
+        },
+    ];
+    let common_git_dir = PathBuf::from("C:/work/latitude/.git");
+    let worktrees = vec![
+        WorktreeRecord {
+            project_name: "latitude".to_string(),
+            common_git_dir: common_git_dir.clone(),
+            worktree_dir: projects[0].project_dir.clone(),
+            branch: Some("master".to_string()),
+            head: "abc123".to_string(),
+            discovered: false,
+            archived: false,
+        },
+        WorktreeRecord {
+            project_name: "latitude--finished".to_string(),
+            common_git_dir,
+            worktree_dir: projects[1].project_dir.clone(),
+            branch: Some("codex/finished".to_string()),
+            head: "def456".to_string(),
+            discovered: true,
+            archived: true,
+        },
+    ];
+
+    let hidden = render_server_home(
+        &BootConfig::default(),
+        &projects,
+        &HashMap::new(),
+        &worktrees,
+        false,
+        TEST_HOSTNAME,
+    );
+    assert!(hidden.contains("View archived (1)"));
+    assert!(hidden.contains("href=\"/?archived=1\""));
+    assert!(!hidden.contains("Archived projects"));
+    assert!(!hidden.contains("href=\"/latitude--finished\""));
+
+    let shown = render_server_home(
+        &BootConfig::default(),
+        &projects,
+        &HashMap::new(),
+        &worktrees,
+        true,
+        TEST_HOSTNAME,
+    );
+    assert!(shown.contains("Archived projects"));
+    assert!(shown.contains("href=\"/latitude--finished\""));
+    assert!(shown.contains("codex/finished"));
+    assert!(shown.contains("hx-get=\"/?refresh=auto&amp;archived=1\""));
+    assert!(shown.contains(
+        "hx-patch=\"/__latitude/ui/projects/latitude--finished/archive?archived=false\""
+    ));
+    assert!(shown.contains("aria-label=\"Restore codex/finished\""));
+}
+
+#[test]
 fn renders_server_home_with_enabled_desktop() {
     let rendered = render_server_home(
         &BootConfig {
@@ -2103,6 +2175,7 @@ fn renders_server_home_with_enabled_desktop() {
         &[],
         &HashMap::new(),
         &[],
+        false,
         TEST_HOSTNAME,
     );
 
@@ -2124,6 +2197,7 @@ fn renders_server_home_with_t3code_link() {
         &[],
         &HashMap::new(),
         &[],
+        false,
         TEST_HOSTNAME,
     );
 

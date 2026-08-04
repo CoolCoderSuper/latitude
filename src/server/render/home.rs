@@ -96,14 +96,35 @@ pub(in crate::server) fn render_server_home(
     projects: &[ProjectConfig],
     git_statuses: &std::collections::HashMap<String, GitStatusSummary>,
     worktrees: &[WorktreeRecord],
+    show_archived: bool,
     device_hostname: &str,
 ) -> String {
+    let archived_project_names = worktrees
+        .iter()
+        .filter(|worktree| worktree.archived)
+        .map(|worktree| worktree.project_name.as_str())
+        .collect::<std::collections::HashSet<_>>();
     let enabled_projects = projects
         .iter()
         .filter(|project| project.enabled)
         .collect::<Vec<_>>();
     let no_enabled_projects = enabled_projects.is_empty();
-    let project_groups = group_projects(enabled_projects, worktrees);
+    let archived_projects = enabled_projects
+        .iter()
+        .copied()
+        .filter(|project| archived_project_names.contains(project.name.as_str()))
+        .collect::<Vec<_>>();
+    let active_projects = enabled_projects
+        .into_iter()
+        .filter(|project| !archived_project_names.contains(project.name.as_str()))
+        .collect::<Vec<_>>();
+    let no_active_projects = active_projects.is_empty();
+    let project_groups = group_projects(active_projects, worktrees);
+    let refresh_href = if show_archived {
+        "/?refresh=auto&archived=1"
+    } else {
+        "/?refresh=auto"
+    };
 
     html_page::document(
         "Latitude Projects",
@@ -113,54 +134,122 @@ pub(in crate::server) fn render_server_home(
         html! {
             main data-server-shell {
                 header { h1 { "Latitude" } p { "Available projects on " (device_hostname) } }
-                ul
+                div
                     id="project-list"
                     data-project-list
-                    hx-get="/?refresh=auto"
+                    hx-get=(refresh_href)
                     hx-trigger="every 5s [document.visibilityState === 'visible'], worktreeArchived from:body"
                     hx-select="[data-project-list]"
                     hx-target="#project-list"
                     hx-sync="this:drop"
                     hx-swap="outerHTML" {
-                    @if config.desktop.enabled {
-                        li { a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
-                            strong { (&config.desktop.label) }
-                            span { "View and control the desktop" }
+                    ul {
+                        @if config.desktop.enabled {
+                            li { a href=(format!("/{DESKTOP_ROUTE_SEGMENT}")) {
+                                strong { (&config.desktop.label) }
+                                span { "View and control the desktop" }
+                            } }
+                        }
+                        li { a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {
+                            strong { "Root Terminal" }
+                            span { "Run commands in your user directory" }
                         } }
-                    }
-                    li { a href=(format!("/{TERMINAL_ROUTE_SEGMENT}")) {
-                        strong { "Root Terminal" }
-                        span { "Run commands in your user directory" }
-                    } }
-                    @if config.t3code.enabled {
-                        li data-t3code-open { a href="/__latitude/t3code" target="_blank" rel="noopener" {
-                            strong { "Open T3 Code" }
-                            span { "Open the coding agent workspace" }
-                        } }
-                    }
-                    @for group in project_groups {
-                        @if group.projects.len() > 1 {
-                            li class="worktree-group" {
-                                div class="worktree-group-header" {
-                                    strong { (&group.label) }
-                                    span { (group.projects.len()) " worktrees" }
+                        @if config.t3code.enabled {
+                            li data-t3code-open { a href="/__latitude/t3code" target="_blank" rel="noopener" {
+                                strong { "Open T3 Code" }
+                                span { "Open the coding agent workspace" }
+                            } }
+                        }
+                        @for group in project_groups {
+                            @if group.projects.len() > 1 {
+                                li class="worktree-group" {
+                                    div class="worktree-group-header" {
+                                        strong { (&group.label) }
+                                        span { (group.projects.len()) " worktrees" }
+                                    }
+                                    ul class="worktree-list" {
+                                        @for (project, worktree) in group.projects {
+                                            (server_project_item(project, git_statuses, worktree))
+                                        }
+                                    }
                                 }
-                                ul class="worktree-list" {
-                                    @for (project, worktree) in group.projects {
-                                        (server_project_item(project, git_statuses, worktree))
+                            } @else if let Some((project, worktree)) = group.projects.first() {
+                                (server_project_item(project, git_statuses, *worktree))
+                            }
+                        }
+                        @if no_enabled_projects {
+                            li class="empty" { "No enabled projects yet." }
+                        } @else if no_active_projects {
+                            li class="empty" { "No active projects." }
+                        }
+                    }
+                    @if !archived_projects.is_empty() {
+                        div class="archived-projects-controls" {
+                            @if show_archived {
+                                a class="archived-projects-toggle" href="/" { "Hide archived" }
+                            } @else {
+                                a class="archived-projects-toggle" href="/?archived=1" {
+                                    "View archived (" (archived_projects.len()) ")"
+                                }
+                            }
+                        }
+                        @if show_archived {
+                            section class="archived-projects" aria-labelledby="archived-projects-heading" {
+                                div class="archived-projects-header" {
+                                    h2 id="archived-projects-heading" { "Archived projects" }
+                                    span { (archived_projects.len()) }
+                                }
+                                ul {
+                                    @for project in archived_projects {
+                                        (server_archived_project_item(project, worktrees))
                                     }
                                 }
                             }
-                        } @else if let Some((project, worktree)) = group.projects.first() {
-                            (server_project_item(project, git_statuses, *worktree))
                         }
                     }
-                    @if no_enabled_projects { li class="empty" { "No enabled projects yet." } }
                 }
                 script type="module" src=(PROJECT_HOME_SCRIPT_SRC) {}
             }
         },
     )
+}
+
+fn server_archived_project_item(project: &ProjectConfig, worktrees: &[WorktreeRecord]) -> Markup {
+    let worktree = worktrees
+        .iter()
+        .find(|worktree| worktree.project_name == project.name);
+    let label = worktree
+        .and_then(|worktree| worktree.branch.as_deref())
+        .unwrap_or(&project.name);
+    let description = worktree
+        .map(|worktree| display_path(&worktree.worktree_dir))
+        .unwrap_or_else(|| project_summary(project));
+
+    html! {
+        li class="project-item archived-project-item" {
+            a href=(format!("/{}", project.name)) {
+                strong { span class="project-name" { (label) } }
+                span { (description) }
+            }
+            button
+                class="worktree-restore"
+                type="button"
+                hx-patch=(format!("/__latitude/ui/projects/{}/archive?archived=false", project.name))
+                hx-swap="none"
+                hx-disabled-elt="this"
+                aria-label=(format!("Restore {label}"))
+                title="Restore this worktree to the project list" {
+                    svg
+                        viewBox="0 0 24 24"
+                        width="16"
+                        height="16"
+                        aria-hidden="true"
+                        focusable="false" {
+                            path d="M4 7h16v13H4zM3 3h18v4H3zm8 8-3 3 3 3m-3-3h7" {}
+                        }
+                }
+        }
+    }
 }
 
 struct ServerProjectGroup<'a> {

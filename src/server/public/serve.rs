@@ -748,7 +748,7 @@ async fn serve_server_home(
         .get("HX-Request")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-    let mut projects = match state.catalog().list_projects().await {
+    let projects = match state.catalog().list_projects().await {
         Ok(projects) => projects,
         Err(error) => {
             error!(%error, "project list failed");
@@ -759,14 +759,10 @@ async fn serve_server_home(
         }
     };
     let worktrees = state.catalog().list_worktrees().await.unwrap_or_default();
-    if !worktrees.is_empty() {
-        let archived = worktrees
-            .iter()
-            .filter(|worktree| worktree.archived)
-            .map(|worktree| worktree.project_name.clone())
-            .collect::<std::collections::HashSet<_>>();
-        projects.retain(|project| !archived.contains(&project.name));
-    }
+    let show_archived = req.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(name, value)| name == "archived" && value == "1")
+    });
     let git_statuses = if is_htmx_refresh {
         std::collections::HashMap::new()
     } else {
@@ -780,6 +776,7 @@ async fn serve_server_home(
             &projects,
             &git_statuses,
             &worktrees,
+            show_archived,
             device_hostname,
         ),
     )
