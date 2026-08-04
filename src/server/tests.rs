@@ -37,6 +37,7 @@ use super::{
         delete_deployment_share as public_api_delete_share, get_config, get_project_deployment,
         get_project_page_content, list_deployment_shares as public_api_list_shares,
     },
+    command_router,
     constants::{
         AUTH_COOKIE_NAME, LATITUDE_THEME_COOKIE, LOGIN_PATH, PUBLIC_API_SHARES_PATH,
         T3CODE_EMBED_COOKIE,
@@ -111,6 +112,10 @@ enum DeploymentTargetFixture {
 
 async fn public_response(state: AppState, request: Request<Body>) -> axum::response::Response {
     public_router(state).oneshot(request).await.unwrap()
+}
+
+async fn command_response(state: AppState, request: Request<Body>) -> axum::response::Response {
+    command_router(state).oneshot(request).await.unwrap()
 }
 
 async fn test_state(config: BootConfig) -> AppState {
@@ -969,6 +974,7 @@ fn renders_project_home_with_enabled_deployments() {
         },
         &GitStatusSummary::default(),
         true,
+        false,
         TEST_HOSTNAME,
     );
 
@@ -998,6 +1004,158 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(!rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
     assert!(!rendered.contains("data-deployment=\"draft\""));
+    assert!(rendered.contains("View archived (1)"));
+    assert!(
+        rendered.contains("hx-patch=\"/__latitude/ui/projects/demo/deployments/website/archive\"")
+    );
+    assert!(!rendered.contains("Archived deployments"));
+}
+
+#[test]
+fn renders_and_restores_archived_deployments() {
+    let rendered = render_project_home(
+        &ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: PathBuf::from("."),
+            deployments: vec![ApplicationConfig {
+                name: "draft".to_string(),
+                enabled: false,
+                target: ApplicationTarget::Page {
+                    format: PageFormat::Markdown,
+                    media_type: None,
+                    title: Some("Draft report".to_string()),
+                },
+            }],
+        },
+        &GitStatusSummary::default(),
+        false,
+        true,
+        TEST_HOSTNAME,
+    );
+
+    assert!(rendered.contains("Archived deployments"));
+    assert!(rendered.contains("Draft report"));
+    assert!(rendered.contains("href=\"/demo\">Hide archived"));
+    assert!(rendered.contains(
+        "hx-patch=\"/__latitude/ui/projects/demo/deployments/draft/archive?archived=false\""
+    ));
+    assert!(!rendered.contains("href=\"/demo/draft\""));
+}
+
+#[tokio::test]
+async fn archives_and_restores_deployments_from_project_ui() {
+    let config = BootConfig::default();
+    let state = test_state_with_fixture(
+        config.clone(),
+        demo_fixture(vec![fixture_static(
+            "website",
+            PathBuf::from("."),
+            "index.html",
+        )]),
+    )
+    .await;
+    let token = state.public_auth_cookie_value(&config.public_password);
+
+    let archive = public_response(
+        state.clone(),
+        Request::builder()
+            .method(Method::PATCH)
+            .uri("/__latitude/ui/projects/demo/deployments/website/archive")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(archive.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        archive.headers().get("HX-Trigger").unwrap(),
+        "deploymentArchived"
+    );
+    assert!(
+        !state
+            .catalog()
+            .get_deployment("demo", "website")
+            .await
+            .unwrap()
+            .unwrap()
+            .enabled
+    );
+
+    let unavailable = public_response(
+        state.clone(),
+        Request::builder()
+            .uri("/demo/website")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unavailable.status(), StatusCode::NOT_FOUND);
+
+    let restore = public_response(
+        state.clone(),
+        Request::builder()
+            .method(Method::PATCH)
+            .uri("/__latitude/ui/projects/demo/deployments/website/archive?archived=false")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(restore.status(), StatusCode::NO_CONTENT);
+    assert!(
+        state
+            .catalog()
+            .get_deployment("demo", "website")
+            .await
+            .unwrap()
+            .unwrap()
+            .enabled
+    );
+}
+
+#[tokio::test]
+async fn command_api_archives_and_restores_deployments() {
+    let state = test_state_with_fixture(
+        BootConfig::default(),
+        demo_fixture(vec![fixture_static(
+            "website",
+            PathBuf::from("."),
+            "index.html",
+        )]),
+    )
+    .await;
+
+    let archive = command_response(
+        state.clone(),
+        Request::builder()
+            .method(Method::PATCH)
+            .uri("/api/projects/demo/deployments/website/archive")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"archived":true}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(archive.status(), StatusCode::OK);
+    let body = to_bytes(archive.into_body(), usize::MAX).await.unwrap();
+    let deployment: ApplicationConfig = serde_json::from_slice(&body).unwrap();
+    assert!(!deployment.enabled);
+
+    let restore = command_response(
+        state,
+        Request::builder()
+            .method(Method::PATCH)
+            .uri("/api/projects/demo/deployments/website/archive")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"archived":false}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(restore.status(), StatusCode::OK);
+    let body = to_bytes(restore.into_body(), usize::MAX).await.unwrap();
+    let deployment: ApplicationConfig = serde_json::from_slice(&body).unwrap();
+    assert!(deployment.enabled);
 }
 
 #[tokio::test]

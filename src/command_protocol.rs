@@ -6,6 +6,8 @@ pub(crate) const PROJECTS_PATH: &str = "/api/projects";
 pub(crate) const PROJECT_PATH: &str = "/api/projects/{project}";
 pub(crate) const PROJECT_DEPLOYMENTS_PATH: &str = "/api/projects/{project}/deployments";
 pub(crate) const PROJECT_DEPLOYMENT_PATH: &str = "/api/projects/{project}/deployments/{name}";
+pub(crate) const PROJECT_DEPLOYMENT_ARCHIVE_PATH: &str =
+    "/api/projects/{project}/deployments/{name}/archive";
 pub(crate) const PROJECT_PAGE_PATH: &str = "/api/projects/{project}/pages/{name}";
 pub(crate) const PROJECT_PAGE_CONTENT_PATH: &str = "/api/projects/{project}/pages/{name}/content";
 pub(crate) const SHARES_PATH: &str = "/api/shares";
@@ -43,6 +45,11 @@ pub(crate) struct DeploymentShareResponse {
     pub(crate) expired: bool,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct DeploymentArchiveRequest {
+    pub(crate) archived: bool,
+}
+
 pub(crate) fn project_path(project: &str) -> String {
     format!("/api/projects/{project}")
 }
@@ -53,6 +60,10 @@ pub(crate) fn project_deployments_path(project: &str) -> String {
 
 pub(crate) fn project_deployment_path(project: &str, deployment: &str) -> String {
     format!("/api/projects/{project}/deployments/{deployment}")
+}
+
+pub(crate) fn project_deployment_archive_path(project: &str, deployment: &str) -> String {
+    format!("/api/projects/{project}/deployments/{deployment}/archive")
 }
 
 pub(crate) fn project_page_path(project: &str, page: &str) -> String {

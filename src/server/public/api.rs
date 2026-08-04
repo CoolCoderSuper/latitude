@@ -12,7 +12,10 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tracing::error;
 
-use crate::{config::ProjectConfig, state::AppState, storage::WorktreeRecord};
+use crate::{
+    command_protocol::DeploymentArchiveRequest, config::ProjectConfig, state::AppState,
+    storage::WorktreeRecord,
+};
 
 use super::{
     super::{
@@ -211,7 +214,7 @@ struct WorktreeArchivePayload {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub(in crate::server) struct WorktreeArchiveQuery {
+pub(in crate::server) struct ArchiveQuery {
     archived: Option<bool>,
 }
 
@@ -297,7 +300,7 @@ pub(super) async fn refresh_project_list(
 
 pub(in crate::server) async fn public_ui_archive_project(
     AxumPath(project): AxumPath<String>,
-    Query(query): Query<WorktreeArchiveQuery>,
+    Query(query): Query<ArchiveQuery>,
     State(state): State<AppState>,
 ) -> Response<Body> {
     let archived = query.archived.unwrap_or(true);
@@ -317,6 +320,53 @@ pub(in crate::server) async fn public_ui_archive_project(
         ),
         Err(error) => {
             error!(%error, project = %project, "worktree archive update failed");
+            json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "archive state could not be updated",
+            )
+        }
+    }
+}
+
+pub(in crate::server) async fn public_api_patch_deployment_archive(
+    AxumPath((project, deployment)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(payload): Json<DeploymentArchiveRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    state
+        .catalog()
+        .set_deployment_archived(&project, &deployment, payload.archived)
+        .await?
+        .map(Json)
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "deployment '{deployment}' was not found in project '{project}'"
+            ))
+        })
+}
+
+pub(in crate::server) async fn public_ui_archive_deployment(
+    AxumPath((project, deployment)): AxumPath<(String, String)>,
+    Query(query): Query<ArchiveQuery>,
+    State(state): State<AppState>,
+) -> Response<Body> {
+    let archived = query.archived.unwrap_or(true);
+    match state
+        .catalog()
+        .set_deployment_archived(&project, &deployment, archived)
+        .await
+    {
+        Ok(Some(_)) => Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .header("HX-Trigger", "deploymentArchived")
+            .body(Body::empty())
+            .expect("HTMX deployment archive response"),
+        Ok(None) => json_error(
+            StatusCode::NOT_FOUND,
+            format!("deployment '{deployment}' was not found in project '{project}'"),
+        ),
+        Err(error) => {
+            error!(%error, project = %project, deployment = %deployment, "deployment archive update failed");
             json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "archive state could not be updated",

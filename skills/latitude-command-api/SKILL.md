@@ -159,13 +159,17 @@ latitude deploy proxy demo frontend --upstream http://127.0.0.1:5173
 
 By default, Latitude strips the `/{project}/{deployment}` prefix before forwarding. Pass `--no-strip-prefix` when the upstream expects the full public path.
 
-### Inspect Or Delete Deployments
+### Inspect, Archive, Restore, Or Delete Deployments
 
 ```bash
 latitude deployment list demo
 latitude deployment get demo frontend
+latitude deployment archive demo frontend
+latitude deployment restore demo frontend
 latitude deployment delete demo frontend
 ```
+
+Archiving keeps a deployment's content and settings but stops serving it. Restoring makes it available at its original URL again.
 
 ### Share A Deployment
 
@@ -304,6 +308,19 @@ curl -X PUT \
   http://127.0.0.1:7600/api/projects/demo/deployments/preview
 ```
 
+### Archive Or Restore A Deployment
+
+Archive a deployment without deleting its content or settings:
+
+```bash
+curl -X PATCH \
+  -H "Content-Type: application/json" \
+  -d '{"archived":true}' \
+  http://127.0.0.1:7600/api/projects/demo/deployments/preview/archive
+```
+
+Send the same request with `{"archived":false}` to restore it.
+
 ### Create A Deployment Share Link
 
 Open share:
@@ -384,6 +401,7 @@ The config shape is:
 | `POST` | `/api/projects/{project}/deployments` | Create a deployment, failing on duplicates. |
 | `GET` | `/api/projects/{project}/deployments/{name}` | Read one deployment. |
 | `PUT` | `/api/projects/{project}/deployments/{name}` | Create or replace one deployment. |
+| `PATCH` | `/api/projects/{project}/deployments/{name}/archive` | Archive or restore one deployment without deleting it. |
 | `DELETE` | `/api/projects/{project}/deployments/{name}` | Delete one deployment. |
 | `PUT` or `POST` | `/api/projects/{project}/pages/{name}` | Create or replace a page deployment from raw text, raw image/video bytes, or JSON. |
 | `GET` | `/api/projects/{project}/pages/{name}/content` | Read stored page deployment bytes. |

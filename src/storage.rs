@@ -289,6 +289,26 @@ impl CatalogStore {
         Ok(removed)
     }
 
+    pub(crate) async fn set_deployment_archived(
+        &self,
+        project: &str,
+        name: &str,
+        archived: bool,
+    ) -> Result<Option<ApplicationConfig>, StorageError> {
+        let result = sqlx::query(
+            "UPDATE deployments SET enabled = ?1 WHERE project_name = ?2 AND name = ?3",
+        )
+        .bind(bool_to_i64(!archived))
+        .bind(project)
+        .bind(name)
+        .execute(&self.inner.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+        self.get_deployment(project, name).await
+    }
+
     pub(crate) async fn upsert_page(
         &self,
         project: &str,
@@ -734,6 +754,63 @@ mod tests {
                 .unwrap()
                 .bytes,
             b"# Report"
+        );
+    }
+
+    #[tokio::test]
+    async fn archives_and_restores_deployment_without_removing_page_content() {
+        let store = CatalogStore::open_for_tests(temp_data_dir("deployment-archive"))
+            .await
+            .unwrap();
+        store
+            .create_project(ProjectConfig {
+                name: "demo".to_string(),
+                enabled: true,
+                project_dir: PathBuf::from("."),
+                deployments: Vec::new(),
+            })
+            .await
+            .unwrap();
+        store
+            .upsert_page(
+                "demo",
+                "report",
+                PageFormat::Markdown,
+                None,
+                Some("Report".to_string()),
+                b"# Report".to_vec(),
+            )
+            .await
+            .unwrap();
+
+        let archived = store
+            .set_deployment_archived("demo", "report", true)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!archived.enabled);
+        assert_eq!(
+            store
+                .get_page_content("demo", "report")
+                .await
+                .unwrap()
+                .unwrap()
+                .bytes,
+            b"# Report"
+        );
+
+        let restored = store
+            .set_deployment_archived("demo", "report", false)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(restored.enabled);
+        assert!(
+            store
+                .set_deployment_archived("demo", "missing", true)
+                .await
+                .unwrap()
+                .is_none()
         );
     }
 

@@ -12,9 +12,10 @@ use serde_json::Value;
 
 use crate::{
     command_protocol::{
-        CONFIG_PATH, CreateDeploymentShareRequest, DeploymentShareResponse, HEALTH_PATH,
-        HealthResponse, PROJECTS_PATH, SHARES_PATH, project_deployment_path,
-        project_deployments_path, project_page_path, project_path, share_path,
+        CONFIG_PATH, CreateDeploymentShareRequest, DeploymentArchiveRequest,
+        DeploymentShareResponse, HEALTH_PATH, HealthResponse, PROJECTS_PATH, SHARES_PATH,
+        project_deployment_archive_path, project_deployment_path, project_deployments_path,
+        project_page_path, project_path, share_path,
     },
     config::{
         ApplicationConfig, ApplicationTarget, PageFormat, ProjectConfig, current_unix_timestamp,
@@ -82,7 +83,7 @@ pub(crate) enum CliCommand {
         #[command(subcommand)]
         command: DeployCommand,
     },
-    /// Inspect or delete deployments through the command API.
+    /// Inspect, archive, restore, or delete deployments through the command API.
     Deployment {
         #[command(subcommand)]
         command: DeploymentCommand,
@@ -229,6 +230,10 @@ pub(crate) enum DeploymentCommand {
     List { project: String },
     /// Print one deployment as JSON.
     Get { project: String, name: String },
+    /// Archive a deployment without deleting its content or settings.
+    Archive { project: String, name: String },
+    /// Restore an archived deployment.
+    Restore { project: String, name: String },
     /// Delete one deployment.
     Delete { project: String, name: String },
 }
@@ -391,6 +396,12 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
                 .get_json::<Value>(&project_deployment_path(project, name))
                 .await?,
         ),
+        DeploymentCommand::Archive { project, name } => {
+            set_deployment_archived(client, project, name, true).await
+        }
+        DeploymentCommand::Restore { project, name } => {
+            set_deployment_archived(client, project, name, false).await
+        }
         DeploymentCommand::Delete { project, name } => {
             client
                 .delete(&project_deployment_path(project, name))
@@ -398,6 +409,22 @@ async fn run_deployment_command(client: &CommandClient, command: &DeploymentComm
             print_json(&DeleteResult { deleted: true })
         }
     }
+}
+
+async fn set_deployment_archived(
+    client: &CommandClient,
+    project: &str,
+    name: &str,
+    archived: bool,
+) -> Result<()> {
+    let deployment: Value = client
+        .send_json(
+            Method::PATCH,
+            &project_deployment_archive_path(project, name),
+            &DeploymentArchiveRequest { archived },
+        )
+        .await?;
+    print_json(&deployment)
 }
 
 async fn run_share_command(client: &CommandClient, command: &ShareCommand) -> Result<()> {

@@ -223,9 +223,112 @@ li {
   overflow: hidden;
 }
 
+.deployment-list {
+  margin-top: 12px;
+}
+
 .deployment-link {
   flex: 1;
   min-width: 0;
+}
+
+.deployment-archive,
+.deployment-restore {
+  flex: none;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin: 8px 8px 8px 0;
+  border: 1px solid var(--latitude-color-border-strong);
+  border-radius: 7px;
+  padding: 0;
+  color: var(--latitude-color-muted);
+  background: var(--latitude-color-canvas);
+  cursor: pointer;
+}
+
+.deployment-archive svg,
+.deployment-restore svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.deployment-archive:hover {
+  border-color: #9b2c2c;
+  color: #9b2c2c;
+  background: #fff5f5;
+}
+
+.deployment-restore {
+  color: var(--latitude-color-accent);
+}
+
+.deployment-restore:hover {
+  border-color: #0f766e;
+  background: #e5f4f1;
+}
+
+.deployment-archive:disabled,
+.deployment-restore:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.archived-deployments-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.archived-deployments-toggle {
+  display: inline-flex;
+  border: 1px solid var(--latitude-color-border-strong);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--latitude-color-accent);
+  background: var(--latitude-color-surface);
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.archived-deployments {
+  margin-top: 22px;
+  border-top: 1px solid var(--latitude-color-border);
+  padding-top: 18px;
+}
+
+.archived-deployments-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.archived-deployments-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.archived-deployments-header span {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.archived-deployment-item {
+  opacity: 0.88;
+}
+
+.archived-deployment-label {
+  display: block;
+  padding: 14px 16px;
 }
 
 .share-trigger {

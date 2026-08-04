@@ -8,7 +8,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    command_protocol::{CreateDeploymentShareRequest, DeploymentShareResponse, HealthResponse},
+    command_protocol::{
+        CreateDeploymentShareRequest, DeploymentArchiveRequest, DeploymentShareResponse,
+        HealthResponse,
+    },
     config::{ApplicationConfig, BootConfig, DeploymentShareConfig, current_unix_timestamp},
     state::AppState,
     storage::PageContent,
@@ -279,6 +282,23 @@ pub(super) async fn delete_project_deployment(
             "deployment '{name}' was not found in project '{project}'"
         )))
     }
+}
+
+pub(super) async fn patch_project_deployment_archive(
+    AxumPath((project, name)): AxumPath<(String, String)>,
+    State(state): State<AppState>,
+    Json(payload): Json<DeploymentArchiveRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    state
+        .catalog()
+        .set_deployment_archived(&project, &name, payload.archived)
+        .await?
+        .map(Json)
+        .ok_or_else(|| {
+            ApiError::not_found(format!(
+                "deployment '{name}' was not found in project '{project}'"
+            ))
+        })
 }
 
 pub(super) async fn list_deployment_shares(

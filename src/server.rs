@@ -31,6 +31,7 @@ use tracing::info;
 use crate::{
     command_protocol::{
         CONFIG_PATH as COMMAND_CONFIG_PATH, HEALTH_PATH as COMMAND_HEALTH_PATH,
+        PROJECT_DEPLOYMENT_ARCHIVE_PATH as COMMAND_PROJECT_DEPLOYMENT_ARCHIVE_PATH,
         PROJECT_DEPLOYMENT_PATH as COMMAND_PROJECT_DEPLOYMENT_PATH,
         PROJECT_DEPLOYMENTS_PATH as COMMAND_PROJECT_DEPLOYMENTS_PATH,
         PROJECT_PAGE_CONTENT_PATH as COMMAND_PROJECT_PAGE_CONTENT_PATH,
@@ -53,8 +54,8 @@ use command::{
     create_t3code_embed_session, delete_deployment_share, delete_project,
     delete_project_deployment, get_config, get_deployment_share, get_project,
     get_project_deployment, get_project_page_content, list_deployment_shares,
-    list_project_deployments, list_projects, put_config, replace_project,
-    replace_project_deployment, upsert_project_page,
+    list_project_deployments, list_projects, patch_project_deployment_archive, put_config,
+    replace_project, replace_project_deployment, upsert_project_page,
 };
 use constants::{
     LOGIN_PATH, PUBLIC_API_PROJECT_DIFF_PATH, PUBLIC_API_PROJECT_FILES_PATH,
@@ -81,13 +82,13 @@ use public::{
     public_api_get_project_git_commit, public_api_get_project_git_history,
     public_api_get_project_terminal, public_api_get_root_terminal, public_api_list_projects,
     public_api_list_root_terminal_sessions, public_api_list_terminal_sessions, public_api_login,
-    public_api_patch_project_archive, public_api_patch_project_diff,
-    public_api_post_project_terminal, public_api_post_root_terminal, public_api_session,
-    public_deployment, public_home, public_not_found, public_project_diff, public_project_files,
-    public_project_home, public_project_terminal, public_root_desktop, public_root_terminal,
-    public_root_terminal_ws, public_share, public_share_not_found, public_terminal_ws,
-    public_ui_archive_project, public_ui_create_share, public_ui_delete_share,
-    public_ui_get_shares,
+    public_api_patch_deployment_archive, public_api_patch_project_archive,
+    public_api_patch_project_diff, public_api_post_project_terminal, public_api_post_root_terminal,
+    public_api_session, public_deployment, public_home, public_not_found, public_project_diff,
+    public_project_files, public_project_home, public_project_terminal, public_root_desktop,
+    public_root_terminal, public_root_terminal_ws, public_share, public_share_not_found,
+    public_terminal_ws, public_ui_archive_deployment, public_ui_archive_project,
+    public_ui_create_share, public_ui_delete_share, public_ui_get_shares,
 };
 use t3code::{open_project_in_t3code, open_t3code, t3code_gateway_router};
 
@@ -219,6 +220,10 @@ fn protected_public_router(state: AppState) -> Router<AppState> {
             axum::routing::patch(public_ui_archive_project),
         )
         .route(
+            "/__latitude/ui/projects/{project}/deployments/{deployment}/archive",
+            axum::routing::patch(public_ui_archive_deployment),
+        )
+        .route(
             PUBLIC_API_ROOT_TERMINAL_PATH,
             get(public_api_get_root_terminal).post(public_api_post_root_terminal),
         )
@@ -239,6 +244,10 @@ fn protected_public_router(state: AppState) -> Router<AppState> {
         .route(
             "/__latitude/api/projects/{project}/archive",
             axum::routing::patch(public_api_patch_project_archive),
+        )
+        .route(
+            "/__latitude/api/projects/{project}/deployments/{deployment}/archive",
+            axum::routing::patch(public_api_patch_deployment_archive),
         )
         .route(
             PUBLIC_API_PROJECT_DIFF_PATH,
@@ -304,6 +313,10 @@ fn command_router(state: AppState) -> Router {
             get(get_project_deployment)
                 .put(replace_project_deployment)
                 .delete(delete_project_deployment),
+        )
+        .route(
+            COMMAND_PROJECT_DEPLOYMENT_ARCHIVE_PATH,
+            axum::routing::patch(patch_project_deployment_archive),
         )
         .route(
             COMMAND_PROJECT_PAGE_PATH,

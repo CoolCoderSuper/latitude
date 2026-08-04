@@ -20,6 +20,7 @@ pub(in crate::server) fn render_project_home(
     project: &ProjectConfig,
     git_status: &GitStatusSummary,
     t3code_enabled: bool,
+    show_archived: bool,
     device_hostname: &str,
 ) -> String {
     let page_title = format!("{} - Latitude Project", project.name);
@@ -28,6 +29,18 @@ pub(in crate::server) fn render_project_home(
         .iter()
         .filter(|deployment| deployment.enabled)
         .collect::<Vec<_>>();
+    let archived_deployments = project
+        .deployments
+        .iter()
+        .filter(|deployment| !deployment.enabled)
+        .collect::<Vec<_>>();
+    let no_enabled_deployments = enabled_deployments.is_empty();
+    let archived_deployment_count = archived_deployments.len();
+    let deployments_href = if show_archived {
+        format!("/{}?archived=1", project.name)
+    } else {
+        format!("/{}", project.name)
+    };
 
     html_page::document(
         &page_title,
@@ -51,29 +64,75 @@ pub(in crate::server) fn render_project_home(
                             span { "Start a coding agent in this repository" }
                         } }
                     }
-                    @for deployment in enabled_deployments {
-                        li class="deployment-item" {
-                            a class="deployment-link" href=(format!("/{}/{}", project.name, deployment.name)) {
-                                strong { (&deployment.name) }
-                                span {
-                                    (deployment_home_label(deployment))
-                                    @if let Some(title) = deployment_page_title(deployment) { ": " (title) }
+                }
+                div
+                    class="deployment-list"
+                    id="deployment-list"
+                    data-deployment-list
+                    hx-get=(deployments_href)
+                    hx-trigger="deploymentArchived from:body"
+                    hx-select="[data-deployment-list]"
+                    hx-target="#deployment-list"
+                    hx-swap="outerHTML" {
+                    ul {
+                        @for deployment in enabled_deployments {
+                            li class="deployment-item" {
+                                a class="deployment-link" href=(format!("/{}/{}", project.name, deployment.name)) {
+                                    strong { (&deployment.name) }
+                                    span {
+                                        (deployment_home_label(deployment))
+                                        @if let Some(title) = deployment_page_title(deployment) { ": " (title) }
+                                    }
                                 }
+                                button
+                                    class="share-trigger"
+                                    type="button"
+                                    data-share-trigger
+                                    data-deployment=(&deployment.name)
+                                    hx-get=(format!("/__latitude/ui/shares/{}/{}", project.name, deployment.name))
+                                    hx-target="[data-share-dialog-shell]"
+                                    hx-swap="outerHTML"
+                                    aria-label=(format!("Manage shares for {}", deployment.name))
+                                    title="Manage share links" { "Share" }
+                                (deployment_archive_button(&project.name, deployment))
                             }
-                            button
-                                class="share-trigger"
-                                type="button"
-                                data-share-trigger
-                                data-deployment=(&deployment.name)
-                                hx-get=(format!("/__latitude/ui/shares/{}/{}", project.name, deployment.name))
-                                hx-target="[data-share-dialog-shell]"
-                                hx-swap="outerHTML"
-                                aria-label=(format!("Manage shares for {}", deployment.name))
-                                title="Manage share links" { "Share" }
+                        }
+                        @if no_enabled_deployments {
+                            li class="empty" { "No active deployments." }
                         }
                     }
-                    @if project.deployments.iter().all(|deployment| !deployment.enabled) {
-                        li class="empty" { "No enabled deployments yet." }
+                    @if archived_deployment_count > 0 {
+                        div class="archived-deployments-controls" {
+                            @if show_archived {
+                                a class="archived-deployments-toggle" href=(format!("/{}", project.name)) { "Hide archived" }
+                            } @else {
+                                a class="archived-deployments-toggle" href=(format!("/{}?archived=1", project.name)) {
+                                    "View archived (" (archived_deployment_count) ")"
+                                }
+                            }
+                        }
+                        @if show_archived {
+                            section class="archived-deployments" aria-labelledby="archived-deployments-heading" {
+                                div class="archived-deployments-header" {
+                                    h2 id="archived-deployments-heading" { "Archived deployments" }
+                                    span { (archived_deployment_count) }
+                                }
+                                ul {
+                                    @for deployment in archived_deployments {
+                                        li class="deployment-item archived-deployment-item" {
+                                            div class="deployment-link archived-deployment-label" {
+                                                strong { (&deployment.name) }
+                                                span {
+                                                    (deployment_home_label(deployment))
+                                                    @if let Some(title) = deployment_page_title(deployment) { ": " (title) }
+                                                }
+                                            }
+                                            (deployment_restore_button(&project.name, deployment))
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 dialog class="share-dialog" data-share-dialog {
@@ -89,6 +148,47 @@ pub(in crate::server) fn render_project_home(
             }
         },
     )
+}
+
+fn deployment_archive_button(
+    project: &str,
+    deployment: &crate::config::ApplicationConfig,
+) -> Markup {
+    html! {
+        button
+            class="deployment-archive"
+            type="button"
+            hx-patch=(format!("/__latitude/ui/projects/{project}/deployments/{}/archive", deployment.name))
+            hx-confirm=(format!("Archive {}? It will stop serving until it is restored. Its content and settings will be kept.", deployment.name))
+            hx-swap="none"
+            hx-disabled-elt="this"
+            aria-label=(format!("Archive {}", deployment.name))
+            title="Archive this deployment without deleting it" {
+                svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" {
+                    path d="M4 7h16v13H4zM3 3h18v4H3zm6 8h6" {}
+                }
+            }
+    }
+}
+
+fn deployment_restore_button(
+    project: &str,
+    deployment: &crate::config::ApplicationConfig,
+) -> Markup {
+    html! {
+        button
+            class="deployment-restore"
+            type="button"
+            hx-patch=(format!("/__latitude/ui/projects/{project}/deployments/{}/archive?archived=false", deployment.name))
+            hx-swap="none"
+            hx-disabled-elt="this"
+            aria-label=(format!("Restore {}", deployment.name))
+            title="Restore this deployment" {
+                svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" {
+                    path d="M4 7h16v13H4zM3 3h18v4H3zm8 8-3 3 3 3m-3-3h7" {}
+                }
+            }
+    }
 }
 
 pub(in crate::server) fn render_server_home(

@@ -512,9 +512,19 @@ async fn serve_project_home(
         .await
         .remove(&project.name)
         .unwrap_or_default();
+    let show_archived = req.uri().query().is_some_and(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .any(|(name, value)| name == "archived" && value == "1")
+    });
     html_response(
         req.method(),
-        render_project_home(project, &git_status, t3code_enabled, device_hostname),
+        render_project_home(
+            project,
+            &git_status,
+            t3code_enabled,
+            show_archived,
+            device_hostname,
+        ),
     )
 }
 
