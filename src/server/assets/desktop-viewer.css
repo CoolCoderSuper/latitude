@@ -260,8 +260,7 @@ a:hover {
 }
 
 .desktop-canvas:focus-visible {
-  outline: 3px solid var(--latitude-color-focus);
-  outline-offset: -3px;
+  outline: none;
 }
 
 .desktop-canvas.fit {

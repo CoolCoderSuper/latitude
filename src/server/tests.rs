@@ -514,7 +514,7 @@ fn project_git_polling_marks_only_periodic_requests_as_auto_refresh() {
 }
 
 #[test]
-fn browser_tools_use_checked_in_bundles_and_visible_focus() {
+fn browser_tools_use_checked_in_bundles_and_desktop_focus_style() {
     let file_viewer = include_str!("assets/file-viewer.js");
     let diff_viewer = include_str!("assets/diff-viewer.js");
     let terminal_viewer = include_str!("assets/terminal-viewer.js");
@@ -529,7 +529,7 @@ fn browser_tools_use_checked_in_bundles_and_visible_focus() {
     assert!(file_viewer.contains("event.key.toLowerCase() === 'g'"));
     assert!(diff_viewer.contains("event.detail.elt.matches('.commit-form')"));
     assert!(diff_viewer.contains("messageInput.value = ''"));
-    assert!(desktop_style.contains(".desktop-canvas:focus-visible"));
+    assert!(desktop_style.contains(".desktop-canvas:focus-visible {\n  outline: none;"));
 }
 
 #[test]
