@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use super::DesktopScreenResponse;
 
-pub(crate) use capture::{NativeDesktopCapture, native_cursor_style, native_desktop_geometry};
+pub(crate) use capture::{native_cursor_style, native_desktop_geometry};
 pub(crate) use controller::{
     NativeControllerLeaseState, NativeInputController, native_input_controller,
 };

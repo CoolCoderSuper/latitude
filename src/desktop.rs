@@ -15,10 +15,10 @@ pub(crate) use display::{
     detect_desktop_resolutions, detect_desktop_screens, set_desktop_resolution,
 };
 pub(crate) use native::{
-    InputDesktop, NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand,
-    NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry, NativeDesktopPixels,
-    NativeInputController, fit_native_desktop_geometry, native_cursor_style,
-    native_desktop_geometry, native_input_controller, scale_native_desktop_screens,
+    InputDesktop, NativeControllerLeaseState, NativeDesktopCommand, NativeDesktopCursor,
+    NativeDesktopFrame, NativeDesktopGeometry, NativeDesktopPixels, NativeInputController,
+    fit_native_desktop_geometry, native_cursor_style, native_desktop_geometry,
+    native_input_controller, scale_native_desktop_screens,
 };
 pub(crate) use session_host::{NativeSessionBridge, run_native_session_host};
 

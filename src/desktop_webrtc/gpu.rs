@@ -77,7 +77,7 @@ use windows::{
     core::Interface,
 };
 
-use super::{CapturedDesktopEvent, EncodedDesktopEvent, EncodedDesktopFrame, NativeVideoSettings};
+use super::{EncodedDesktopEvent, EncodedDesktopFrame, NativeVideoSettings};
 use crate::desktop::{
     InputDesktop, NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry,
     NativeDesktopPixels, fit_native_desktop_geometry, native_cursor_style,
@@ -173,7 +173,7 @@ pub(super) fn run_gpu_video_pipeline(
 }
 
 pub(super) fn run_dxgi_software_capture(
-    frame_tx: watch::Sender<Option<Arc<CapturedDesktopEvent>>>,
+    frame_tx: watch::Sender<Option<Arc<NativeDesktopFrame>>>,
     stop_rx: watch::Receiver<bool>,
     settings: NativeVideoSettings,
     force_keyframe: Arc<AtomicBool>,
@@ -238,7 +238,7 @@ pub(super) fn run_dxgi_software_capture(
             received_first_frame = true;
             capture_time += started.elapsed();
             captured_frames += 1;
-            frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Frame(frame))));
+            frame_tx.send_replace(Some(Arc::new(frame)));
         } else if !received_first_frame && Instant::now() >= first_frame_deadline {
             bail!("DXGI desktop duplication did not produce an initial frame within two seconds");
         }

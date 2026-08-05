@@ -40,10 +40,7 @@ use yuvutils_rs::{
 };
 
 use super::peer::send_control_message;
-use crate::desktop::{
-    InputDesktop, NativeDesktopCapture, NativeDesktopCursor, NativeDesktopFrame,
-    NativeDesktopGeometry,
-};
+use crate::desktop::{NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry};
 
 struct EncodedDesktopFrame {
     source_geometry: NativeDesktopGeometry,
@@ -51,11 +48,6 @@ struct EncodedDesktopFrame {
     cursor: NativeDesktopCursor,
     captured_at: Instant,
     h264: Bytes,
-}
-
-enum CapturedDesktopEvent {
-    Frame(NativeDesktopFrame),
-    Error(String),
 }
 
 enum EncodedDesktopEvent {
@@ -231,23 +223,25 @@ impl SharedVideoProducer {
                     settings,
                     Arc::clone(&force_keyframe_for_worker),
                 ) {
-                    Ok(()) => return,
-                    Err(_) if *stop_rx.borrow() => return,
+                    Ok(()) => {}
+                    Err(_) if *stop_rx.borrow() => {}
                     Err(error) => {
                         warn!(
                             %error,
-                            "native desktop DXGI/OpenH264 pipeline unavailable; using GDI/OpenH264 fallback"
+                            "native desktop DXGI/OpenH264 pipeline unavailable"
                         );
+                        frame_tx_for_worker.send_replace(Some(Arc::new(
+                            EncodedDesktopEvent::Error(format!(
+                                "DXGI desktop capture is unavailable: {error}"
+                            )),
+                        )));
                     }
                 }
             }
-            run_software_video_pipeline(
-                runtime,
-                frame_tx_for_worker,
-                stop_rx,
-                settings,
-                force_keyframe_for_worker,
-            );
+            #[cfg(not(windows))]
+            frame_tx_for_worker.send_replace(Some(Arc::new(EncodedDesktopEvent::Error(
+                "native desktop capture is only supported on Windows".to_string(),
+            ))));
         });
 
         debug!(
@@ -291,7 +285,7 @@ fn run_dxgi_software_video_pipeline(
         max_height = settings.max_height,
         "native desktop DXGI/OpenH264 fallback started"
     );
-    let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
+    let (capture_tx, capture_rx) = watch::channel::<Option<Arc<NativeDesktopFrame>>>(None);
     let capture_stop_rx = stop_rx.clone();
     let capture_force_keyframe = Arc::clone(&force_keyframe);
     std::thread::scope(|scope| {
@@ -321,39 +315,6 @@ fn run_dxgi_software_video_pipeline(
             .map_err(|_| anyhow!("native desktop OpenH264 encoder thread panicked"))?;
         capture_result
     })
-}
-
-fn run_software_video_pipeline(
-    runtime: tokio::runtime::Handle,
-    frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
-    stop_rx: watch::Receiver<bool>,
-    settings: NativeVideoSettings,
-    force_keyframe: Arc<AtomicBool>,
-) {
-    debug!(
-        fps = settings.fps,
-        bitrate_kbps = settings.bitrate_kbps,
-        max_width = settings.max_width,
-        max_height = settings.max_height,
-        "native desktop GDI/OpenH264 fallback started"
-    );
-    let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
-    let capture_stop_rx = stop_rx.clone();
-    std::thread::scope(|scope| {
-        scope.spawn(move || {
-            capture_desktop_frames(capture_tx, capture_stop_rx, settings);
-        });
-        scope.spawn(move || {
-            encode_desktop_frames(
-                runtime,
-                capture_rx,
-                frame_tx,
-                stop_rx,
-                settings,
-                force_keyframe,
-            );
-        });
-    });
 }
 
 #[derive(Default)]
@@ -738,92 +699,9 @@ fn h264_is_decodable_keyframe(input: &[u8]) -> bool {
     has_sps && has_pps && has_idr
 }
 
-fn capture_desktop_frames(
-    frame_tx: watch::Sender<Option<Arc<CapturedDesktopEvent>>>,
-    stop_rx: watch::Receiver<bool>,
-    settings: NativeVideoSettings,
-) {
-    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps.max(1)));
-    let mut input_desktop = InputDesktop::attach_current_thread().ok();
-    let mut next_desktop_check = Instant::now();
-    let mut stats_started = Instant::now();
-    let mut captured_frames = 0_u64;
-    let mut capture_time = Duration::ZERO;
-    let mut capture = match NativeDesktopCapture::new(settings.max_width, settings.max_height) {
-        Ok(capture) => capture,
-        Err(error) => {
-            frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Error(
-                error.to_string(),
-            ))));
-            return;
-        }
-    };
-
-    loop {
-        if *stop_rx.borrow() || frame_tx.is_closed() {
-            break;
-        }
-        if Instant::now() >= next_desktop_check {
-            next_desktop_check = Instant::now() + Duration::from_millis(250);
-            let switched = match input_desktop.as_mut() {
-                Some(desktop) => desktop.refresh().unwrap_or(false),
-                None => {
-                    input_desktop = InputDesktop::attach_current_thread().ok();
-                    input_desktop.is_some()
-                }
-            };
-            if switched {
-                capture = match NativeDesktopCapture::new(settings.max_width, settings.max_height) {
-                    Ok(capture) => capture,
-                    Err(error) => {
-                        frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Error(
-                            error.to_string(),
-                        ))));
-                        return;
-                    }
-                };
-            }
-        }
-        let started = Instant::now();
-        let frame = match capture.capture() {
-            Ok(frame) => frame,
-            Err(error) => {
-                frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Error(
-                    error.to_string(),
-                ))));
-                break;
-            }
-        };
-        capture_time += started.elapsed();
-        captured_frames += 1;
-        frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Frame(frame))));
-
-        let stats_elapsed = stats_started.elapsed();
-        if stats_elapsed >= Duration::from_secs(5) {
-            debug!(
-                frames_per_second = captured_frames as f64 / stats_elapsed.as_secs_f64(),
-                average_capture_ms = capture_time.as_secs_f64() * 1_000.0 / captured_frames as f64,
-                "native WebRTC desktop capture rate"
-            );
-            stats_started = Instant::now();
-            captured_frames = 0;
-            capture_time = Duration::ZERO;
-        }
-
-        wait_until(started + frame_interval);
-    }
-}
-
-fn wait_until(deadline: Instant) {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if !remaining.is_zero() {
-        std::thread::sleep(remaining);
-    }
-}
-
 fn encode_desktop_frames(
     runtime: tokio::runtime::Handle,
-    mut capture_rx: watch::Receiver<Option<Arc<CapturedDesktopEvent>>>,
+    mut capture_rx: watch::Receiver<Option<Arc<NativeDesktopFrame>>>,
     frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
     stop_rx: watch::Receiver<bool>,
     settings: NativeVideoSettings,
@@ -847,7 +725,7 @@ fn encode_desktop_frames(
     let mut conversion_time = Duration::ZERO;
     let mut encode_time = Duration::ZERO;
     let mut has_encoded_frame = false;
-    let mut previous_encoded_event: Option<Arc<CapturedDesktopEvent>> = None;
+    let mut previous_encoded_frame: Option<Arc<NativeDesktopFrame>> = None;
 
     while runtime.block_on(capture_rx.changed()).is_ok() {
         if *stop_rx.borrow() {
@@ -857,26 +735,14 @@ fn encode_desktop_frames(
         let Some(event) = event else {
             continue;
         };
-        let frame = match event.as_ref() {
-            CapturedDesktopEvent::Frame(frame) => frame,
-            CapturedDesktopEvent::Error(error) => {
-                frame_tx.send_replace(Some(Arc::new(EncodedDesktopEvent::Error(error.clone()))));
-                break;
-            }
-        };
+        let frame = event.as_ref();
         let force_requested = force_keyframe.swap(false, Ordering::AcqRel);
-        let unchanged = previous_encoded_event
-            .as_deref()
-            .and_then(|event| match event {
-                CapturedDesktopEvent::Frame(frame) => Some(frame),
-                CapturedDesktopEvent::Error(_) => None,
-            })
-            .is_some_and(|previous| {
-                previous.source_geometry == frame.source_geometry
-                    && previous.geometry == frame.geometry
-                    && previous.cursor == frame.cursor
-                    && *previous.bgra == *frame.bgra
-            });
+        let unchanged = previous_encoded_frame.as_deref().is_some_and(|previous| {
+            previous.source_geometry == frame.source_geometry
+                && previous.geometry == frame.geometry
+                && previous.cursor == frame.cursor
+                && *previous.bgra == *frame.bgra
+        });
         if unchanged && !force_requested {
             unchanged_frames += 1;
             continue;
@@ -917,7 +783,7 @@ fn encode_desktop_frames(
             force_keyframe.store(true, Ordering::Release);
         }
         if !h264.is_empty() {
-            previous_encoded_event = Some(Arc::clone(&event));
+            previous_encoded_frame = Some(Arc::clone(&event));
             frame_tx.send_replace(Some(Arc::new(EncodedDesktopEvent::Frame(
                 EncodedDesktopFrame {
                     source_geometry: frame.source_geometry,
