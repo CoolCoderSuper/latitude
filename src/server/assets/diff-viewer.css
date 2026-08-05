@@ -279,6 +279,7 @@ input {
 
 .diff-workspace {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -338,23 +339,26 @@ input {
 }
 
 .file-panel {
+  min-width: 0;
   border: 1px solid #d7dde8;
   border-radius: 8px;
   background: #fff;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .file-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 8px;
 }
 
 .file-card {
+  min-width: 0;
   border: 1px solid #e0e6ef;
   border-radius: 8px;
   background: #fff;
-  overflow: hidden;
+  overflow: clip;
 }
 
 .file-card[open] {
@@ -362,11 +366,15 @@ input {
 }
 
 .file-summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   padding: 7px 10px;
+  background: var(--latitude-color-surface);
   cursor: pointer;
 }
 
@@ -434,10 +442,12 @@ input {
 }
 
 .file-content {
+  min-width: 0;
   border-top: 1px solid #e6ebf2;
 }
 
 .file-diff {
+  min-width: 0;
   border-top: 1px solid #e6ebf2;
 }
 
@@ -491,6 +501,8 @@ input {
 }
 
 pre {
+  box-sizing: border-box;
+  max-width: 100%;
   margin: 0;
   overflow-x: auto;
   padding: 6px 0;
