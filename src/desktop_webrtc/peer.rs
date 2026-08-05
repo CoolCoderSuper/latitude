@@ -26,7 +26,7 @@ use webrtc::{
         },
     },
     rtp_transceiver::rtp_codec::RTCRtpCodecCapability,
-    track::track_local::{TrackLocal, track_local_static_sample::TrackLocalStaticSample},
+    track::track_local::{TrackLocal, track_local_static_rtp::TrackLocalStaticRTP},
 };
 
 use crate::desktop::{
@@ -73,7 +73,7 @@ impl PointerMoveDispatcher {
 
 pub(super) struct NativePeerSession {
     pub(super) peer: Arc<RTCPeerConnection>,
-    pub(super) track: Arc<TrackLocalStaticSample>,
+    pub(super) track: Arc<TrackLocalStaticRTP>,
     pub(super) state_rx: mpsc::UnboundedReceiver<RTCPeerConnectionState>,
     pub(super) candidate_rx: mpsc::UnboundedReceiver<RTCIceCandidateInit>,
     pub(super) control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
@@ -130,7 +130,7 @@ pub(super) async fn create_session(
         session_config.max_width,
         session_config.max_height,
     );
-    let track = Arc::new(TrackLocalStaticSample::new(
+    let track = Arc::new(TrackLocalStaticRTP::new(
         RTCRtpCodecCapability {
             mime_type: webrtc::api::media_engine::MIME_TYPE_H264.to_owned(),
             clock_rate: 90_000,

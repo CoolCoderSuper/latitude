@@ -16,9 +16,9 @@ pub(crate) use display::{
 };
 pub(crate) use native::{
     InputDesktop, NativeControllerLeaseState, NativeDesktopCapture, NativeDesktopCommand,
-    NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry, NativeInputController,
-    fit_native_desktop_geometry, native_cursor_style, native_desktop_geometry,
-    native_input_controller, scale_native_desktop_screens,
+    NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry, NativeDesktopPixels,
+    NativeInputController, fit_native_desktop_geometry, native_cursor_style,
+    native_desktop_geometry, native_input_controller, scale_native_desktop_screens,
 };
 pub(crate) use session_host::{NativeSessionBridge, run_native_session_host};
 

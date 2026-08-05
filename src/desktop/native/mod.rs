@@ -46,7 +46,7 @@ pub(crate) struct NativeDesktopPixels {
 impl NativeDesktopPixels {
     const MAX_POOLED_BUFFERS: usize = 3;
 
-    fn new(bytes: Vec<u8>, pool: Arc<Mutex<Vec<Vec<u8>>>>) -> Self {
+    pub(crate) fn new(bytes: Vec<u8>, pool: Arc<Mutex<Vec<Vec<u8>>>>) -> Self {
         Self {
             bytes: Some(bytes),
             pool,

@@ -4,7 +4,7 @@ use std::{
     ptr::null_mut,
     slice,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::Bytes;
 use tokio::sync::watch;
-use tracing::debug;
+use tracing::{debug, info};
 use windows::{
     Win32::{
         Foundation::{HMODULE, RECT, VARIANT_TRUE},
@@ -21,11 +21,11 @@ use windows::{
             Direct3D::{D3D_DRIVER_TYPE_UNKNOWN, D3D_FEATURE_LEVEL_11_0},
             Direct3D11::{
                 D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_BOX,
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_FLAG,
-                D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_TEX2D_VPIV,
-                D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-                D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
-                D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT,
+                D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_FLAG,
+                D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE,
+                D3D11_SDK_VERSION, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC,
+                D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
+                D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT,
                 D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
                 D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
                 D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM,
@@ -77,9 +77,10 @@ use windows::{
     core::Interface,
 };
 
-use super::{EncodedDesktopEvent, EncodedDesktopFrame, NativeVideoSettings};
+use super::{CapturedDesktopEvent, EncodedDesktopEvent, EncodedDesktopFrame, NativeVideoSettings};
 use crate::desktop::{
-    InputDesktop, NativeDesktopGeometry, fit_native_desktop_geometry, native_cursor_style,
+    InputDesktop, NativeDesktopCursor, NativeDesktopFrame, NativeDesktopGeometry,
+    NativeDesktopPixels, fit_native_desktop_geometry, native_cursor_style,
 };
 
 const ENCODER_EVENT_TIMEOUT: Duration = Duration::from_secs(1);
@@ -171,20 +172,339 @@ pub(super) fn run_gpu_video_pipeline(
     Ok(())
 }
 
+pub(super) fn run_dxgi_software_capture(
+    frame_tx: watch::Sender<Option<Arc<CapturedDesktopEvent>>>,
+    stop_rx: watch::Receiver<bool>,
+    settings: NativeVideoSettings,
+    force_keyframe: Arc<AtomicBool>,
+) -> Result<()> {
+    let _com = WindowsComRuntime::new()?;
+    // Desktop duplication objects belong to the input desktop active when they are created.
+    // The service host can move this thread between Default, Winlogon, and UAC desktops.
+    let mut input_desktop = InputDesktop::attach_current_thread().ok();
+    let mut capture = DxgiSoftwareCapture::new(settings)?;
+    debug!(
+        adapter = %capture.adapter_name,
+        outputs = capture.outputs.len(),
+        width = capture.geometry.width,
+        height = capture.geometry.height,
+        "native desktop DXGI capture for OpenH264 started"
+    );
+
+    let frame_interval = Duration::from_secs_f64(1.0 / f64::from(settings.fps.max(1)));
+    let mut next_desktop_check = Instant::now();
+    let mut stats_started = Instant::now();
+    let mut captured_frames = 0_u64;
+    let mut capture_time = Duration::ZERO;
+    let mut first_frame_deadline = Instant::now() + Duration::from_secs(2);
+    let mut received_first_frame = false;
+
+    loop {
+        if *stop_rx.borrow() || frame_tx.is_closed() {
+            break;
+        }
+        if Instant::now() >= next_desktop_check {
+            next_desktop_check = Instant::now() + Duration::from_millis(250);
+            let switched = match input_desktop.as_mut() {
+                Some(desktop) => desktop.refresh().unwrap_or(false),
+                None => {
+                    input_desktop = InputDesktop::attach_current_thread().ok();
+                    input_desktop.is_some()
+                }
+            };
+            if switched {
+                capture = DxgiSoftwareCapture::new(settings)?;
+                first_frame_deadline = Instant::now() + Duration::from_secs(2);
+                received_first_frame = false;
+                debug!(
+                    adapter = %capture.adapter_name,
+                    outputs = capture.outputs.len(),
+                    "native desktop DXGI capture followed an input desktop switch"
+                );
+            }
+        }
+
+        let started = Instant::now();
+        if let Some(frame) = capture.capture(force_keyframe.load(Ordering::Acquire))? {
+            if !received_first_frame {
+                info!(
+                    adapter = %capture.adapter_name,
+                    width = frame.geometry.width,
+                    height = frame.geometry.height,
+                    capture_ms = started.elapsed().as_secs_f64() * 1_000.0,
+                    "native desktop DXGI capture produced its first frame"
+                );
+            }
+            received_first_frame = true;
+            capture_time += started.elapsed();
+            captured_frames += 1;
+            frame_tx.send_replace(Some(Arc::new(CapturedDesktopEvent::Frame(frame))));
+        } else if !received_first_frame && Instant::now() >= first_frame_deadline {
+            bail!("DXGI desktop duplication did not produce an initial frame within two seconds");
+        }
+
+        let stats_elapsed = stats_started.elapsed();
+        if stats_elapsed >= Duration::from_secs(5) {
+            debug!(
+                frames_per_second = captured_frames as f64 / stats_elapsed.as_secs_f64(),
+                average_capture_ms = if captured_frames == 0 {
+                    0.0
+                } else {
+                    capture_time.as_secs_f64() * 1_000.0 / captured_frames as f64
+                },
+                "native WebRTC DXGI desktop capture rate"
+            );
+            stats_started = Instant::now();
+            captured_frames = 0;
+            capture_time = Duration::ZERO;
+        }
+
+        let remaining = (started + frame_interval).saturating_duration_since(Instant::now());
+        if !remaining.is_zero() {
+            std::thread::sleep(remaining);
+        }
+    }
+
+    Ok(())
+}
+
+struct DxgiSoftwareCapture {
+    adapter_name: String,
+    context: ID3D11DeviceContext,
+    source_geometry: NativeDesktopGeometry,
+    geometry: NativeDesktopGeometry,
+    outputs: Vec<DuplicatedOutput>,
+    composite: ID3D11Texture2D,
+    staging: ID3D11Texture2D,
+    x_offsets: Vec<usize>,
+    byte_len: usize,
+    buffers: Arc<Mutex<Vec<Vec<u8>>>>,
+    last_cursor: Option<NativeDesktopCursor>,
+}
+
+impl DxgiSoftwareCapture {
+    fn new(settings: NativeVideoSettings) -> Result<Self> {
+        let (adapter, adapter_name, output_descriptions) = select_desktop_adapter()?;
+        let source_geometry = geometry_for_outputs(&output_descriptions)?;
+        if source_geometry.width > MAX_D3D11_TEXTURE_DIMENSION
+            || source_geometry.height > MAX_D3D11_TEXTURE_DIMENSION
+        {
+            bail!(
+                "virtual desktop {}x{} exceeds the D3D11 texture limit",
+                source_geometry.width,
+                source_geometry.height
+            );
+        }
+        let geometry =
+            fit_native_desktop_geometry(source_geometry, settings.max_width, settings.max_height);
+        let (device, context) = create_d3d11_device(&adapter, false)?;
+        let composite = create_texture(
+            &device,
+            source_geometry.width,
+            source_geometry.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+            D3D11_BIND_SHADER_RESOURCE.0 as u32 | D3D11_BIND_RENDER_TARGET.0 as u32,
+        )?;
+        clear_texture(&device, &context, &composite)?;
+        let outputs = output_descriptions
+            .into_iter()
+            .map(|(output, desc)| {
+                DuplicatedOutput::new(
+                    &device,
+                    output,
+                    desc.DesktopCoordinates,
+                    source_geometry.origin_x,
+                    source_geometry.origin_y,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let staging = create_staging_texture(
+            &device,
+            source_geometry.width,
+            source_geometry.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+        )?;
+        let byte_len = usize::try_from(geometry.width)
+            .ok()
+            .and_then(|width| width.checked_mul(geometry.height as usize))
+            .and_then(|pixels| pixels.checked_mul(4))
+            .ok_or_else(|| anyhow!("DXGI software frame dimensions are too large"))?;
+        let x_offsets = (0..geometry.width as usize)
+            .map(|x| x.saturating_mul(source_geometry.width as usize) / geometry.width as usize * 4)
+            .collect();
+
+        Ok(Self {
+            adapter_name,
+            context,
+            source_geometry,
+            geometry,
+            outputs,
+            composite,
+            staging,
+            x_offsets,
+            byte_len,
+            buffers: Arc::new(Mutex::new(Vec::new())),
+            last_cursor: None,
+        })
+    }
+
+    fn capture(&mut self, force: bool) -> Result<Option<NativeDesktopFrame>> {
+        let mut changed = false;
+        for output in &mut self.outputs {
+            changed |= output.update(&self.context, &self.composite)?;
+        }
+        if !self.outputs.iter().all(|output| output.initialized) {
+            return Ok(None);
+        }
+        let cursor = native_cursor_style();
+        if !changed && !force && self.last_cursor == Some(cursor) {
+            return Ok(None);
+        }
+
+        unsafe {
+            self.context.CopyResource(&self.staging, &self.composite);
+        }
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        unsafe {
+            self.context
+                .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+                .context("DXGI desktop staging texture could not be mapped")?;
+        }
+        let copy_result = (|| {
+            if mapped.pData.is_null() {
+                bail!("DXGI desktop staging texture returned no pixels");
+            }
+            let row_pitch = mapped.RowPitch as usize;
+            let source_len = row_pitch
+                .checked_mul(self.source_geometry.height as usize)
+                .ok_or_else(|| anyhow!("DXGI desktop staging texture is too large"))?;
+            let source = unsafe { slice::from_raw_parts(mapped.pData.cast::<u8>(), source_len) };
+            let mut bgra = self
+                .buffers
+                .lock()
+                .ok()
+                .and_then(|mut buffers| buffers.pop())
+                .unwrap_or_else(|| Vec::with_capacity(self.byte_len));
+            bgra.resize(self.byte_len, 0);
+            copy_scaled_bgra(
+                source,
+                row_pitch,
+                self.source_geometry.width as usize,
+                self.source_geometry.height as usize,
+                self.geometry.width as usize,
+                self.geometry.height as usize,
+                &self.x_offsets,
+                &mut bgra,
+            )?;
+            Ok(NativeDesktopFrame {
+                source_geometry: self.source_geometry,
+                geometry: self.geometry,
+                cursor,
+                captured_at: Instant::now(),
+                bgra: NativeDesktopPixels::new(bgra, Arc::clone(&self.buffers)),
+            })
+        })();
+        unsafe {
+            self.context.Unmap(&self.staging, 0);
+        }
+        copy_result.map(|frame| {
+            self.last_cursor = Some(cursor);
+            Some(frame)
+        })
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn copy_scaled_bgra(
+    source: &[u8],
+    source_row_pitch: usize,
+    source_width: usize,
+    source_height: usize,
+    output_width: usize,
+    output_height: usize,
+    x_offsets: &[usize],
+    output: &mut [u8],
+) -> Result<()> {
+    let source_row_bytes = source_width
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("DXGI source row is too large"))?;
+    let source_len = source_row_pitch
+        .checked_mul(source_height)
+        .ok_or_else(|| anyhow!("DXGI source frame is too large"))?;
+    let output_row_bytes = output_width
+        .checked_mul(4)
+        .ok_or_else(|| anyhow!("DXGI output row is too large"))?;
+    let output_len = output_row_bytes
+        .checked_mul(output_height)
+        .ok_or_else(|| anyhow!("DXGI output frame is too large"))?;
+    if source_width == 0
+        || source_height == 0
+        || output_width == 0
+        || output_height == 0
+        || source_row_pitch < source_row_bytes
+        || source.len() < source_len
+        || output.len() != output_len
+        || x_offsets.len() != output_width
+        || x_offsets
+            .iter()
+            .any(|offset| offset.saturating_add(4) > source_row_bytes)
+    {
+        bail!("DXGI desktop staging texture has invalid dimensions");
+    }
+
+    if source_width == output_width && source_height == output_height {
+        for (source_row, output_row) in source
+            .chunks(source_row_pitch)
+            .take(source_height)
+            .zip(output.chunks_exact_mut(output_row_bytes))
+        {
+            output_row.copy_from_slice(&source_row[..source_row_bytes]);
+        }
+        return Ok(());
+    }
+
+    for (output_y, output_row) in output.chunks_exact_mut(output_row_bytes).enumerate() {
+        let source_y = output_y.saturating_mul(source_height) / output_height;
+        let source_row_start = source_y * source_row_pitch;
+        let source_row = &source[source_row_start..source_row_start + source_row_bytes];
+        for (output_pixel, source_x) in output_row.chunks_exact_mut(4).zip(x_offsets) {
+            output_pixel.copy_from_slice(&source_row[*source_x..*source_x + 4]);
+        }
+    }
+    Ok(())
+}
+
+struct WindowsComRuntime;
+
+impl WindowsComRuntime {
+    fn new() -> Result<Self> {
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED)
+                .ok()
+                .context("COM could not be initialized for native desktop video")?;
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for WindowsComRuntime {
+    fn drop(&mut self) {
+        unsafe {
+            CoUninitialize();
+        }
+    }
+}
+
 struct WindowsMediaRuntime {
-    com_initialized: bool,
+    _com: WindowsComRuntime,
     media_foundation_started: bool,
 }
 
 impl WindowsMediaRuntime {
     fn new() -> Result<Self> {
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED)
-                .ok()
-                .context("COM could not be initialized for native GPU video")?;
-        }
+        let com = WindowsComRuntime::new()?;
         let mut runtime = Self {
-            com_initialized: true,
+            _com: com,
             media_foundation_started: false,
         };
         unsafe {
@@ -201,9 +521,6 @@ impl Drop for WindowsMediaRuntime {
         unsafe {
             if self.media_foundation_started {
                 let _ = MFShutdown();
-            }
-            if self.com_initialized {
-                CoUninitialize();
             }
         }
     }
@@ -241,7 +558,7 @@ impl GpuVideoPipeline {
         }
         let geometry =
             fit_native_desktop_geometry(source_geometry, settings.max_width, settings.max_height);
-        let (device, context) = create_d3d11_device(&adapter)?;
+        let (device, context) = create_d3d11_device(&adapter, true)?;
         let composite = create_texture(
             &device,
             source_geometry.width,
@@ -389,18 +706,22 @@ fn geometry_for_outputs(
     })
 }
 
-fn create_d3d11_device(adapter: &IDXGIAdapter1) -> Result<(ID3D11Device, ID3D11DeviceContext)> {
+fn create_d3d11_device(
+    adapter: &IDXGIAdapter1,
+    video_support: bool,
+) -> Result<(ID3D11Device, ID3D11DeviceContext)> {
     let mut device = None;
     let mut context = None;
-    let flags = D3D11_CREATE_DEVICE_FLAG(
-        D3D11_CREATE_DEVICE_BGRA_SUPPORT.0 | D3D11_CREATE_DEVICE_VIDEO_SUPPORT.0,
-    );
+    let mut flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT.0;
+    if video_support {
+        flags |= D3D11_CREATE_DEVICE_VIDEO_SUPPORT.0;
+    }
     unsafe {
         D3D11CreateDevice(
             adapter,
             D3D_DRIVER_TYPE_UNKNOWN,
             HMODULE::default(),
-            flags,
+            D3D11_CREATE_DEVICE_FLAG(flags),
             Some(&[D3D_FEATURE_LEVEL_11_0]),
             D3D11_SDK_VERSION,
             Some(&mut device),
@@ -444,6 +765,36 @@ fn create_texture(
             .context("D3D11 video texture could not be created")?;
     }
     texture.ok_or_else(|| anyhow!("D3D11 returned no video texture"))
+}
+
+fn create_staging_texture(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+    format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT,
+) -> Result<ID3D11Texture2D> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: format,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_STAGING,
+        BindFlags: 0,
+        CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+        MiscFlags: 0,
+    };
+    let mut texture = None;
+    unsafe {
+        device
+            .CreateTexture2D(&desc, None, Some(&mut texture))
+            .context("D3D11 desktop staging texture could not be created")?;
+    }
+    texture.ok_or_else(|| anyhow!("D3D11 returned no desktop staging texture"))
 }
 
 fn clear_texture(
@@ -529,6 +880,9 @@ impl DuplicatedOutput {
         let update_result: Result<bool> = (|| {
             let resource = resource.ok_or_else(|| anyhow!("DXGI returned no desktop surface"))?;
             let texture: ID3D11Texture2D = resource.cast()?;
+            if !desktop_image_updated(&info) {
+                return Ok(false);
+            }
             let mut copy_full = !self.initialized || info.RectsCoalesced.as_bool();
             let move_rects = self.move_rects(info.TotalMetadataBufferSize)?;
             copy_full |= !move_rects.is_empty();
@@ -667,6 +1021,10 @@ impl DuplicatedOutput {
             );
         }
     }
+}
+
+fn desktop_image_updated(info: &DXGI_OUTDUPL_FRAME_INFO) -> bool {
+    info.LastPresentTime != 0 || info.AccumulatedFrames != 0
 }
 
 struct GpuFrameProcessor {
@@ -1450,9 +1808,10 @@ fn append_avc_parameter_set(input: &[u8], offset: &mut usize, output: &mut Vec<u
 #[cfg(test)]
 mod tests {
     use super::{
-        GpuVideoPipeline, NativeVideoSettings, WindowsMediaRuntime,
-        avc_decoder_configuration_to_annex_b, contains_h264_nal_type, extract_parameter_sets,
-        normalize_h264,
+        DXGI_OUTDUPL_FRAME_INFO, Duration, DxgiSoftwareCapture, GpuVideoPipeline, InputDesktop,
+        Instant, NativeVideoSettings, WindowsComRuntime, WindowsMediaRuntime,
+        avc_decoder_configuration_to_annex_b, contains_h264_nal_type, copy_scaled_bgra,
+        desktop_image_updated, extract_parameter_sets, normalize_h264,
     };
 
     #[test]
@@ -1465,6 +1824,100 @@ mod tests {
         assert!(!pipeline.outputs.is_empty());
         assert!(pipeline.geometry.width <= 1_920);
         assert!(pipeline.geometry.height <= 1_080);
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows desktop"]
+    fn dxgi_software_capture_initializes_on_the_current_desktop() {
+        let _desktop = InputDesktop::attach_current_thread().unwrap();
+        let _com = WindowsComRuntime::new().unwrap();
+        let mut capture =
+            DxgiSoftwareCapture::new(NativeVideoSettings::new(30, 4_000, 1_920, 1_080)).unwrap();
+
+        assert!(!capture.outputs.is_empty());
+        assert!(capture.geometry.width <= 1_920);
+        assert!(capture.geometry.height <= 1_080);
+        if let Some(frame) = capture.capture(false).unwrap() {
+            assert_eq!(
+                frame.bgra.len(),
+                (frame.geometry.width * frame.geometry.height * 4) as usize
+            );
+        }
+    }
+
+    #[test]
+    fn ignores_pointer_only_duplication_frames() {
+        let pointer_only = DXGI_OUTDUPL_FRAME_INFO {
+            LastMouseUpdateTime: 1,
+            ..Default::default()
+        };
+        assert!(!desktop_image_updated(&pointer_only));
+
+        let presented = DXGI_OUTDUPL_FRAME_INFO {
+            LastPresentTime: 1,
+            ..Default::default()
+        };
+        assert!(desktop_image_updated(&presented));
+
+        let accumulated = DXGI_OUTDUPL_FRAME_INFO {
+            AccumulatedFrames: 1,
+            ..Default::default()
+        };
+        assert!(desktop_image_updated(&accumulated));
+    }
+
+    #[test]
+    #[ignore = "diagnoses live DXGI readback"]
+    fn dxgi_reads_live_desktop_pixels() {
+        let _desktop = InputDesktop::attach_current_thread().unwrap();
+        let _com = WindowsComRuntime::new().unwrap();
+        let mut capture =
+            DxgiSoftwareCapture::new(NativeVideoSettings::new(30, 4_000, 1_920, 1_080)).unwrap();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(10) {
+            if let Some(frame) = capture.capture(true).unwrap() {
+                let checksum = frame.bgra.iter().fold(0_u64, |checksum, byte| {
+                    checksum.wrapping_add(u64::from(*byte))
+                });
+                eprintln!(
+                    "DXGI read {} bytes after {:.2} ms; checksum={checksum}",
+                    frame.bgra.len(),
+                    started.elapsed().as_secs_f64() * 1_000.0,
+                );
+                assert_eq!(
+                    frame.bgra.len(),
+                    (frame.geometry.width * frame.geometry.height * 4) as usize
+                );
+                assert_ne!(checksum, 0, "DXGI returned an all-zero desktop surface");
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("DXGI did not provide readable desktop pixels within ten seconds");
+    }
+
+    #[test]
+    fn copies_mapped_bgra_rows_without_padding() {
+        let source = [
+            1, 2, 3, 4, 5, 6, 7, 8, 90, 91, 92, 93, 9, 10, 11, 12, 13, 14, 15, 16, 94, 95, 96, 97,
+        ];
+        let mut output = [0; 16];
+        copy_scaled_bgra(&source, 12, 2, 2, 2, 2, &[0, 4], &mut output).unwrap();
+        assert_eq!(
+            output,
+            [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+        );
+    }
+
+    #[test]
+    fn nearest_neighbor_scales_mapped_bgra() {
+        let source = [
+            1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8,
+            8, 8, 8,
+        ];
+        let mut output = [0; 8];
+        copy_scaled_bgra(&source, 16, 4, 2, 2, 1, &[0, 8], &mut output).unwrap();
+        assert_eq!(output, [1, 1, 1, 1, 3, 3, 3, 3]);
     }
 
     #[test]

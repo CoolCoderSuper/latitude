@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use openh264::{
     OpenH264API,
@@ -21,14 +21,18 @@ use openh264::{
     },
     formats::YUVSource,
 };
+use rtp::{
+    codecs::h264::H264Payloader,
+    packetizer::{Packetizer, new_packetizer},
+    sequence::new_random_sequencer,
+};
 use tokio::{
     sync::{Mutex, RwLock, watch},
     task::JoinHandle,
 };
 use tracing::{debug, warn};
 use webrtc::{
-    data_channel::RTCDataChannel, media::Sample,
-    track::track_local::track_local_static_sample::TrackLocalStaticSample,
+    data_channel::RTCDataChannel, track::track_local::track_local_static_rtp::TrackLocalStaticRTP,
 };
 use yuvutils_rs::{
     BufferStoreMut, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix,
@@ -216,7 +220,23 @@ impl SharedVideoProducer {
                     Err(error) => {
                         warn!(
                             %error,
-                            "native desktop GPU pipeline unavailable; using software fallback"
+                            "native desktop hardware video pipeline unavailable; trying DXGI capture with OpenH264"
+                        );
+                    }
+                }
+                match run_dxgi_software_video_pipeline(
+                    runtime.clone(),
+                    frame_tx_for_worker.clone(),
+                    stop_rx.clone(),
+                    settings,
+                    Arc::clone(&force_keyframe_for_worker),
+                ) {
+                    Ok(()) => return,
+                    Err(_) if *stop_rx.borrow() => return,
+                    Err(error) => {
+                        warn!(
+                            %error,
+                            "native desktop DXGI/OpenH264 pipeline unavailable; using GDI/OpenH264 fallback"
                         );
                     }
                 }
@@ -254,6 +274,53 @@ impl SharedVideoProducer {
             "shared native desktop video producer stopped"
         );
     }
+}
+
+#[cfg(windows)]
+fn run_dxgi_software_video_pipeline(
+    runtime: tokio::runtime::Handle,
+    frame_tx: watch::Sender<Option<Arc<EncodedDesktopEvent>>>,
+    stop_rx: watch::Receiver<bool>,
+    settings: NativeVideoSettings,
+    force_keyframe: Arc<AtomicBool>,
+) -> Result<()> {
+    debug!(
+        fps = settings.fps,
+        bitrate_kbps = settings.bitrate_kbps,
+        max_width = settings.max_width,
+        max_height = settings.max_height,
+        "native desktop DXGI/OpenH264 fallback started"
+    );
+    let (capture_tx, capture_rx) = watch::channel::<Option<Arc<CapturedDesktopEvent>>>(None);
+    let capture_stop_rx = stop_rx.clone();
+    let capture_force_keyframe = Arc::clone(&force_keyframe);
+    std::thread::scope(|scope| {
+        let capture_worker = scope.spawn(move || {
+            gpu::run_dxgi_software_capture(
+                capture_tx,
+                capture_stop_rx,
+                settings,
+                capture_force_keyframe,
+            )
+        });
+        let encoder_worker = scope.spawn(move || {
+            encode_desktop_frames(
+                runtime,
+                capture_rx,
+                frame_tx,
+                stop_rx,
+                settings,
+                force_keyframe,
+            );
+        });
+        let capture_result = capture_worker
+            .join()
+            .map_err(|_| anyhow!("native desktop DXGI capture thread panicked"))?;
+        encoder_worker
+            .join()
+            .map_err(|_| anyhow!("native desktop OpenH264 encoder thread panicked"))?;
+        capture_result
+    })
 }
 
 fn run_software_video_pipeline(
@@ -450,7 +517,7 @@ impl Drop for NativeVideoPipeline {
 }
 
 pub(super) async fn start_video_pipeline(
-    track: Arc<TrackLocalStaticSample>,
+    track: Arc<TrackLocalStaticRTP>,
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     settings: NativeVideoSettings,
 ) -> Result<NativeVideoPipeline> {
@@ -473,20 +540,44 @@ pub(super) async fn start_video_pipeline(
 }
 
 async fn write_video_frames(
-    track: Arc<TrackLocalStaticSample>,
+    track: Arc<TrackLocalStaticRTP>,
     control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     mut frame_rx: watch::Receiver<Option<Arc<EncodedDesktopEvent>>>,
     mut stop_rx: watch::Receiver<bool>,
     settings: NativeVideoSettings,
 ) {
-    let nominal_duration = Duration::from_secs_f64(1.0 / f64::from(settings.fps.max(1)));
-    let mut last_capture = None;
+    let startup_started = Instant::now();
+    // PeerConnection::Connected can precede the receiver's media path becoming usable. A keyframe
+    // written in that narrow window is discarded, leaving the decoder waiting for the next GOP.
+    tokio::select! {
+        changed = stop_rx.changed() => {
+            if changed.is_err() || *stop_rx.borrow_and_update() {
+                return;
+            }
+        }
+        _ = tokio::time::sleep(Duration::from_millis(75)) => {}
+    }
+    // Discard anything the shared producer encoded before the transport settled and explicitly
+    // wait for a new decoder-configured IDR generated for this receiver.
+    frame_rx.borrow_and_update();
+    request_video_keyframe(settings).await;
+    let mut packetizer = new_packetizer(
+        1_200,
+        0,
+        0,
+        Box::<H264Payloader>::default(),
+        Box::new(new_random_sequencer()),
+        90_000,
+    );
+    let mut previous_capture = None;
+    let mut startup_keyframes_remaining = 2_u8;
     let mut last_geometry = None;
     let mut last_cursor = None;
     let mut stats_started = Instant::now();
     let mut sent_frames = 0_u64;
     let mut sent_bytes = 0_u64;
-    let mut pending = frame_rx.borrow_and_update().clone();
+    let mut capture_to_send_time = Duration::ZERO;
+    let mut pending: Option<Arc<EncodedDesktopEvent>> = None;
 
     loop {
         if let Some(event) = pending.take() {
@@ -501,6 +592,21 @@ async fn write_video_frames(
                     break;
                 }
             };
+            let mut request_redundant_keyframe = false;
+            if startup_keyframes_remaining > 0 {
+                if !h264_is_decodable_keyframe(&frame.h264) {
+                    request_video_keyframe(settings).await;
+                    continue;
+                }
+                startup_keyframes_remaining -= 1;
+                if startup_keyframes_remaining == 1 {
+                    request_redundant_keyframe = true;
+                    debug!(
+                        startup_ms = startup_started.elapsed().as_secs_f64() * 1_000.0,
+                        "native WebRTC desktop sent its first decodable keyframe"
+                    );
+                }
+            }
             if last_geometry != Some(frame.geometry) {
                 send_control_message(
                     &control_channel,
@@ -529,34 +635,57 @@ async fn write_video_frames(
                 last_cursor = Some(frame.cursor);
             }
             let encoded_bytes = frame.h264.len() as u64;
-            let duration = last_capture
-                .replace(frame.captured_at)
-                .map(|previous| frame.captured_at.saturating_duration_since(previous))
-                .filter(|duration| !duration.is_zero())
-                .unwrap_or(nominal_duration);
-            if let Err(error) = track
-                .write_sample(&Sample {
-                    data: frame.h264.clone(),
-                    duration,
-                    ..Default::default()
-                })
-                .await
-            {
-                warn!(%error, "native WebRTC desktop frame could not be sent");
+            // Advance the RTP clock before packetizing the current frame so its timestamp follows
+            // the actual capture clock. TrackLocalStaticSample advances only after packetizing,
+            // which shifts sparse or encoder-skipped gaps onto the following frame and makes a
+            // browser grow its jitter buffer while the RTP clock drifts behind wall time.
+            if let Some(previous_capture) = previous_capture {
+                packetizer.skip_samples(rtp_timestamp_delta(
+                    frame
+                        .captured_at
+                        .saturating_duration_since(previous_capture),
+                ));
+            }
+            previous_capture = Some(frame.captured_at);
+            let packets = match packetizer.packetize(&frame.h264, 0) {
+                Ok(packets) => packets,
+                Err(error) => {
+                    warn!(%error, "native WebRTC desktop frame could not be packetized");
+                    break;
+                }
+            };
+            let mut send_failed = false;
+            for packet in packets {
+                if let Err(error) = track.write_rtp_with_extensions(&packet, &[]).await {
+                    warn!(%error, "native WebRTC desktop frame could not be sent");
+                    send_failed = true;
+                    break;
+                }
+            }
+            if send_failed {
                 break;
+            }
+            if request_redundant_keyframe {
+                // A second decoder-configured IDR avoids making startup depend on RTCP feedback
+                // if the receiver misses packets from the first access unit.
+                request_video_keyframe(settings).await;
             }
             sent_frames += 1;
             sent_bytes += encoded_bytes;
+            capture_to_send_time += frame.captured_at.elapsed();
             let stats_elapsed = stats_started.elapsed();
             if stats_elapsed >= Duration::from_secs(5) {
                 debug!(
                     frames_per_second = sent_frames as f64 / stats_elapsed.as_secs_f64(),
                     payload_kbps = sent_bytes as f64 * 8.0 / stats_elapsed.as_secs_f64() / 1_000.0,
+                    average_capture_to_send_ms =
+                        capture_to_send_time.as_secs_f64() * 1_000.0 / sent_frames as f64,
                     "native WebRTC desktop media rate"
                 );
                 stats_started = Instant::now();
                 sent_frames = 0;
                 sent_bytes = 0;
+                capture_to_send_time = Duration::ZERO;
             }
         }
 
@@ -574,6 +703,39 @@ async fn write_video_frames(
             }
         }
     }
+}
+
+fn rtp_timestamp_delta(duration: Duration) -> u32 {
+    const NANOS_PER_SECOND: u128 = 1_000_000_000;
+    ((duration.as_nanos() * 90_000 + NANOS_PER_SECOND / 2) / NANOS_PER_SECOND) as u32
+}
+
+fn h264_is_decodable_keyframe(input: &[u8]) -> bool {
+    let mut has_sps = false;
+    let mut has_pps = false;
+    let mut has_idr = false;
+    let mut offset = 0;
+    while offset + 3 < input.len() {
+        let start_code_len = if input[offset..].starts_with(&[0, 0, 0, 1]) {
+            4
+        } else if input[offset..].starts_with(&[0, 0, 1]) {
+            3
+        } else {
+            offset += 1;
+            continue;
+        };
+        let nal_offset = offset + start_code_len;
+        if let Some(header) = input.get(nal_offset) {
+            match header & 0x1f {
+                5 => has_idr = true,
+                7 => has_sps = true,
+                8 => has_pps = true,
+                _ => {}
+            }
+        }
+        offset = nal_offset + 1;
+    }
+    has_sps && has_pps && has_idr
 }
 
 fn capture_desktop_frames(
@@ -667,27 +829,7 @@ fn encode_desktop_frames(
     settings: NativeVideoSettings,
     force_keyframe: Arc<AtomicBool>,
 ) {
-    let fps = settings.fps.max(1);
-    let encoder_config = EncoderConfig::new()
-        .bitrate(BitRate::from_bps(
-            settings.bitrate_kbps.saturating_mul(1_000),
-        ))
-        .max_frame_rate(FrameRate::from_hz(fps as f32))
-        .rate_control_mode(RateControlMode::Bitrate)
-        .usage_type(UsageType::ScreenContentRealTime)
-        .profile(Profile::Baseline)
-        .level(h264_level(
-            settings.max_width,
-            settings.max_height,
-            fps,
-            settings.bitrate_kbps,
-        ))
-        .complexity(Complexity::Low)
-        .adaptive_quantization(false)
-        .background_detection(false)
-        .intra_frame_period(IntraFramePeriod::from_num_frames(u32::from(fps) * 2))
-        .vui(VuiConfig::srgb())
-        .skip_frames(true);
+    let encoder_config = software_encoder_config(settings);
     let mut encoder = match Encoder::with_api_config(OpenH264API::from_source(), encoder_config) {
         Ok(encoder) => encoder,
         Err(error) => {
@@ -808,6 +950,30 @@ fn encode_desktop_frames(
     }
 }
 
+fn software_encoder_config(settings: NativeVideoSettings) -> EncoderConfig {
+    let fps = settings.fps.max(1);
+    EncoderConfig::new()
+        .bitrate(BitRate::from_bps(
+            settings.bitrate_kbps.saturating_mul(1_000),
+        ))
+        .max_frame_rate(FrameRate::from_hz(fps as f32))
+        .rate_control_mode(RateControlMode::Bitrate)
+        .usage_type(UsageType::ScreenContentRealTime)
+        .profile(Profile::Baseline)
+        .level(h264_level(
+            settings.max_width,
+            settings.max_height,
+            fps,
+            settings.bitrate_kbps,
+        ))
+        .complexity(Complexity::Low)
+        .adaptive_quantization(false)
+        .background_detection(false)
+        .intra_frame_period(IntraFramePeriod::from_num_frames(u32::from(fps) * 2))
+        .vui(VuiConfig::srgb())
+        .skip_frames(true)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -815,11 +981,17 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
 
+    #[cfg(windows)]
+    use std::time::{Duration, Instant};
+
     use tokio::sync::watch;
 
+    #[cfg(windows)]
+    use super::run_dxgi_software_video_pipeline;
     use super::{
-        EncodedDesktopEvent, NativeVideoHubState, NativeVideoSettings, SharedVideoProducer,
-        h264_profile_level_id,
+        DesktopYuvBuffer, EncodedDesktopEvent, Encoder, NativeVideoHubState, NativeVideoSettings,
+        OpenH264API, SharedVideoProducer, h264_is_decodable_keyframe, h264_profile_level_id,
+        rtp_timestamp_delta, software_encoder_config,
     };
 
     fn fake_producer(generation: u64, subscribers: usize) -> SharedVideoProducer {
@@ -873,5 +1045,96 @@ mod tests {
         assert_eq!(h264_profile_level_id(1_920, 1_080, 30, 4_000), "420028");
         assert_eq!(h264_profile_level_id(1_920, 1_080, 60, 4_000), "42002a");
         assert_eq!(h264_profile_level_id(1_920, 1_080, 30, 25_000), "420029");
+    }
+
+    #[test]
+    fn rtp_timestamps_follow_actual_capture_time() {
+        assert_eq!(rtp_timestamp_delta(Duration::from_secs(1)), 90_000);
+        assert_eq!(rtp_timestamp_delta(Duration::from_millis(500)), 45_000);
+        assert_eq!(rtp_timestamp_delta(Duration::from_micros(16_667)), 1_500);
+    }
+
+    #[test]
+    fn requires_decoder_configuration_and_idr_for_a_viewers_first_frame() {
+        assert!(!h264_is_decodable_keyframe(&[0, 0, 0, 1, 0x41, 1, 2, 3]));
+        assert!(!h264_is_decodable_keyframe(&[
+            0, 0, 1, 0x67, 1, 0, 0, 1, 0x68, 2
+        ]));
+        assert!(h264_is_decodable_keyframe(&[
+            0, 0, 1, 0x67, 1, 0, 0, 0, 1, 0x68, 2, 0, 0, 1, 0x65, 3
+        ]));
+    }
+
+    #[test]
+    fn software_encoder_forced_keyframes_include_decoder_configuration() {
+        let settings = NativeVideoSettings::new(30, 4_000, 64, 64);
+        let mut encoder = Encoder::with_api_config(
+            OpenH264API::from_source(),
+            software_encoder_config(settings),
+        )
+        .unwrap();
+        let mut yuv = DesktopYuvBuffer::new(64, 64);
+        yuv.y.fill(16);
+        yuv.u.fill(128);
+        yuv.v.fill(128);
+
+        let initial = encoder.encode(&yuv).unwrap().to_vec();
+        assert!(h264_is_decodable_keyframe(&initial));
+
+        yuv.y[0] = 32;
+        let _ = encoder.encode(&yuv).unwrap();
+        encoder.force_intra_frame();
+        yuv.y[1] = 48;
+        let forced = encoder.encode(&yuv).unwrap().to_vec();
+        assert!(h264_is_decodable_keyframe(&forced));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "encodes a live interactive desktop with DXGI and OpenH264"]
+    fn dxgi_software_pipeline_encodes_a_live_frame() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (frame_tx, mut frame_rx) = watch::channel(None);
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let force_keyframe = Arc::new(AtomicBool::new(true));
+        let worker = std::thread::spawn({
+            let runtime = runtime.handle().clone();
+            let force_keyframe = Arc::clone(&force_keyframe);
+            move || {
+                run_dxgi_software_video_pipeline(
+                    runtime,
+                    frame_tx,
+                    stop_rx,
+                    NativeVideoSettings::new(30, 4_000, 1_920, 1_080),
+                    force_keyframe,
+                )
+            }
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut encoded = None;
+        while Instant::now() < deadline && !worker.is_finished() {
+            if frame_rx.has_changed().unwrap_or(false) {
+                let event = frame_rx.borrow_and_update().clone();
+                match event.as_deref() {
+                    Some(EncodedDesktopEvent::Frame(frame)) => {
+                        encoded = Some((frame.geometry, frame.h264.len()));
+                        break;
+                    }
+                    Some(EncodedDesktopEvent::Error(error)) => panic!("{error}"),
+                    None => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = stop_tx.send(true);
+        let result = worker.join().unwrap();
+        result.unwrap();
+        let (geometry, bytes) = encoded.expect("DXGI/OpenH264 produced no encoded frame");
+        eprintln!(
+            "DXGI/OpenH264 encoded {}x{} into {bytes} H.264 bytes",
+            geometry.width, geometry.height
+        );
+        assert!(bytes > 0);
     }
 }
