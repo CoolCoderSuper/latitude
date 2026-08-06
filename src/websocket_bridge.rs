@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
-use axum::extract::ws::Message as AxumMessage;
+use axum::extract::ws::{CloseFrame as AxumCloseFrame, Message as AxumMessage};
 use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
+use tokio_tungstenite::tungstenite::{
+    Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
+};
 
 pub(crate) async fn forward_websocket<S>(
     browser: &mut axum::extract::ws::WebSocket,
@@ -48,7 +50,12 @@ pub(crate) fn to_tungstenite(message: AxumMessage) -> TungsteniteMessage {
         AxumMessage::Binary(bytes) => TungsteniteMessage::Binary(bytes.to_vec().into()),
         AxumMessage::Ping(bytes) => TungsteniteMessage::Ping(bytes.to_vec().into()),
         AxumMessage::Pong(bytes) => TungsteniteMessage::Pong(bytes.to_vec().into()),
-        AxumMessage::Close(_) => TungsteniteMessage::Close(None),
+        AxumMessage::Close(frame) => {
+            TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason.to_string().into(),
+            }))
+        }
     }
 }
 
@@ -58,7 +65,37 @@ pub(crate) fn to_axum(message: TungsteniteMessage) -> Option<AxumMessage> {
         TungsteniteMessage::Binary(bytes) => Some(AxumMessage::Binary(bytes.to_vec().into())),
         TungsteniteMessage::Ping(bytes) => Some(AxumMessage::Ping(bytes.to_vec().into())),
         TungsteniteMessage::Pong(bytes) => Some(AxumMessage::Pong(bytes.to_vec().into())),
-        TungsteniteMessage::Close(_) => Some(AxumMessage::Close(None)),
+        TungsteniteMessage::Close(frame) => {
+            Some(AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason.to_string().into(),
+            })))
+        }
         TungsteniteMessage::Frame(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preserves_close_code_and_reason_in_both_directions() {
+        let axum = AxumMessage::Close(Some(AxumCloseFrame {
+            code: 1013,
+            reason: "resynchronize".into(),
+        }));
+        let tungstenite = to_tungstenite(axum);
+        let TungsteniteMessage::Close(Some(frame)) = &tungstenite else {
+            panic!("expected a close frame");
+        };
+        assert_eq!(u16::from(frame.code), 1013);
+        assert_eq!(frame.reason, "resynchronize");
+
+        let Some(AxumMessage::Close(Some(frame))) = to_axum(tungstenite) else {
+            panic!("expected a close frame");
+        };
+        assert_eq!(frame.code, 1013);
+        assert_eq!(frame.reason, "resynchronize");
     }
 }

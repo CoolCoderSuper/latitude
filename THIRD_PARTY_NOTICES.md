@@ -6,7 +6,7 @@ Latitude's checked-in browser bundles contain the following packages:
 - Lezer parser packages
 - `@replit/codemirror-vim`
 - `@marijn/find-cluster-break`, `crelt`, `style-mod`, and `w3c-keyname`
-- xterm.js and `@xterm/addon-fit`
+- xterm.js, `@xterm/addon-fit`, and `@xterm/addon-webgl`
 - jsdiff
 
 Exact resolved versions are recorded in `package-lock.json`.
@@ -27,7 +27,7 @@ Copyright (C) 2020 by Marijn Haverbeke <marijn@haverbeke.berlin>
 
 Copyright (C) 2016 by Marijn Haverbeke <marijn@haverbeke.berlin> and others
 
-The following copyright notices and MIT License terms apply to xterm.js and its fit addon:
+The following copyright notices and MIT License terms apply to xterm.js and its fit and WebGL addons:
 
 Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 

@@ -301,10 +301,21 @@ ${cssVariables}
       const fitAddon = new window.FitAddon.FitAddon();
       terminal.loadAddon(fitAddon);
       terminal.open(terminalElement);
+      let webglAddon = null;
+      if (window.WebglAddon && window.WebglAddon.WebglAddon) {
+        try {
+          webglAddon = new window.WebglAddon.WebglAddon();
+          webglAddon.onContextLoss(() => webglAddon.dispose());
+          terminal.loadAddon(webglAddon);
+        } catch (_) {
+          webglAddon?.dispose();
+        }
+      }
       terminal.focus();
 
       let socket = null;
       let resizeTimer = null;
+      let resizeObserver = null;
       let reconnectTimer = null;
       let reconnectDelay = 1000;
       let hasConnected = false;
@@ -353,10 +364,10 @@ ${cssVariables}
         }
       };
 
-      const scheduleReconnect = () => {
+      const scheduleReconnect = (resynchronize = false) => {
         clearReconnectTimer();
         const delay = reconnectDelay;
-        setStatus('Reconnecting', true);
+        setStatus(resynchronize ? 'Resynchronizing' : 'Reconnecting', true);
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null;
           connect();
@@ -375,6 +386,7 @@ ${cssVariables}
         clearReconnectTimer();
         setStatus('Connecting');
         const nextSocket = new WebSocket(websocketUrl);
+        nextSocket.binaryType = 'arraybuffer';
         socket = nextSocket;
 
         nextSocket.addEventListener('open', () => {
@@ -401,18 +413,24 @@ ${cssVariables}
 
           if (typeof event.data === 'string') {
             terminal.write(event.data);
+          } else if (event.data instanceof ArrayBuffer) {
+            terminal.write(new Uint8Array(event.data));
           } else if (event.data instanceof Blob) {
-            event.data.text().then((text) => terminal.write(text));
+            event.data.arrayBuffer().then((buffer) => {
+              if (socket === nextSocket) {
+                terminal.write(new Uint8Array(buffer));
+              }
+            });
           }
         });
 
-        nextSocket.addEventListener('close', () => {
+        nextSocket.addEventListener('close', (event) => {
           if (socket !== nextSocket) {
             return;
           }
 
           socket = null;
-          scheduleReconnect();
+          scheduleReconnect(event.code === 1013);
         });
 
         nextSocket.addEventListener('error', () => {
@@ -460,6 +478,10 @@ ${cssVariables}
         resizeTimer = window.setTimeout(fitAndResize, 80);
       };
 
+      if (typeof ResizeObserver === 'function') {
+        resizeObserver = new ResizeObserver(queueResize);
+        resizeObserver.observe(terminalElement);
+      }
       window.addEventListener('resize', queueResize);
       window.addEventListener('focus', () => window.latitudeReconnect(false));
       window.addEventListener('online', () => window.latitudeReconnect(true));
@@ -471,6 +493,19 @@ ${cssVariables}
       });
       terminalElement.addEventListener('touchstart', () => terminal.focus(), {
         passive: true,
+      });
+      window.addEventListener('beforeunload', () => {
+        resizeObserver?.disconnect();
+        window.clearTimeout(resizeTimer);
+        clearReconnectTimer();
+        if (socket) {
+          const staleSocket = socket;
+          socket = null;
+          try {
+            staleSocket.close();
+          } catch (_) {}
+        }
+        terminal.dispose();
       });
 
       connect();

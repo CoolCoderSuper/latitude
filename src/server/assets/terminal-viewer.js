@@ -1,10 +1,12 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import './terminal-viewer.css';
 
 window.Terminal = Terminal;
 window.FitAddon = { FitAddon };
+window.WebglAddon = { WebglAddon };
 
 const workspace = document.querySelector('[data-terminal-workspace]');
 
@@ -231,6 +233,14 @@ if (workspace) {
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.open(surface);
+    let webglAddon = null;
+    try {
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => webglAddon.dispose());
+      terminal.loadAddon(webglAddon);
+    } catch (_) {
+      webglAddon?.dispose();
+    }
 
     const controller = {
       session,
@@ -240,6 +250,7 @@ if (workspace) {
       socket: null,
       resizeTimer: null,
       reconnectTimer: null,
+      resizeObserver: null,
       reconnectDelay: 1000,
       hasConnected: false,
       destroyed: false,
@@ -281,14 +292,18 @@ if (workspace) {
           this.reconnectTimer = null;
         }
       },
-      scheduleReconnect() {
+      scheduleReconnect(resynchronize = false) {
         if (this.destroyed) {
           return;
         }
 
         this.clearReconnectTimer();
         const delay = this.reconnectDelay;
-        showStatus(`${this.session.title} reconnecting...`, true, false);
+        showStatus(
+          `${this.session.title} ${resynchronize ? 'resynchronizing' : 'reconnecting'}...`,
+          true,
+          false,
+        );
         this.reconnectTimer = window.setTimeout(() => {
           this.reconnectTimer = null;
           this.connect();
@@ -308,6 +323,7 @@ if (workspace) {
         const nextSocket = new WebSocket(
           buildSocketUrl(this.session.id).toString(),
         );
+        nextSocket.binaryType = 'arraybuffer';
         this.socket = nextSocket;
 
         nextSocket.addEventListener('open', () => {
@@ -333,18 +349,24 @@ if (workspace) {
 
           if (typeof event.data === 'string') {
             this.terminal.write(event.data);
+          } else if (event.data instanceof ArrayBuffer) {
+            this.terminal.write(new Uint8Array(event.data));
           } else if (event.data instanceof Blob) {
-            event.data.text().then((text) => this.terminal.write(text));
+            event.data.arrayBuffer().then((buffer) => {
+              if (this.socket === nextSocket && !this.destroyed) {
+                this.terminal.write(new Uint8Array(buffer));
+              }
+            });
           }
         });
 
-        nextSocket.addEventListener('close', () => {
+        nextSocket.addEventListener('close', (event) => {
           if (this.socket !== nextSocket) {
             return;
           }
 
           this.socket = null;
-          this.scheduleReconnect();
+          this.scheduleReconnect(event.code === 1013);
         });
 
         nextSocket.addEventListener('error', () => {
@@ -385,6 +407,7 @@ if (workspace) {
       destroy() {
         this.destroyed = true;
         this.clearReconnectTimer();
+        this.resizeObserver?.disconnect();
         window.clearTimeout(this.resizeTimer);
         if (this.socket) {
           const oldSocket = this.socket;
@@ -408,6 +431,12 @@ if (workspace) {
     surface.addEventListener('pointerdown', () => terminal.focus(), {
       passive: true,
     });
+    if (typeof ResizeObserver === 'function') {
+      controller.resizeObserver = new ResizeObserver(() =>
+        controller.queueResize(),
+      );
+      controller.resizeObserver.observe(surface);
+    }
 
     terminalControllers.set(session.id, controller);
     controller.connect();

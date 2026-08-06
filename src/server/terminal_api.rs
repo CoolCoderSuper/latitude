@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc, time::Instant};
 
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket, close_code};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
@@ -250,36 +250,49 @@ pub(crate) async fn terminal_websocket_session(
     mut socket: WebSocket,
     session: Arc<TerminalSession>,
 ) {
-    session.attach_client();
+    let client_id = session.attach_client();
+    // Subscribe before taking the snapshot so output cannot fall into a gap.
+    // Sequence numbers let the live receiver discard anything also in history.
+    let mut output_rx = session.subscribe();
+    let mut last_sequence = 0;
     for output in session.history() {
+        last_sequence = last_sequence.max(output.sequence());
         if socket
-            .send(Message::Text(
-                String::from_utf8_lossy(&output).to_string().into(),
-            ))
+            .send(Message::Binary(output.bytes().clone()))
             .await
             .is_err()
         {
-            session.detach_client();
+            session.detach_client(client_id);
             return;
         }
     }
-
-    let mut output_rx = session.subscribe();
 
     loop {
         tokio::select! {
             output = output_rx.recv() => {
                 match output {
                     Ok(output) => {
+                        if output.sequence() <= last_sequence {
+                            continue;
+                        }
+                        last_sequence = output.sequence();
                         if socket
-                            .send(Message::Text(String::from_utf8_lossy(&output).to_string().into()))
+                            .send(Message::Binary(output.bytes().clone()))
                             .await
                             .is_err()
                         {
                             break;
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let _ = socket
+                            .send(Message::Close(Some(CloseFrame {
+                                code: close_code::AGAIN,
+                                reason: "terminal output fell behind; reconnect to resynchronize".into(),
+                            })))
+                            .await;
+                        break;
+                    }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
@@ -294,11 +307,11 @@ pub(crate) async fn terminal_websocket_session(
                 match message {
                     Message::Text(text) => {
                         if let Ok(payload) = serde_json::from_str::<TerminalClientMessage>(&text) {
-                            handle_terminal_client_message(payload, &session);
+                            handle_terminal_client_message(payload, &session, client_id);
                         }
                     }
                     Message::Binary(bytes) => {
-                        session.write_input(&String::from_utf8_lossy(&bytes));
+                        session.write_input_bytes(&bytes);
                     }
                     Message::Close(_) => break,
                     Message::Ping(_) | Message::Pong(_) => {}
@@ -307,16 +320,20 @@ pub(crate) async fn terminal_websocket_session(
         }
     }
 
-    session.detach_client();
+    session.detach_client(client_id);
 }
 
-fn handle_terminal_client_message(payload: TerminalClientMessage, session: &TerminalSession) {
+fn handle_terminal_client_message(
+    payload: TerminalClientMessage,
+    session: &TerminalSession,
+    client_id: u64,
+) {
     match payload {
         TerminalClientMessage::Input { data } => {
             session.write_input(&data);
         }
         TerminalClientMessage::Resize { cols, rows } => {
-            session.resize(cols, rows);
+            session.resize(client_id, cols, rows);
         }
     }
 }

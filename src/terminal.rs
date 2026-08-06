@@ -5,12 +5,13 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::util::strip_windows_extended_path;
+use bytes::Bytes;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use rand::random;
 use serde::{Deserialize, Serialize};
@@ -19,6 +20,7 @@ use tokio::sync::{RwLock, broadcast};
 const DEFAULT_TERMINAL_ROWS: u16 = 28;
 const DEFAULT_TERMINAL_COLS: u16 = 100;
 const TERMINAL_HISTORY_BYTES: usize = 512 * 1024;
+const TERMINAL_OUTPUT_CHANNEL_CAPACITY: usize = 1024;
 const ROOT_TERMINAL_SCOPE: &str = "root";
 
 #[derive(Default)]
@@ -48,16 +50,41 @@ pub(crate) struct TerminalSession {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
-    output_tx: broadcast::Sender<Vec<u8>>,
+    output_tx: broadcast::Sender<TerminalOutput>,
     history: Arc<Mutex<TerminalHistory>>,
-    connected_clients: AtomicUsize,
+    clients: Mutex<TerminalClients>,
     alive: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TerminalOutput {
+    sequence: u64,
+    bytes: Bytes,
 }
 
 #[derive(Default)]
 struct TerminalHistory {
-    chunks: VecDeque<Vec<u8>>,
+    chunks: VecDeque<TerminalOutput>,
     byte_count: usize,
+    next_sequence: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TerminalSize {
+    cols: u16,
+    rows: u16,
+}
+
+#[derive(Debug)]
+struct TerminalClient {
+    id: u64,
+    size: Option<TerminalSize>,
+}
+
+#[derive(Default, Debug)]
+struct TerminalClients {
+    clients: VecDeque<TerminalClient>,
+    next_id: u64,
 }
 
 impl TerminalSessionManager {
@@ -213,7 +240,7 @@ impl TerminalSession {
             .take_writer()
             .map_err(|error| format!("Latitude could not attach terminal input: {error}"))?;
 
-        let (output_tx, _) = broadcast::channel::<Vec<u8>>(256);
+        let (output_tx, _) = broadcast::channel::<TerminalOutput>(TERMINAL_OUTPUT_CHANNEL_CAPACITY);
         let history = Arc::new(Mutex::new(TerminalHistory::default()));
         let alive = Arc::new(AtomicBool::new(true));
         let session = Arc::new(Self {
@@ -228,7 +255,7 @@ impl TerminalSession {
             child: Mutex::new(child),
             output_tx,
             history,
-            connected_clients: AtomicUsize::new(0),
+            clients: Mutex::new(TerminalClients::default()),
             alive,
         });
 
@@ -250,44 +277,72 @@ impl TerminalSession {
             title: self.title.clone(),
             cwd: display_path(&self.cwd),
             created_at_ms: self.created_at_ms,
-            connected_clients: self.connected_clients.load(Ordering::SeqCst),
+            connected_clients: self
+                .clients
+                .lock()
+                .map(|clients| clients.len())
+                .unwrap_or_default(),
             alive: self.alive.load(Ordering::SeqCst),
         }
     }
 
-    pub(crate) fn subscribe(&self) -> broadcast::Receiver<Vec<u8>> {
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<TerminalOutput> {
         self.output_tx.subscribe()
     }
 
-    pub(crate) fn history(&self) -> Vec<Vec<u8>> {
+    pub(crate) fn history(&self) -> Vec<TerminalOutput> {
         self.history
             .lock()
             .map(|history| history.chunks.iter().cloned().collect())
             .unwrap_or_default()
     }
 
-    pub(crate) fn attach_client(&self) {
-        self.connected_clients.fetch_add(1, Ordering::SeqCst);
+    pub(crate) fn attach_client(&self) -> u64 {
+        self.clients
+            .lock()
+            .map(|mut clients| clients.attach())
+            .unwrap_or_default()
     }
 
-    pub(crate) fn detach_client(&self) {
-        self.connected_clients.fetch_sub(1, Ordering::SeqCst);
+    pub(crate) fn detach_client(&self, client_id: u64) {
+        let next_size = self
+            .clients
+            .lock()
+            .ok()
+            .and_then(|mut clients| clients.detach(client_id));
+        if let Some(size) = next_size {
+            self.resize_pty(size);
+        }
     }
 
     pub(crate) fn write_input(&self, data: &str) {
+        self.write_input_bytes(data.as_bytes());
+    }
+
+    pub(crate) fn write_input_bytes(&self, data: &[u8]) {
         if let Ok(mut writer) = self.writer.lock() {
-            let _ = writer.write_all(data.as_bytes());
+            let _ = writer.write_all(data);
             let _ = writer.flush();
         }
     }
 
-    pub(crate) fn resize(&self, cols: u16, rows: u16) {
-        let cols = cols.clamp(20, 500);
-        let rows = rows.clamp(5, 200);
+    pub(crate) fn resize(&self, client_id: u64, cols: u16, rows: u16) {
+        let size = TerminalSize::new(cols, rows);
+        let should_resize = self
+            .clients
+            .lock()
+            .ok()
+            .and_then(|mut clients| clients.resize(client_id, size));
+        if let Some(size) = should_resize {
+            self.resize_pty(size);
+        }
+    }
+
+    fn resize_pty(&self, size: TerminalSize) {
         if let Ok(master) = self.master.lock() {
             let _ = master.resize(PtySize {
-                rows,
-                cols,
+                rows: size.rows,
+                cols: size.cols,
                 pixel_width: 0,
                 pixel_height: 0,
             });
@@ -319,18 +374,85 @@ impl TerminalSession {
     }
 
     fn push_output(&self, output: Vec<u8>) {
-        if let Ok(mut history) = self.history.lock() {
-            history.byte_count += output.len();
-            history.chunks.push_back(output.clone());
-            while history.byte_count > TERMINAL_HISTORY_BYTES {
-                if let Some(removed) = history.chunks.pop_front() {
-                    history.byte_count = history.byte_count.saturating_sub(removed.len());
-                } else {
-                    break;
-                }
-            }
-        }
+        let Ok(mut history) = self.history.lock() else {
+            return;
+        };
+        let output = history.push(Bytes::from(output));
+        // Keep sequence assignment, history insertion, and publication ordered
+        // when startup output races the PTY reader thread.
         let _ = self.output_tx.send(output);
+    }
+}
+
+impl TerminalOutput {
+    pub(crate) fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub(crate) fn bytes(&self) -> &Bytes {
+        &self.bytes
+    }
+}
+
+impl TerminalHistory {
+    fn push(&mut self, bytes: Bytes) -> TerminalOutput {
+        self.next_sequence = self.next_sequence.saturating_add(1);
+        let output = TerminalOutput {
+            sequence: self.next_sequence,
+            bytes,
+        };
+        self.byte_count += output.bytes.len();
+        self.chunks.push_back(output.clone());
+        while self.byte_count > TERMINAL_HISTORY_BYTES {
+            let Some(removed) = self.chunks.pop_front() else {
+                break;
+            };
+            self.byte_count = self.byte_count.saturating_sub(removed.bytes.len());
+        }
+        output
+    }
+}
+
+impl TerminalSize {
+    fn new(cols: u16, rows: u16) -> Self {
+        Self {
+            cols: cols.clamp(20, 500),
+            rows: rows.clamp(5, 200),
+        }
+    }
+}
+
+impl TerminalClients {
+    fn len(&self) -> usize {
+        self.clients.len()
+    }
+
+    fn attach(&mut self) -> u64 {
+        self.next_id = self.next_id.saturating_add(1);
+        let id = self.next_id;
+        self.clients.push_back(TerminalClient { id, size: None });
+        id
+    }
+
+    fn detach(&mut self, client_id: u64) -> Option<TerminalSize> {
+        let position = self
+            .clients
+            .iter()
+            .position(|client| client.id == client_id)?;
+        let controlled_resize = position == 0;
+        self.clients.remove(position);
+        controlled_resize
+            .then(|| self.clients.front().and_then(|client| client.size))
+            .flatten()
+    }
+
+    fn resize(&mut self, client_id: u64, size: TerminalSize) -> Option<TerminalSize> {
+        let client = self
+            .clients
+            .iter_mut()
+            .find(|client| client.id == client_id)?;
+        client.size = Some(size);
+        (self.clients.front().map(|client| client.id) == Some(client_id)).then_some(size)
     }
 }
 
@@ -423,6 +545,46 @@ fn strip_windows_extended_path_prefix(path: PathBuf) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_history_sequences_and_preserves_binary_output() {
+        let mut history = TerminalHistory::default();
+        let first = history.push(Bytes::from_static(&[0xf0, 0x9f]));
+        let second = history.push(Bytes::from_static(&[0x91, 0xbb]));
+
+        assert_eq!(first.sequence(), 1);
+        assert_eq!(first.bytes().as_ref(), &[0xf0, 0x9f]);
+        assert_eq!(second.sequence(), 2);
+        assert_eq!(second.bytes().as_ref(), &[0x91, 0xbb]);
+    }
+
+    #[test]
+    fn terminal_resize_control_follows_connection_order() {
+        let mut clients = TerminalClients::default();
+        let first = clients.attach();
+        let second = clients.attach();
+        let first_size = TerminalSize::new(100, 30);
+        let second_size = TerminalSize::new(120, 40);
+
+        assert_eq!(clients.resize(second, second_size), None);
+        assert_eq!(clients.resize(first, first_size), Some(first_size));
+        assert_eq!(clients.detach(first), Some(second_size));
+        assert_eq!(clients.resize(second, second_size), Some(second_size));
+        assert_eq!(clients.detach(second), None);
+        assert_eq!(clients.len(), 0);
+    }
+
+    #[test]
+    fn terminal_sizes_are_clamped_to_supported_bounds() {
+        assert_eq!(TerminalSize::new(1, 1), TerminalSize { cols: 20, rows: 5 });
+        assert_eq!(
+            TerminalSize::new(u16::MAX, u16::MAX),
+            TerminalSize {
+                cols: 500,
+                rows: 200,
+            }
+        );
+    }
 
     #[test]
     fn strips_windows_extended_drive_prefix_for_terminal_cwd() {

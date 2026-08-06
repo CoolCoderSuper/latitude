@@ -16,6 +16,12 @@ describe('terminalDocument', () => {
     expect(html).toContain(
       'http://latitude.local:8080/__latitude/assets/terminal-viewer.bundle.js',
     );
+    expect(html).toContain("nextSocket.binaryType = 'arraybuffer'");
+    expect(html).toContain('terminal.write(new Uint8Array(event.data))');
+    expect(html).toContain('new ResizeObserver(queueResize)');
+    expect(html).toContain('new window.WebglAddon.WebglAddon()');
+    expect(html).toContain('scheduleReconnect(event.code === 1013)');
+    expect(html).not.toContain('event.data.text()');
     expect(html).not.toContain('cdn.jsdelivr.net');
   });
 });
