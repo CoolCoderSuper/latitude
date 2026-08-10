@@ -84,6 +84,7 @@ use crate::desktop::{
 };
 
 const ENCODER_EVENT_TIMEOUT: Duration = Duration::from_secs(1);
+const DXGI_FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_D3D11_TEXTURE_DIMENSION: u32 = 16_384;
 
 pub(super) fn run_gpu_video_pipeline(
@@ -196,7 +197,7 @@ pub(super) fn run_dxgi_software_capture(
     let mut stats_started = Instant::now();
     let mut captured_frames = 0_u64;
     let mut capture_time = Duration::ZERO;
-    let mut first_frame_deadline = Instant::now() + Duration::from_secs(2);
+    let mut first_frame_deadline = Instant::now() + DXGI_FIRST_FRAME_TIMEOUT;
     let mut received_first_frame = false;
 
     loop {
@@ -214,7 +215,7 @@ pub(super) fn run_dxgi_software_capture(
             };
             if switched {
                 capture = DxgiSoftwareCapture::new(settings)?;
-                first_frame_deadline = Instant::now() + Duration::from_secs(2);
+                first_frame_deadline = Instant::now() + DXGI_FIRST_FRAME_TIMEOUT;
                 received_first_frame = false;
                 debug!(
                     adapter = %capture.adapter_name,
@@ -240,7 +241,7 @@ pub(super) fn run_dxgi_software_capture(
             captured_frames += 1;
             frame_tx.send_replace(Some(Arc::new(frame)));
         } else if !received_first_frame && Instant::now() >= first_frame_deadline {
-            bail!("DXGI desktop duplication did not produce an initial frame within two seconds");
+            bail!("DXGI desktop duplication did not produce an initial frame within 10 seconds");
         }
 
         let stats_elapsed = stats_started.elapsed();
