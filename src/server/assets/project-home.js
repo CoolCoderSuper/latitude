@@ -7,17 +7,17 @@ import { startVisiblePolling } from './polling.js';
   const dialog = shell?.querySelector('[data-share-dialog]');
   if (!shell) return;
 
-  document.addEventListener('htmx:beforeSwap', (event) => {
-    const target = event.detail?.target;
+  document.addEventListener('htmx:before:swap', (event) => {
+    const target = event.detail?.ctx?.target;
     if (!(target instanceof Element) || !target.matches('[data-project-list]'))
       return;
 
     const incoming = new DOMParser().parseFromString(
-      event.detail.xhr?.responseText || '',
+      event.detail.ctx.text || '',
       'text/html',
     );
     if (projectListSnapshot(document) === projectListSnapshot(incoming)) {
-      event.detail.shouldSwap = false;
+      event.preventDefault();
     }
   });
 
@@ -25,6 +25,10 @@ import { startVisiblePolling } from './polling.js';
     const list = root.querySelector('[data-project-list]');
     if (!list) return '';
     const clone = list.cloneNode(true);
+    clone.removeAttribute('data-htmx-powered');
+    clone.querySelectorAll('[data-htmx-powered]').forEach((element) => {
+      element.removeAttribute('data-htmx-powered');
+    });
     clone.classList.remove('htmx-request', 'htmx-swapping', 'htmx-settling');
     if (clone.classList.length === 0) clone.removeAttribute('class');
     clone.querySelectorAll('[data-project-git-status]').forEach((status) => {
@@ -180,10 +184,12 @@ import { startVisiblePolling } from './polling.js';
     if (event.target === dialog) dialog.close();
   });
 
-  dialog.addEventListener('htmx:afterSwap', localizeExpiryTimes);
-  dialog.addEventListener('htmx:responseError', () => {
+  dialog.addEventListener('htmx:after:swap', localizeExpiryTimes);
+  const shareFailed = () => {
     showStatus('Latitude could not update the share links.', true);
-  });
+  };
+  dialog.addEventListener('htmx:response:error', shareFailed);
+  dialog.addEventListener('htmx:error', shareFailed);
 
   function localizeExpiryTimes() {
     dialog.querySelectorAll('[data-share-expires-at]').forEach((element) => {

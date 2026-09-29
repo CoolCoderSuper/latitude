@@ -667,23 +667,23 @@ if (root) {
     }
     searchReturnFocus = null;
   }
-  actions.addEventListener('htmx:configRequest', (event) => {
+  actions.addEventListener('htmx:config:request', (event) => {
     if (!editor || !current) {
       event.preventDefault();
       return;
     }
-    event.detail.parameters.path = current;
-    event.detail.parameters.content = editor.state.doc.toString();
+    event.detail.ctx.request.body.set('path', current);
+    event.detail.ctx.request.body.set('content', editor.state.doc.toString());
   });
-  actions.addEventListener('htmx:beforeRequest', () => {
+  actions.addEventListener('htmx:before:request', () => {
     savingPath = current;
     save.disabled = true;
     status.textContent = 'Saving…';
   });
-  actions.addEventListener('htmx:beforeSwap', (event) => {
-    if (savingPath !== current) event.detail.shouldSwap = false;
+  actions.addEventListener('htmx:before:swap', (event) => {
+    if (savingPath !== current) event.preventDefault();
   });
-  actions.addEventListener('htmx:afterSwap', () => {
+  actions.addEventListener('htmx:after:swap', () => {
     if (savingPath !== current) return;
     const result = status.querySelector('[data-file-save-result]');
     if (!result) return;
@@ -695,12 +695,14 @@ if (root) {
       save.disabled = true;
     } else save.disabled = false;
   });
-  actions.addEventListener('htmx:responseError', () => {
+  const saveFailed = () => {
     if (savingPath !== current) return;
     save.disabled = false;
     status.textContent = 'File could not be saved';
-  });
-  actions.addEventListener('htmx:afterRequest', () => {
+  };
+  actions.addEventListener('htmx:response:error', saveFailed);
+  actions.addEventListener('htmx:error', saveFailed);
+  actions.addEventListener('htmx:finally:request', () => {
     savingPath = null;
   });
   vimToggle.onclick = toggleVimMode;

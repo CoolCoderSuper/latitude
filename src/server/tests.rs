@@ -536,7 +536,7 @@ fn browser_tools_use_checked_in_bundles_and_desktop_focus_style() {
     assert!(file_viewer.contains("addEventListener('popstate'"));
     assert!(file_viewer.contains("event.key.toLowerCase() === 'p'"));
     assert!(file_viewer.contains("event.key.toLowerCase() === 'g'"));
-    assert!(diff_viewer.contains("event.detail.elt.matches('.commit-form')"));
+    assert!(diff_viewer.contains("event.detail.ctx.sourceElement.matches('.commit-form')"));
     assert!(diff_viewer.contains("messageInput.value = ''"));
     assert!(desktop_style.contains(".desktop-canvas:focus-visible {\n  outline: none;"));
 }

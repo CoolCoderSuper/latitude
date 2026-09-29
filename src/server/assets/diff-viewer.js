@@ -24,30 +24,30 @@ import { startVisiblePolling } from './polling.js';
   };
 
   const requestVerb = (event) =>
-    event.detail.requestConfig?.verb?.toLowerCase();
+    event.detail.ctx.request?.method?.toLowerCase();
 
-  workspace.addEventListener('htmx:beforeRequest', (event) => {
+  workspace.addEventListener('htmx:before:request', (event) => {
     if (requestVerb(event) !== 'patch') return;
-    event.detail.elt.classList.add('git-action-pending');
-    event.detail.elt.querySelector('button')?.setAttribute('aria-busy', 'true');
+    event.detail.ctx.sourceElement.classList.add('git-action-pending');
+    event.detail.ctx.sourceElement
+      .querySelector('button')
+      ?.setAttribute('aria-busy', 'true');
     showStatus('Applying Git action…', false);
   });
 
-  workspace.addEventListener('htmx:afterRequest', (event) => {
+  workspace.addEventListener('htmx:after:request', (event) => {
     if (requestVerb(event) !== 'patch') return;
-    event.detail.elt.classList.remove('git-action-pending');
-    event.detail.elt.querySelector('button')?.removeAttribute('aria-busy');
-    if (!event.detail.successful) return;
+    if (!event.detail.ctx.response.raw.ok) return;
 
-    if (event.detail.elt.matches('.commit-form')) {
+    if (event.detail.ctx.sourceElement.matches('.commit-form')) {
       commitMessage = '';
       const messageInput = workspace.querySelector('[data-commit-message]');
       if (messageInput) messageInput.value = '';
     }
 
     if (
-      event.detail.xhr.status === 200 &&
-      applyFileUpdate(event.detail.xhr.responseText)
+      event.detail.ctx.response.status === 200 &&
+      applyFileUpdate(event.detail.ctx.text)
     ) {
       hideStatus();
     } else {
@@ -55,14 +55,14 @@ import { startVisiblePolling } from './polling.js';
     }
   });
 
-  workspace.addEventListener('htmx:beforeSwap', (event) => {
+  workspace.addEventListener('htmx:before:swap', (event) => {
     if (requestVerb(event) !== 'get') return;
     if (
       (!forceNextRefresh && userIsInteracting()) ||
-      !diffContentChanged(event.detail.xhr?.responseText || '')
+      !diffContentChanged(event.detail.ctx.text || '')
     ) {
       forceNextRefresh = false;
-      event.detail.shouldSwap = false;
+      event.preventDefault();
       autoRefreshPending = false;
       hideStatus();
       return;
@@ -78,7 +78,7 @@ import { startVisiblePolling } from './polling.js';
     );
   });
 
-  workspace.addEventListener('htmx:afterSwap', (event) => {
+  workspace.addEventListener('htmx:after:swap', (event) => {
     if (requestVerb(event) !== 'get') return;
     autoRefreshPending = false;
     const messageInput = workspace.querySelector('[data-commit-message]');
@@ -118,13 +118,22 @@ import { startVisiblePolling } from './polling.js';
     passive: true,
   });
 
-  workspace.addEventListener('htmx:responseError', (event) => {
+  const requestFailed = (event) => {
     autoRefreshPending = false;
     forceNextRefresh = false;
     const message =
-      event.detail.xhr?.responseText?.trim() ||
-      'The Git action could not be completed.';
+      event.detail.ctx.text?.trim() || 'The Git action could not be completed.';
     showStatus(message, true);
+  };
+  workspace.addEventListener('htmx:response:error', requestFailed);
+  workspace.addEventListener('htmx:error', requestFailed);
+  workspace.addEventListener('htmx:finally:request', (event) => {
+    if (requestVerb(event) === 'get') autoRefreshPending = false;
+    if (requestVerb(event) !== 'patch') return;
+    event.detail.ctx.sourceElement.classList.remove('git-action-pending');
+    event.detail.ctx.sourceElement
+      .querySelector('button')
+      ?.removeAttribute('aria-busy');
   });
 
   function applyFileUpdate(responseText) {
@@ -244,6 +253,9 @@ import { startVisiblePolling } from './polling.js';
     const panels = Array.from(root.querySelectorAll('[data-file-panel]')).map(
       (panel) => {
         const clone = panel.cloneNode(true);
+        clone.querySelectorAll('[data-htmx-powered]').forEach((element) => {
+          element.removeAttribute('data-htmx-powered');
+        });
         clone
           .querySelectorAll('details[open]')
           .forEach((details) => details.removeAttribute('open'));

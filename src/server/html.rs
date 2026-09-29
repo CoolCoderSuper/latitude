@@ -65,6 +65,8 @@ fn document_head(
     html! {
         head {
             meta charset="utf-8";
+            // Keep failed requests out of content targets; Git operations may exceed a minute.
+            meta name="htmx-config" content=r#"{"noSwap":[204,304,"4xx","5xx"],"defaultTimeout":0}"#;
             meta name="viewport" content="width=device-width, initial-scale=1";
             title { (document_title) }
             link rel="icon" type="image/png" href=(FAVICON_HREF);

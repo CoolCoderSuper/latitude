@@ -161,7 +161,7 @@ fn deployment_archive_button(
             hx-patch=(format!("/__latitude/ui/projects/{project}/deployments/{}/archive", deployment.name))
             hx-confirm=(format!("Archive {}? It will stop serving until it is restored. Its content and settings will be kept.", deployment.name))
             hx-swap="none"
-            hx-disabled-elt="this"
+            hx-disable="this"
             aria-label=(format!("Archive {}", deployment.name))
             title="Archive this deployment without deleting it" {
                 svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" {
@@ -181,7 +181,7 @@ fn deployment_restore_button(
             type="button"
             hx-patch=(format!("/__latitude/ui/projects/{project}/deployments/{}/archive?archived=false", deployment.name))
             hx-swap="none"
-            hx-disabled-elt="this"
+            hx-disable="this"
             aria-label=(format!("Restore {}", deployment.name))
             title="Restore this deployment" {
                 svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" {
@@ -336,7 +336,7 @@ fn server_archived_project_item(project: &ProjectConfig, worktrees: &[WorktreeRe
                 type="button"
                 hx-patch=(format!("/__latitude/ui/projects/{}/archive?archived=false", project.name))
                 hx-swap="none"
-                hx-disabled-elt="this"
+                hx-disable="this"
                 aria-label=(format!("Restore {label}"))
                 title="Restore this worktree to the project list" {
                     svg
@@ -445,7 +445,7 @@ fn server_project_item(
                     hx-patch=(format!("/__latitude/ui/projects/{}/archive", project.name))
                     hx-confirm=(format!("Archive {label}? It will be hidden from the project list. Its files and Git branch will not be changed."))
                     hx-swap="none"
-                    hx-disabled-elt="this"
+                    hx-disable="this"
                     aria-label=(format!("Archive {label}"))
                     title="Hide this worktree without changing its files or branch" {
                         svg
