@@ -35,6 +35,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 two-face = "0.5.1"
 url = "2.5"
+vt100 = "0.16.2"
 webrtc = "0.17.2"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",

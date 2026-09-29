@@ -21,6 +21,10 @@ const DEFAULT_TERMINAL_ROWS: u16 = 28;
 const DEFAULT_TERMINAL_COLS: u16 = 100;
 const TERMINAL_HISTORY_BYTES: usize = 512 * 1024;
 const TERMINAL_OUTPUT_CHANNEL_CAPACITY: usize = 1024;
+const TERMINAL_SNAPSHOT_SCROLLBACK_ROWS: usize = 5_000;
+const TERMINAL_SNAPSHOT_BOUNDARY: &[u8] = b"\x18";
+const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
+const EXIT_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 const ROOT_TERMINAL_SCOPE: &str = "root";
 
 #[derive(Default)]
@@ -51,7 +55,7 @@ pub(crate) struct TerminalSession {
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     output_tx: broadcast::Sender<TerminalOutput>,
-    history: Arc<Mutex<TerminalHistory>>,
+    state: Mutex<TerminalState>,
     clients: Mutex<TerminalClients>,
     alive: Arc<AtomicBool>,
 }
@@ -62,11 +66,34 @@ pub(crate) struct TerminalOutput {
     bytes: Bytes,
 }
 
+#[derive(Debug)]
+pub(crate) struct TerminalReplay {
+    pub(crate) reset: bool,
+    pub(crate) base_sequence: u64,
+    pub(crate) outputs: Vec<TerminalOutput>,
+}
+
 #[derive(Default)]
 struct TerminalHistory {
     chunks: VecDeque<TerminalOutput>,
     byte_count: usize,
     next_sequence: u64,
+}
+
+struct TerminalState {
+    history: TerminalHistory,
+    parser: vt100::Parser<TerminalCallbacks>,
+    pending_queries: VecDeque<PendingTerminalQuery>,
+}
+
+#[derive(Default)]
+struct TerminalCallbacks {
+    queries: Vec<Bytes>,
+}
+
+struct PendingTerminalQuery {
+    sequence: u64,
+    bytes: Bytes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -241,7 +268,6 @@ impl TerminalSession {
             .map_err(|error| format!("Latitude could not attach terminal input: {error}"))?;
 
         let (output_tx, _) = broadcast::channel::<TerminalOutput>(TERMINAL_OUTPUT_CHANNEL_CAPACITY);
-        let history = Arc::new(Mutex::new(TerminalHistory::default()));
         let alive = Arc::new(AtomicBool::new(true));
         let session = Arc::new(Self {
             id: terminal_session_id(),
@@ -254,7 +280,10 @@ impl TerminalSession {
             writer: Mutex::new(writer),
             child: Mutex::new(child),
             output_tx,
-            history,
+            state: Mutex::new(TerminalState::new(TerminalSize {
+                cols: DEFAULT_TERMINAL_COLS,
+                rows: DEFAULT_TERMINAL_ROWS,
+            })),
             clients: Mutex::new(TerminalClients::default()),
             alive,
         });
@@ -290,11 +319,27 @@ impl TerminalSession {
         self.output_tx.subscribe()
     }
 
-    pub(crate) fn history(&self) -> Vec<TerminalOutput> {
-        self.history
-            .lock()
-            .map(|history| history.chunks.iter().cloned().collect())
-            .unwrap_or_default()
+    pub(crate) fn replay_after(&self, last_sequence: Option<u64>) -> TerminalReplay {
+        let Ok(mut state) = self.state.lock() else {
+            return TerminalReplay {
+                reset: true,
+                base_sequence: 0,
+                outputs: Vec::new(),
+            };
+        };
+        let (replay, boundary) = state.replay_after(last_sequence);
+        if let Some(boundary) = boundary {
+            // Publish the synchronization boundary while state is locked so it
+            // remains ordered before the next real PTY output.
+            let _ = self.output_tx.send(boundary);
+        }
+        replay
+    }
+
+    pub(crate) fn acknowledge_output(&self, sequence: u64) {
+        if let Ok(mut state) = self.state.lock() {
+            state.acknowledge(sequence);
+        }
     }
 
     pub(crate) fn attach_client(&self) -> u64 {
@@ -339,6 +384,9 @@ impl TerminalSession {
     }
 
     fn resize_pty(&self, size: TerminalSize) {
+        if let Ok(mut state) = self.state.lock() {
+            state.resize(size);
+        }
         if let Ok(master) = self.master.lock() {
             let _ = master.resize(PtySize {
                 rows: size.rows,
@@ -374,17 +422,22 @@ impl TerminalSession {
     }
 
     fn push_output(&self, output: Vec<u8>) {
-        let Ok(mut history) = self.history.lock() else {
+        let Ok(mut state) = self.state.lock() else {
             return;
         };
-        let output = history.push(Bytes::from(output));
-        // Keep sequence assignment, history insertion, and publication ordered
-        // when startup output races the PTY reader thread.
+        let output = state.push(Bytes::from(output));
+        // Keep state parsing, sequence assignment, history insertion, and
+        // publication ordered when startup output races the PTY reader thread.
         let _ = self.output_tx.send(output);
     }
 }
 
 impl TerminalOutput {
+    #[cfg(test)]
+    pub(crate) fn for_test(sequence: u64, bytes: Bytes) -> Self {
+        Self { sequence, bytes }
+    }
+
     pub(crate) fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -411,13 +464,222 @@ impl TerminalHistory {
         }
         output
     }
+
+    fn resume_after(&self, last_sequence: Option<u64>) -> Option<TerminalReplay> {
+        let first_sequence = self
+            .chunks
+            .front()
+            .map(TerminalOutput::sequence)
+            .unwrap_or_else(|| self.next_sequence.saturating_add(1));
+        let can_resume = last_sequence.is_some_and(|sequence| {
+            sequence <= self.next_sequence && sequence.saturating_add(1) >= first_sequence
+        });
+
+        if !can_resume {
+            return None;
+        }
+
+        let base_sequence = last_sequence.unwrap_or_default();
+        Some(TerminalReplay {
+            reset: false,
+            base_sequence,
+            outputs: self
+                .chunks
+                .iter()
+                .filter(|output| output.sequence() > base_sequence)
+                .cloned()
+                .collect(),
+        })
+    }
+}
+
+impl TerminalState {
+    fn new(size: TerminalSize) -> Self {
+        Self {
+            history: TerminalHistory::default(),
+            parser: vt100::Parser::new_with_callbacks(
+                size.rows,
+                size.cols,
+                TERMINAL_SNAPSHOT_SCROLLBACK_ROWS,
+                TerminalCallbacks::default(),
+            ),
+            pending_queries: VecDeque::new(),
+        }
+    }
+
+    fn push(&mut self, bytes: Bytes) -> TerminalOutput {
+        self.parser.process(&bytes);
+        let output = self.history.push(bytes);
+        self.pending_queries.extend(
+            std::mem::take(&mut self.parser.callbacks_mut().queries)
+                .into_iter()
+                .map(|bytes| PendingTerminalQuery {
+                    sequence: output.sequence(),
+                    bytes,
+                }),
+        );
+        output
+    }
+
+    fn resize(&mut self, size: TerminalSize) {
+        self.parser.screen_mut().set_size(size.rows, size.cols);
+    }
+
+    fn acknowledge(&mut self, sequence: u64) {
+        while self
+            .pending_queries
+            .front()
+            .is_some_and(|query| query.sequence <= sequence)
+        {
+            self.pending_queries.pop_front();
+        }
+    }
+
+    fn replay_after(
+        &mut self,
+        last_sequence: Option<u64>,
+    ) -> (TerminalReplay, Option<TerminalOutput>) {
+        if let Some(replay) = self.history.resume_after(last_sequence) {
+            return (replay, None);
+        }
+
+        // CAN terminates an in-progress escape sequence. Publishing it before
+        // the snapshot gives the authoritative parser and every already-live
+        // client the same clean boundary even if the PTY read split a control
+        // or UTF-8 sequence.
+        let boundary = self.push(Bytes::from_static(TERMINAL_SNAPSHOT_BOUNDARY));
+        let sequence = boundary.sequence();
+        let snapshot = self.snapshot();
+        (
+            TerminalReplay {
+                reset: true,
+                base_sequence: sequence.saturating_sub(1),
+                outputs: vec![TerminalOutput {
+                    sequence,
+                    bytes: snapshot,
+                }],
+            },
+            Some(boundary),
+        )
+    }
+
+    fn snapshot(&mut self) -> Bytes {
+        let (rows, cols) = self.parser.screen().size();
+        let parser_snapshot = if self.parser.screen().alternate_screen() {
+            let alternate_state = self.parser.screen().state_formatted();
+            self.parser.process(EXIT_ALTERNATE_SCREEN);
+
+            let mut snapshot = self.parser.screen().state_formatted();
+            snapshot.extend_from_slice(ENTER_ALTERNATE_SCREEN);
+            snapshot.extend_from_slice(&alternate_state);
+            snapshot
+        } else {
+            self.parser.screen().state_formatted()
+        };
+
+        let mut snapshot = parser_snapshot.clone();
+        for query in &self.pending_queries {
+            snapshot.extend_from_slice(&query.bytes);
+        }
+
+        // Reparse the exact snapshot sent to the client after the published
+        // CAN boundary so the authoritative and client parsers agree about the
+        // state on which future live output operates. Terminal queries are
+        // appended only to the client snapshot because they need xterm's
+        // response and do not change the server's screen state.
+        let mut parser = vt100::Parser::new_with_callbacks(
+            rows,
+            cols,
+            TERMINAL_SNAPSHOT_SCROLLBACK_ROWS,
+            TerminalCallbacks::default(),
+        );
+        parser.process(&parser_snapshot);
+        self.parser = parser;
+
+        Bytes::from(snapshot)
+    }
+}
+
+impl vt100::Callbacks for TerminalCallbacks {
+    fn unhandled_csi(
+        &mut self,
+        _screen: &mut vt100::Screen,
+        first_intermediate: Option<u8>,
+        second_intermediate: Option<u8>,
+        params: &[&[u16]],
+        final_character: char,
+    ) {
+        if terminal_csi_expects_response(first_intermediate, params, final_character) {
+            self.queries.push(serialize_terminal_csi(
+                first_intermediate,
+                second_intermediate,
+                params,
+                final_character,
+            ));
+        }
+    }
+
+    fn unhandled_osc(&mut self, _screen: &mut vt100::Screen, params: &[&[u8]]) {
+        if params.last().is_some_and(|param| *param == b"?") {
+            let mut query = b"\x1b]".to_vec();
+            for (index, param) in params.iter().enumerate() {
+                if index > 0 {
+                    query.push(b';');
+                }
+                query.extend_from_slice(param);
+            }
+            query.push(0x07);
+            self.queries.push(Bytes::from(query));
+        }
+    }
+}
+
+fn terminal_csi_expects_response(
+    intermediate: Option<u8>,
+    params: &[&[u16]],
+    final_character: char,
+) -> bool {
+    match final_character {
+        'n' => matches!(intermediate, None | Some(b'?')),
+        'c' => matches!(intermediate, None | Some(b'>') | Some(b'=')),
+        't' if intermediate.is_none() => params
+            .first()
+            .and_then(|param| param.first())
+            .is_some_and(|operation| matches!(operation, 11 | 13 | 14 | 16 | 18 | 19 | 20 | 21)),
+        _ => false,
+    }
+}
+
+fn serialize_terminal_csi(
+    first_intermediate: Option<u8>,
+    second_intermediate: Option<u8>,
+    params: &[&[u16]],
+    final_character: char,
+) -> Bytes {
+    let mut query = b"\x1b[".to_vec();
+    query.extend(first_intermediate);
+    query.extend(second_intermediate);
+    for (param_index, param) in params.iter().enumerate() {
+        if param_index > 0 {
+            query.push(b';');
+        }
+        for (subparam_index, subparam) in param.iter().enumerate() {
+            if subparam_index > 0 {
+                query.push(b':');
+            }
+            query.extend_from_slice(subparam.to_string().as_bytes());
+        }
+    }
+    let mut encoded = [0_u8; 4];
+    query.extend_from_slice(final_character.encode_utf8(&mut encoded).as_bytes());
+    Bytes::from(query)
 }
 
 impl TerminalSize {
     fn new(cols: u16, rows: u16) -> Self {
         Self {
-            cols: cols.clamp(20, 500),
-            rows: rows.clamp(5, 200),
+            cols: cols.clamp(2, 500),
+            rows: rows.clamp(1, 200),
         }
     }
 }
@@ -559,6 +821,119 @@ mod tests {
     }
 
     #[test]
+    fn terminal_history_resumes_from_a_retained_sequence() {
+        let mut history = TerminalHistory::default();
+        history.push(Bytes::from_static(b"one"));
+        history.push(Bytes::from_static(b"two"));
+        history.push(Bytes::from_static(b"three"));
+
+        let replay = history.resume_after(Some(1)).unwrap();
+
+        assert!(!replay.reset);
+        assert_eq!(replay.base_sequence, 1);
+        assert_eq!(
+            replay
+                .outputs
+                .iter()
+                .map(TerminalOutput::sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+    }
+
+    #[test]
+    fn terminal_state_snapshots_when_resume_point_was_evicted() {
+        let mut state = TerminalState::new(TerminalSize::new(80, 24));
+        state.push(Bytes::from_static(b"one"));
+        state.push(Bytes::from_static(b"two"));
+        state.history.chunks.pop_front();
+
+        let (replay, boundary) = state.replay_after(Some(0));
+
+        assert!(replay.reset);
+        assert_eq!(replay.base_sequence, 2);
+        assert_eq!(replay.outputs.len(), 1);
+        assert_eq!(replay.outputs[0].sequence(), 3);
+        assert_ne!(replay.outputs[0].bytes().as_ref(), b"two");
+        assert_eq!(
+            boundary.unwrap().bytes().as_ref(),
+            TERMINAL_SNAPSHOT_BOUNDARY
+        );
+
+        let mut restored = vt100::Parser::new(24, 80, 0);
+        restored.process(replay.outputs[0].bytes());
+        assert_eq!(restored.screen().contents(), "onetwo");
+    }
+
+    #[test]
+    fn terminal_snapshot_preserves_neovim_style_screen_and_modes() {
+        let mut state = TerminalState::new(TerminalSize::new(80, 24));
+        state.push(Bytes::from_static(b"shell prompt"));
+        state.push(Bytes::from_static(
+            b"\x1b[?1049h\x1b[2J\x1b[H\x1b[?1h\x1b[?2004h\x1b[?1000h\x1b[?1006h\x1b[31mNEOVIM\x1b[?25l",
+        ));
+
+        let (replay, boundary) = state.replay_after(None);
+
+        assert!(replay.reset);
+        assert_eq!(replay.base_sequence, 2);
+        assert_eq!(replay.outputs.len(), 1);
+        assert_eq!(replay.outputs[0].sequence(), 3);
+        assert_eq!(boundary.unwrap().sequence(), 3);
+
+        let mut restored = vt100::Parser::new(24, 80, 0);
+        restored.process(replay.outputs[0].bytes());
+        assert!(restored.screen().alternate_screen());
+        assert_eq!(restored.screen().contents(), "NEOVIM");
+        assert!(restored.screen().application_cursor());
+        assert!(restored.screen().bracketed_paste());
+        assert!(restored.screen().hide_cursor());
+        assert_eq!(
+            restored.screen().mouse_protocol_mode(),
+            vt100::MouseProtocolMode::PressRelease
+        );
+        assert_eq!(
+            restored.screen().mouse_protocol_encoding(),
+            vt100::MouseProtocolEncoding::Sgr
+        );
+
+        restored.process(EXIT_ALTERNATE_SCREEN);
+        assert_eq!(restored.screen().contents(), "shell prompt");
+    }
+
+    #[test]
+    fn terminal_snapshot_preserves_unanswered_terminal_queries() {
+        let mut state = TerminalState::new(TerminalSize::new(80, 24));
+        state.push(Bytes::from_static(b"shell startup"));
+        let query = state.push(Bytes::from_static(b"\x1b[6n"));
+
+        let (replay, _) = state.replay_after(None);
+        let snapshot = replay.outputs[0].bytes();
+
+        assert!(snapshot.ends_with(b"\x1b[6n"));
+        assert_eq!(state.pending_queries.len(), 1);
+        assert_eq!(state.pending_queries[0].sequence, query.sequence());
+
+        state.acknowledge(replay.outputs[0].sequence());
+        assert!(state.pending_queries.is_empty());
+    }
+
+    #[test]
+    fn terminal_callbacks_preserve_device_and_color_queries() {
+        let mut state = TerminalState::new(TerminalSize::new(80, 24));
+        state.push(Bytes::from_static(b"\x1b[?6n\x1b[>0c\x1b]11;?\x07"));
+
+        assert_eq!(
+            state
+                .pending_queries
+                .iter()
+                .map(|query| query.bytes.as_ref())
+                .collect::<Vec<_>>(),
+            vec![b"\x1b[?6n".as_slice(), b"\x1b[>0c", b"\x1b]11;?\x07"]
+        );
+    }
+
+    #[test]
     fn terminal_resize_control_follows_connection_order() {
         let mut clients = TerminalClients::default();
         let first = clients.attach();
@@ -576,7 +951,7 @@ mod tests {
 
     #[test]
     fn terminal_sizes_are_clamped_to_supported_bounds() {
-        assert_eq!(TerminalSize::new(1, 1), TerminalSize { cols: 20, rows: 5 });
+        assert_eq!(TerminalSize::new(1, 0), TerminalSize { cols: 2, rows: 1 });
         assert_eq!(
             TerminalSize::new(u16::MAX, u16::MAX),
             TerminalSize {

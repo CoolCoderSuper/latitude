@@ -523,9 +523,13 @@ fn browser_tools_use_checked_in_bundles_and_desktop_focus_style() {
     assert!(!file_viewer.contains("https://"));
     assert!(!terminal_viewer.contains("https://"));
     assert!(terminal_viewer.contains("window.WebglAddon = { WebglAddon }"));
+    assert!(terminal_viewer.contains("window.LatitudeTerminalStream"));
     assert!(terminal_viewer.contains("binaryType = 'arraybuffer'"));
-    assert!(terminal_viewer.contains("new Uint8Array(event.data)"));
+    assert!(terminal_viewer.contains("outputWriter.acceptFrame(event.data"));
+    assert!(terminal_viewer.contains("type: 'hello'"));
+    assert!(terminal_viewer.contains("type: 'ack'"));
     assert!(terminal_viewer.contains("new ResizeObserver"));
+    assert!(!terminal_viewer.contains("querySelector('.xterm-screen')"));
     assert!(!terminal_viewer.contains("event.data.text()"));
     assert!(file_viewer.contains("LatestRequest"));
     assert!(file_viewer.contains("history[replace ? 'replaceState' : 'pushState']"));

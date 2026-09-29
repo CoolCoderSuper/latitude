@@ -1,12 +1,14 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
+import { createTerminalOutputWriter } from './terminal-stream.js';
 import '@xterm/xterm/css/xterm.css';
 import './terminal-viewer.css';
 
 window.Terminal = Terminal;
 window.FitAddon = { FitAddon };
 window.WebglAddon = { WebglAddon };
+window.LatitudeTerminalStream = { createTerminalOutputWriter };
 
 const workspace = document.querySelector('[data-terminal-workspace]');
 
@@ -251,29 +253,24 @@ if (workspace) {
       resizeTimer: null,
       reconnectTimer: null,
       resizeObserver: null,
+      outputWriter: null,
       reconnectDelay: 1000,
-      hasConnected: false,
       destroyed: false,
-      fitAndSend() {
+      fit() {
         try {
           this.fitAddon.fit();
-          const surfaceRect = surface.getBoundingClientRect();
-          const surfaceStyles = window.getComputedStyle(surface);
-          const contentBottom =
-            surfaceRect.bottom -
-            (Number.parseFloat(surfaceStyles.paddingBottom) || 0);
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            const screen = surface.querySelector('.xterm-screen');
-            if (
-              !screen ||
-              screen.getBoundingClientRect().bottom <= contentBottom + 0.5 ||
-              this.terminal.rows <= 2
-            ) {
-              break;
-            }
-            this.terminal.resize(this.terminal.cols, this.terminal.rows - 1);
+          const cols = Math.min(500, Math.max(2, this.terminal.cols));
+          const rows = Math.min(200, Math.max(1, this.terminal.rows));
+          if (cols !== this.terminal.cols || rows !== this.terminal.rows) {
+            this.terminal.resize(cols, rows);
           }
         } catch (_) {
+          return false;
+        }
+        return true;
+      },
+      fitAndSend() {
+        if (!this.fit()) {
           return;
         }
         sendJson(this.socket, {
@@ -325,6 +322,7 @@ if (workspace) {
         );
         nextSocket.binaryType = 'arraybuffer';
         this.socket = nextSocket;
+        this.outputWriter.begin(nextSocket);
 
         nextSocket.addEventListener('open', () => {
           if (this.socket !== nextSocket) {
@@ -334,12 +332,21 @@ if (workspace) {
 
           this.clearReconnectTimer();
           this.reconnectDelay = 1000;
-          if (this.hasConnected) {
-            this.terminal.reset();
+          if (!this.fit()) {
+            nextSocket.close(4001, 'terminal dimensions are unavailable');
+            return;
           }
-          this.hasConnected = true;
-          showStatus(`${this.session.title} connected.`, false, true);
-          this.fitAndSend();
+          this.outputWriter.whenIdle(() => {
+            if (this.socket !== nextSocket) {
+              return;
+            }
+            sendJson(nextSocket, {
+              type: 'hello',
+              last_sequence: this.outputWriter.lastSequence(),
+              cols: this.terminal.cols,
+              rows: this.terminal.rows,
+            });
+          });
         });
 
         nextSocket.addEventListener('message', (event) => {
@@ -348,13 +355,20 @@ if (workspace) {
           }
 
           if (typeof event.data === 'string') {
+            try {
+              const message = JSON.parse(event.data);
+              if (message?.type === 'ready') {
+                this.outputWriter.acceptReady(message, nextSocket);
+                return;
+              }
+            } catch (_) {}
             this.terminal.write(event.data);
           } else if (event.data instanceof ArrayBuffer) {
-            this.terminal.write(new Uint8Array(event.data));
+            this.outputWriter.acceptFrame(event.data, nextSocket);
           } else if (event.data instanceof Blob) {
             event.data.arrayBuffer().then((buffer) => {
               if (this.socket === nextSocket && !this.destroyed) {
-                this.terminal.write(new Uint8Array(buffer));
+                this.outputWriter.acceptFrame(buffer, nextSocket);
               }
             });
           }
@@ -365,8 +379,9 @@ if (workspace) {
             return;
           }
 
+          this.outputWriter.end(nextSocket);
           this.socket = null;
-          this.scheduleReconnect(event.code === 1013);
+          this.scheduleReconnect(event.code === 1013 || event.code === 4001);
         });
 
         nextSocket.addEventListener('error', () => {
@@ -378,6 +393,8 @@ if (workspace) {
           try {
             nextSocket.close();
           } catch (_) {
+            this.outputWriter.end(nextSocket);
+            this.socket = null;
             this.scheduleReconnect();
           }
         });
@@ -391,6 +408,7 @@ if (workspace) {
           this.socket.readyState !== WebSocket.CLOSED
         ) {
           const staleSocket = this.socket;
+          this.outputWriter.end(staleSocket);
           this.socket = null;
           try {
             staleSocket.close();
@@ -411,6 +429,7 @@ if (workspace) {
         window.clearTimeout(this.resizeTimer);
         if (this.socket) {
           const oldSocket = this.socket;
+          this.outputWriter.end(oldSocket);
           this.socket = null;
           try {
             oldSocket.close();
@@ -420,6 +439,34 @@ if (workspace) {
         this.view.remove();
       },
     };
+
+    controller.outputWriter = createTerminalOutputWriter(terminal, {
+      sendAck: (sequence, outputSocket) => {
+        sendJson(outputSocket, { type: 'ack', sequence });
+      },
+      onProtocolError: (_message, outputSocket) => {
+        showStatus(
+          `${controller.session.title} resynchronizing...`,
+          true,
+          false,
+        );
+        if (controller.socket !== outputSocket) {
+          return;
+        }
+        try {
+          outputSocket.close(4001, 'terminal protocol error');
+        } catch (_) {
+          controller.outputWriter.end(outputSocket);
+          controller.socket = null;
+          controller.scheduleReconnect(true);
+        }
+      },
+      onReady: (_reset, outputSocket) => {
+        if (controller.socket === outputSocket) {
+          showStatus(`${controller.session.title} connected.`, false, true);
+        }
+      },
+    });
 
     terminal.onData((data) => {
       if (!socketIsActive(controller.socket)) {

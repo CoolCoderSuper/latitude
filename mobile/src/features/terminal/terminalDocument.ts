@@ -199,16 +199,21 @@ ${cssVariables}
       color: var(--terminal-error-text);
     }
 
-    #terminal {
+    #terminal-frame {
       box-sizing: border-box;
-      width: 100%;
-      height: 100%;
       min-height: 0;
       overflow: hidden;
       border: 1px solid var(--terminal-border);
       border-radius: 8px;
       padding: 6px;
       background: var(--terminal-xterm-bg);
+    }
+
+    #terminal {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .xterm {
@@ -226,7 +231,7 @@ ${cssVariables}
     <span class="name"></span>
     <span class="status">Connecting</span>
   </div>
-  <div id="terminal"></div>
+  <div id="terminal-frame"><div id="terminal"></div></div>
   <script type="module" src="${terminalScriptUrl}"></script>
   <script>
     const projectName = ${projectNameJson};
@@ -280,7 +285,11 @@ ${cssVariables}
     };
 
     const start = () => {
-      if (!window.Terminal || !window.FitAddon) {
+      if (
+        !window.Terminal ||
+        !window.FitAddon ||
+        !window.LatitudeTerminalStream
+      ) {
         setStatus('Assets failed', true);
         return;
       }
@@ -318,34 +327,28 @@ ${cssVariables}
       let resizeObserver = null;
       let reconnectTimer = null;
       let reconnectDelay = 1000;
-      let hasConnected = false;
       const maxReconnectDelay = 8000;
 
-      const sendJson = (payload) => {
-        if (socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify(payload));
+      const sendSocketJson = (candidate, payload) => {
+        if (candidate && candidate.readyState === WebSocket.OPEN) {
+          candidate.send(JSON.stringify(payload));
+        }
+      };
+
+      const sendJson = (payload) => sendSocketJson(socket, payload);
+
+      const fitTerminal = () => {
+        fitAddon.fit();
+        const cols = Math.min(500, Math.max(2, terminal.cols));
+        const rows = Math.min(200, Math.max(1, terminal.rows));
+        if (cols !== terminal.cols || rows !== terminal.rows) {
+          terminal.resize(cols, rows);
         }
       };
 
       const fitAndResize = () => {
         try {
-          fitAddon.fit();
-          const terminalRect = terminalElement.getBoundingClientRect();
-          const terminalStyles = window.getComputedStyle(terminalElement);
-          const contentBottom =
-            terminalRect.bottom -
-            (Number.parseFloat(terminalStyles.paddingBottom) || 0);
-          for (let attempt = 0; attempt < 3; attempt += 1) {
-            const screen = terminalElement.querySelector('.xterm-screen');
-            if (
-              !screen ||
-              screen.getBoundingClientRect().bottom <= contentBottom + 0.5 ||
-              terminal.rows <= 2
-            ) {
-              break;
-            }
-            terminal.resize(terminal.cols, terminal.rows - 1);
-          }
+          fitTerminal();
         } catch (_) {
           return;
         }
@@ -363,6 +366,32 @@ ${cssVariables}
           reconnectTimer = null;
         }
       };
+
+      const outputWriter =
+        window.LatitudeTerminalStream.createTerminalOutputWriter(terminal, {
+          sendAck: (sequence, outputSocket) => {
+            sendSocketJson(outputSocket, { type: 'ack', sequence });
+          },
+          onProtocolError: (_message, outputSocket) => {
+            setStatus('Resynchronizing', true);
+            if (socket !== outputSocket) {
+              return;
+            }
+            try {
+              outputSocket.close(4001, 'terminal protocol error');
+            } catch (_) {
+              outputWriter.end(outputSocket);
+              socket = null;
+              scheduleReconnect(true);
+            }
+          },
+          onReady: (_reset, outputSocket) => {
+            if (socket === outputSocket) {
+              setStatus('Connected');
+              window.setTimeout(() => setStatus(''), 800);
+            }
+          },
+        });
 
       const scheduleReconnect = (resynchronize = false) => {
         clearReconnectTimer();
@@ -388,6 +417,7 @@ ${cssVariables}
         const nextSocket = new WebSocket(websocketUrl);
         nextSocket.binaryType = 'arraybuffer';
         socket = nextSocket;
+        outputWriter.begin(nextSocket);
 
         nextSocket.addEventListener('open', () => {
           if (socket !== nextSocket) {
@@ -397,13 +427,23 @@ ${cssVariables}
 
           clearReconnectTimer();
           reconnectDelay = 1000;
-          if (hasConnected) {
-            terminal.reset();
+          try {
+            fitTerminal();
+          } catch (_) {
+            nextSocket.close(4001, 'terminal dimensions are unavailable');
+            return;
           }
-          hasConnected = true;
-          setStatus('Connected');
-          fitAndResize();
-          window.setTimeout(() => setStatus(''), 800);
+          outputWriter.whenIdle(() => {
+            if (socket !== nextSocket) {
+              return;
+            }
+            sendSocketJson(nextSocket, {
+              type: 'hello',
+              last_sequence: outputWriter.lastSequence(),
+              cols: terminal.cols,
+              rows: terminal.rows,
+            });
+          });
         });
 
         nextSocket.addEventListener('message', (event) => {
@@ -412,13 +452,20 @@ ${cssVariables}
           }
 
           if (typeof event.data === 'string') {
+            try {
+              const message = JSON.parse(event.data);
+              if (message?.type === 'ready') {
+                outputWriter.acceptReady(message, nextSocket);
+                return;
+              }
+            } catch (_) {}
             terminal.write(event.data);
           } else if (event.data instanceof ArrayBuffer) {
-            terminal.write(new Uint8Array(event.data));
+            outputWriter.acceptFrame(event.data, nextSocket);
           } else if (event.data instanceof Blob) {
             event.data.arrayBuffer().then((buffer) => {
               if (socket === nextSocket) {
-                terminal.write(new Uint8Array(buffer));
+                outputWriter.acceptFrame(buffer, nextSocket);
               }
             });
           }
@@ -429,8 +476,9 @@ ${cssVariables}
             return;
           }
 
+          outputWriter.end(nextSocket);
           socket = null;
-          scheduleReconnect(event.code === 1013);
+          scheduleReconnect(event.code === 1013 || event.code === 4001);
         });
 
         nextSocket.addEventListener('error', () => {
@@ -442,6 +490,8 @@ ${cssVariables}
           try {
             nextSocket.close();
           } catch (_) {
+            outputWriter.end(nextSocket);
+            socket = null;
             scheduleReconnect();
           }
         });
@@ -452,6 +502,7 @@ ${cssVariables}
         reconnectDelay = 1000;
         if (force && socket && socket.readyState !== WebSocket.CLOSED) {
           const staleSocket = socket;
+          outputWriter.end(staleSocket);
           socket = null;
           try {
             staleSocket.close();
@@ -500,6 +551,7 @@ ${cssVariables}
         clearReconnectTimer();
         if (socket) {
           const staleSocket = socket;
+          outputWriter.end(staleSocket);
           socket = null;
           try {
             staleSocket.close();
