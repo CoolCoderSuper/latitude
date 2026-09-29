@@ -62,6 +62,7 @@ embedded_assets!(
     ("polling.js", "text/javascript; charset=utf-8"),
     ("diff-viewer.css", "text/css; charset=utf-8"),
     ("diff-viewer.js", "text/javascript; charset=utf-8"),
+    ("git-history.js", "text/javascript; charset=utf-8"),
     ("file-viewer.css", "text/css; charset=utf-8"),
     ("file-viewer.bundle.js", "text/javascript; charset=utf-8"),
     ("terminal-viewer.bundle.css", "text/css; charset=utf-8"),

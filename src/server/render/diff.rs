@@ -27,6 +27,7 @@ pub(in crate::server) fn render_project_git_history(
     project: &ProjectConfig,
     report: &GitHistoryReport,
     device_hostname: &str,
+    next_url: Option<&str>,
 ) -> String {
     let page_title = format!("{} Git history - Latitude", project.name);
     let description = format!("{} on {device_hostname}", project.name);
@@ -35,9 +36,9 @@ pub(in crate::server) fn render_project_git_history(
         &page_title,
         device_hostname,
         DIFF_VIEWER_STYLE_HREF,
-        html! {},
+        html! { script src=(HTMX_SCRIPT_SRC) {} },
         html! {
-            main {
+            main class="history-page" {
                 (html_page::page_header(html_page::PageHeader {
                     class_name: None,
                     back_href: &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
@@ -46,24 +47,41 @@ pub(in crate::server) fn render_project_git_history(
                     description: &description,
                     path: Some(&repo_path),
                 }))
-                section class="history-panel" {
-                    @if report.commits.is_empty() {
-                        div class="empty" { "No commits found." }
-                    } @else {
-                        @for commit in &report.commits {
-                            a class="history-commit" href=(format!("/{}/{}/history/{}", project.name, DIFF_ROUTE_SEGMENT, commit.hash)) {
-                                div class="history-summary" {
-                                    code { (&commit.short_hash) }
-                                    strong { (&commit.subject) }
-                                    span { (&commit.author) " · " (&commit.authored_at) }
-                                }
-                            }
+                section data-history-workspace {
+                    div class="history-viewport" data-history-viewport tabindex="0" aria-label="Git history" {
+                        div data-history-rows role="list" {
+                            (render_git_history_page(project, report, next_url))
                         }
                     }
+                    div class="history-load-status" {
+                        span data-history-status role="status" aria-live="polite" {}
+                        button type="button" data-history-retry hidden { "Retry" }
+                    }
                 }
+                script type="module" src="/__latitude/assets/git-history.js" {}
             }
         },
     )
+}
+
+pub(in crate::server) fn render_git_history_page(
+    project: &ProjectConfig,
+    report: &GitHistoryReport,
+    next_url: Option<&str>,
+) -> Markup {
+    html! {
+        div data-history-page data-next-url=[next_url] {
+            @for commit in &report.commits {
+                a class="history-commit" role="listitem" href=(format!("/{}/{}/history/{}", project.name, DIFF_ROUTE_SEGMENT, commit.hash)) {
+                    div class="history-summary" {
+                        code { (&commit.short_hash) }
+                        strong title=(&commit.subject) { (&commit.subject) }
+                        span title=(format!("{} · {}", commit.author, commit.authored_at)) { (&commit.author) " · " (&commit.authored_at) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 pub(in crate::server) fn render_project_git_commit(
@@ -227,7 +245,7 @@ fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
                 (error)
             }
         }
-        div class="action-status" data-action-status hidden {}
+        div class="action-status" data-action-status role="status" aria-live="polite" aria-atomic="true" hidden {}
         (git_action_panel(action_url))
         (git_file_panel(&report.file_changes, action_url))
     }
@@ -235,7 +253,7 @@ fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
 
 fn git_action_panel(action_url: &str) -> Markup {
     html! {
-        section class="action-panel" {
+        section id="git-action-panel" class="action-panel" hx-morph-skip {
             div class="action-group" {
                 (git_stage_action_button(action_url))
                 (git_unstage_action_button(action_url))
@@ -320,6 +338,7 @@ fn git_file_section(
             div class="section-heading" {
                 h2 { (title) }
                 code { (count_label) }
+                button type="button" class="collapse-files" data-collapse-files { "Collapse all" }
             }
             @if section_changes.is_empty() {
                 div class="empty" { (empty_message) }

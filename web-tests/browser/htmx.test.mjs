@@ -9,6 +9,72 @@ before(async () => {
 });
 after(async () => browser?.close());
 
+test('history loads on scroll, retries errors, and keeps a bounded set of rows', async (t) => {
+  let fail = true;
+  const requests = [];
+  const batch = (offset) =>
+    `<div data-history-page ${offset < 100 ? `data-next-url="/history?offset=${offset + 50}&snapshot=fixed"` : ''}>${Array.from({ length: 50 }, (_, index) => `<a class="history-commit" href="/commit/${offset + index}"><div class="history-summary"><code>${offset + index}</code><strong>Commit ${offset + index}</strong><span>Author</span></div></a>`).join('')}</div>`;
+  const css = await readFile(
+    new URL('../../src/server/assets/diff-viewer.css', import.meta.url),
+    'utf8',
+  );
+  const page = await fixture(
+    t,
+    `<style>${css}</style><main class="history-page"><section data-history-workspace>
+    <div class="history-viewport" data-history-viewport><div data-history-rows>${batch(0)}</div></div>
+    <div class="history-load-status"><span data-history-status></span><button data-history-retry hidden>Retry</button></div></section></main>`,
+    'git-history.js',
+    async (route, url) => {
+      const offset = Number(url.searchParams.get('offset'));
+      requests.push(offset);
+      assert.equal(url.searchParams.get('snapshot'), 'fixed');
+      return route.fulfill({
+        status: fail ? 503 : 200,
+        contentType: 'text/html',
+        body: fail ? 'Unavailable' : batch(offset),
+      });
+    },
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-history-rows]').style.height === '1800px',
+  );
+  assert.deepEqual(requests, []);
+  const scrollBottom = () =>
+    page.locator('[data-history-viewport]').evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  await scrollBottom();
+  await page.waitForFunction(
+    () => !document.querySelector('[data-history-retry]').hidden,
+  );
+  fail = false;
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-history-rows]').style.height === '3600px',
+  );
+  await scrollBottom();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-history-rows]').style.height === '5400px',
+  );
+  await scrollBottom();
+  await page.waitForFunction(() =>
+    document.querySelector('[href="/commit/149"]'),
+  );
+  assert.ok((await page.locator('.history-commit').count()) < 50);
+  await page.locator('[data-history-viewport]').evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await page.waitForFunction(() =>
+    document.querySelector('[href="/commit/0"]'),
+  );
+  assert.ok((await page.locator('.history-commit').count()) < 50);
+  assert.deepEqual(requests, [50, 50, 100]);
+  assert.equal(await page.locator('.history-load-status').isVisible(), false);
+});
+
 async function fixture(t, body, script, respond) {
   const page = await browser.newPage();
   const errors = [];
@@ -224,6 +290,99 @@ test('Git actions apply fragments and clear pending state on HTTP and network fa
   }
 });
 
+test('Git staging and polling preserve the commit input, focus, and selection', async (t) => {
+  let releaseStage;
+  let staged = false;
+  let revision = 0;
+  const fragment = () => `
+    <section class="git-overview">Revision ${revision}</section>
+    <div data-action-status hidden></div>
+    <section id="git-action-panel" class="action-panel" hx-morph-skip>
+      <form hx-patch="/diff" hx-swap="none">
+        <button name="action" value="stage_all">Stage all</button>
+      </form>
+      <form class="commit-form" hx-patch="/diff" hx-swap="none">
+        <input data-commit-message name="message"><button name="action" value="commit">Commit</button>
+      </form>
+    </section>
+    <section data-file-panel="unstaged">${staged ? 'No unstaged files' : 'note.txt'}</section>
+    <section data-file-panel="staged">${staged ? 'note.txt' : 'No staged files'}</section>`;
+  const page = await fixture(
+    t,
+    `<main data-diff-workspace data-action-url="/diff">${fragment()}</main>`,
+    'diff-viewer.js',
+    async (route) => {
+      if (route.request().method() === 'GET') {
+        return route.fulfill({ contentType: 'text/html', body: fragment() });
+      }
+      const action = new URLSearchParams(route.request().postData()).get(
+        'action',
+      );
+      if (action === 'fetch') return route.fulfill({ status: 503 });
+      await new Promise((resolve) => {
+        releaseStage = resolve;
+      });
+      staged = true;
+      return route.fulfill({ status: 204 });
+    },
+  );
+  await page.addStyleTag({
+    content: await readFile(
+      new URL('../../src/server/assets/diff-viewer.css', import.meta.url),
+      'utf8',
+    ),
+  });
+  const input = page.locator('[data-commit-message]');
+  const inputBounds = await input.boundingBox();
+  await page.getByRole('button', { name: 'Stage all' }).click();
+  await page.waitForFunction(() =>
+    document.querySelector('.git-action-pending'),
+  );
+  assert.deepEqual(await input.boundingBox(), inputBounds);
+  assert.equal(
+    await page
+      .locator('[data-action-status]')
+      .evaluate((element) => getComputedStyle(element).pointerEvents),
+    'none',
+  );
+  await input.fill('Keep typing while staging');
+  await input.evaluate((element) => {
+    window.originalCommitInput = element;
+    element.setSelectionRange(5, 11);
+  });
+  releaseStage();
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-file-panel="staged"]').textContent ===
+      'note.txt',
+  );
+  const assertInput = async () => {
+    assert.deepEqual(
+      await input.evaluate((element) => ({
+        same: element === window.originalCommitInput,
+        focused: document.activeElement === element,
+        value: element.value,
+        start: element.selectionStart,
+        end: element.selectionEnd,
+      })),
+      {
+        same: true,
+        focused: true,
+        value: 'Keep typing while staging',
+        start: 5,
+        end: 11,
+      },
+    );
+  };
+  await assertInput();
+  revision = 1;
+  await page.waitForFunction(
+    () => document.querySelector('.git-overview').textContent === 'Revision 1',
+  );
+  await assertInput();
+  assert.equal(await page.locator('.git-action-pending').count(), 0);
+});
+
 test('project refresh skips identical HTML and archive triggers refresh while disabling its button', async (t) => {
   let archived = false;
   let requests = 0;
@@ -277,8 +436,8 @@ test('project refresh skips identical HTML and archive triggers refresh while di
 
 test('Git refresh skips identical content and retains selections, expanded files, and commit drafts', async (t) => {
   let content = 'original';
-  const fragment =
-    () => `<div data-action-status hidden></div><input data-commit-message>
+  const fragment = () => `<div data-action-status hidden></div>
+    <section id="git-action-panel" class="action-panel" hx-morph-skip><input data-commit-message></section>
     <section data-file-panel="unstaged"><div class="section-heading"><code>1 file</code></div>
       <details class="file-card" data-file-section="unstaged" data-file-path="note.txt">
         <summary>note.txt</summary><input type="checkbox" data-file-select data-selection-kind="unstaged" value="note.txt">
@@ -305,7 +464,7 @@ test('Git refresh skips identical content and retains selections, expanded files
     await htmx.ajax('GET', '/diff', {
       source: workspace,
       target: workspace,
-      swap: 'innerHTML',
+      swap: 'innerMorph',
     });
   });
   assert.equal(
@@ -320,7 +479,7 @@ test('Git refresh skips identical content and retains selections, expanded files
     await htmx.ajax('GET', '/diff', {
       source: workspace,
       target: workspace,
-      swap: 'innerHTML',
+      swap: 'innerMorph',
     });
   });
   assert.equal(await page.locator('pre').textContent(), 'updated');

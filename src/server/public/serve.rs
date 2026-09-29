@@ -26,13 +26,13 @@ use super::super::{
     desktop_api::execute_desktop_action_request,
     git::{
         GitCommandExecution, collect_project_diff, collect_project_file_diff,
-        collect_project_git_commit, collect_project_git_history, handle_git_action_request,
+        collect_project_git_commit, collect_project_git_history_page, handle_git_action_request,
     },
     render::{
-        render_diff_file_update, render_diff_workspace_fragment, render_project_diff,
-        render_project_files, render_project_git_commit, render_project_git_history,
-        render_project_home, render_project_terminal, render_root_desktop, render_root_terminal,
-        render_server_home, render_share_login,
+        render_diff_file_update, render_diff_workspace_fragment, render_git_history_page,
+        render_project_diff, render_project_files, render_project_git_commit,
+        render_project_git_history, render_project_home, render_project_terminal,
+        render_root_desktop, render_root_terminal, render_server_home, render_share_login,
     },
     response::{html_response, html_status_response, json_error, plain_response},
     terminal_api::{
@@ -544,10 +544,43 @@ async fn serve_project_diff(
     }
 
     if remainder == "/history" && (method == Method::GET || method == Method::HEAD) {
-        let report = collect_project_git_history(&project.project_dir).await;
+        let params = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+            .into_owned()
+            .collect::<std::collections::HashMap<_, _>>();
+        let offset = match params
+            .get("offset")
+            .map(|value| value.parse::<usize>())
+            .transpose()
+        {
+            Ok(offset) => offset.unwrap_or(0),
+            Err(_) => return plain_response(StatusCode::BAD_REQUEST, "Invalid history offset"),
+        };
+        let snapshot = params.get("snapshot").map(String::as_str);
+        if offset > 0 && snapshot.is_none() {
+            return plain_response(StatusCode::BAD_REQUEST, "History snapshot is required");
+        }
+        let (report, snapshot, has_more) =
+            match collect_project_git_history_page(&project.project_dir, offset, snapshot).await {
+                Ok(page) => page,
+                Err(error) => return plain_response(StatusCode::UNPROCESSABLE_ENTITY, error),
+            };
+        let next_url = has_more.then(|| {
+            format!(
+                "/{}/{}/history?offset={}&snapshot={snapshot}",
+                project.name,
+                DIFF_ROUTE_SEGMENT,
+                offset.saturating_add(report.commits.len())
+            )
+        });
+        if is_htmx_request {
+            return html_response(
+                &method,
+                render_git_history_page(project, &report, next_url.as_deref()).into_string(),
+            );
+        }
         return html_response(
             &method,
-            render_project_git_history(project, &report, device_hostname),
+            render_project_git_history(project, &report, device_hostname, next_url.as_deref()),
         );
     }
 

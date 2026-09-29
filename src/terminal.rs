@@ -762,7 +762,7 @@ fn non_empty_string(name: &str) -> Option<String> {
 
 fn terminal_pty_command(cwd: &Path) -> CommandBuilder {
     let mut command = if cfg!(windows) {
-        let mut command = CommandBuilder::new("powershell.exe");
+        let mut command = CommandBuilder::new("pwsh.exe");
         command.arg("-NoLogo");
         command
     } else {

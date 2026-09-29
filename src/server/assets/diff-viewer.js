@@ -8,7 +8,6 @@ import { startVisiblePolling } from './polling.js';
   let openKeys = new Set();
   let refreshTimer = null;
   let autoRefreshPending = false;
-  let commitMessage = '';
   let selectedPaths = {
     unstaged: new Set(),
     staged: new Set(),
@@ -40,9 +39,12 @@ import { startVisiblePolling } from './polling.js';
     if (!event.detail.ctx.response.raw.ok) return;
 
     if (event.detail.ctx.sourceElement.matches('.commit-form')) {
-      commitMessage = '';
       const messageInput = workspace.querySelector('[data-commit-message]');
-      if (messageInput) messageInput.value = '';
+      if (
+        messageInput?.value === event.detail.ctx.request.body.get('message')
+      ) {
+        messageInput.value = '';
+      }
     }
 
     if (
@@ -68,8 +70,6 @@ import { startVisiblePolling } from './polling.js';
       return;
     }
     forceNextRefresh = false;
-    commitMessage =
-      workspace.querySelector('[data-commit-message]')?.value || '';
     captureSelections();
     openKeys = new Set(
       Array.from(workspace.querySelectorAll('details.file-card[open]'))
@@ -81,15 +81,23 @@ import { startVisiblePolling } from './polling.js';
   workspace.addEventListener('htmx:after:swap', (event) => {
     if (requestVerb(event) !== 'get') return;
     autoRefreshPending = false;
-    const messageInput = workspace.querySelector('[data-commit-message]');
-    if (messageInput) messageInput.value = commitMessage;
     workspace.querySelectorAll('details.file-card').forEach((card) => {
       if (openKeys.has(cardKey(card))) card.open = true;
     });
     restoreSelection();
+    hideStatus();
   });
 
   workspace.addEventListener('click', (event) => {
+    if (event.target.closest('[data-collapse-files]')) {
+      event.target
+        .closest('[data-file-panel]')
+        .querySelectorAll('details.file-card[open]')
+        .forEach((card) => {
+          card.open = false;
+          openKeys.delete(cardKey(card));
+        });
+    }
     if (event.target.matches('[data-file-select]')) event.stopPropagation();
   });
 
@@ -325,7 +333,7 @@ import { startVisiblePolling } from './polling.js';
       htmx.ajax('GET', actionUrl, {
         source: workspace,
         target: workspace,
-        swap: 'innerHTML',
+        swap: 'innerMorph',
       });
     }, 150);
   }
@@ -335,15 +343,14 @@ import { startVisiblePolling } from './polling.js';
       autoRefreshPending ||
       document.hidden ||
       userIsInteracting() ||
-      workspace.querySelector('.git-action-pending') ||
-      document.activeElement?.matches('[data-commit-message]')
+      workspace.querySelector('.git-action-pending')
     )
       return;
     autoRefreshPending = true;
     htmx.ajax('GET', actionUrl, {
       source: workspace,
       target: workspace,
-      swap: 'innerHTML',
+      swap: 'innerMorph',
     });
   }
 

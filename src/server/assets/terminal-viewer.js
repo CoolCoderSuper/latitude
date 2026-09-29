@@ -207,7 +207,8 @@ if (workspace) {
     convertEol: false,
     cursorBlink: true,
     cursorStyle: 'block',
-    fontFamily: 'Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
+    fontFamily:
+      '"CaskaydiaCove Nerd Font", Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
     fontSize: 14,
     lineHeight: 1,
     letterSpacing: 0,

@@ -348,6 +348,57 @@ pub(in crate::server) async fn collect_project_git_history(project_dir: &Path) -
     GitHistoryReport { repo_dir, commits }
 }
 
+// Pin subsequent batches to the initial HEAD so new commits cannot shift offsets.
+pub(in crate::server) async fn collect_project_git_history_page(
+    project_dir: &Path,
+    offset: usize,
+    snapshot: Option<&str>,
+) -> Result<(GitHistoryReport, String, bool), String> {
+    let repo_dir = git_worktree_root(project_dir).await?;
+    let snapshot = if let Some(hash) = snapshot {
+        if !matches!(hash.len(), 40 | 64) || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err("Invalid history snapshot".to_string());
+        }
+        hash.to_string()
+    } else {
+        let output = run_git_command(
+            &repo_dir,
+            &["rev-parse", "--verify", "--quiet", "HEAD"],
+            &[0, 1],
+        )
+        .await?;
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+    if snapshot.is_empty() {
+        return Ok((
+            GitHistoryReport {
+                repo_dir,
+                commits: Vec::new(),
+            },
+            snapshot,
+            false,
+        ));
+    }
+    let output = run_git_command(
+        &repo_dir,
+        &[
+            "log".to_string(),
+            "--max-count=51".to_string(),
+            format!("--skip={offset}"),
+            "--date=iso-strict".to_string(),
+            "--format=%x1e%H%x1f%h%x1f%an%x1f%ad%x1f%s".to_string(),
+            snapshot.clone(),
+            "--".to_string(),
+        ],
+        &[0],
+    )
+    .await?;
+    let mut commits = parse_git_history(&String::from_utf8_lossy(&output.stdout));
+    let has_more = commits.len() > 50;
+    commits.truncate(50);
+    Ok((GitHistoryReport { repo_dir, commits }, snapshot, has_more))
+}
+
 pub(in crate::server) async fn collect_project_git_commit(
     project_dir: &Path,
     hash: &str,
@@ -636,8 +687,8 @@ mod tests {
 
     use super::{
         GitStatusSummary, Path, apply_porcelain_v2_status, collect_project_file_diff,
-        collect_project_git_commit, collect_project_git_history, collect_project_git_status,
-        file_baseline,
+        collect_project_git_commit, collect_project_git_history, collect_project_git_history_page,
+        collect_project_git_status, file_baseline,
     };
 
     fn git(directory: &Path, args: &[&str]) {
@@ -647,6 +698,59 @@ mod tests {
             .status()
             .expect("git should run");
         assert!(status.success(), "git {args:?} should succeed");
+    }
+
+    #[tokio::test]
+    async fn history_pages_cover_all_commits_and_keep_the_original_snapshot() {
+        let directory =
+            std::env::temp_dir().join(format!("latitude-history-pages-{}", rand::random::<u64>()));
+        std_fs::create_dir_all(&directory).unwrap();
+        git(&directory, &["init", "--quiet"]);
+        git(&directory, &["config", "user.name", "Latitude Tests"]);
+        git(
+            &directory,
+            &["config", "user.email", "latitude@example.invalid"],
+        );
+        let (empty, _, more) = collect_project_git_history_page(&directory, 0, None)
+            .await
+            .unwrap();
+        assert!(empty.commits.is_empty());
+        assert!(!more);
+        for index in 0..55 {
+            git(
+                &directory,
+                &[
+                    "commit",
+                    "--allow-empty",
+                    "--quiet",
+                    "-m",
+                    &format!("Commit {index}"),
+                ],
+            );
+        }
+        let (first, snapshot, more) = collect_project_git_history_page(&directory, 0, None)
+            .await
+            .unwrap();
+        assert_eq!(first.commits.len(), 50);
+        assert!(more);
+        assert_eq!(first.commits[0].subject, "Commit 54");
+        git(
+            &directory,
+            &["commit", "--allow-empty", "--quiet", "-m", "New arrival"],
+        );
+        let (last, _, more) = collect_project_git_history_page(&directory, 50, Some(&snapshot))
+            .await
+            .unwrap();
+        assert_eq!(last.commits.len(), 5);
+        assert!(!more);
+        assert_eq!(last.commits[0].subject, "Commit 4");
+        assert_eq!(last.commits[4].subject, "Commit 0");
+        assert!(
+            collect_project_git_history_page(&directory, 0, Some("--all"))
+                .await
+                .is_err()
+        );
+        std_fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

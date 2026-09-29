@@ -164,7 +164,91 @@ input {
 
 .history-panel {
   display: grid;
-  gap: 8px;
+  gap: 4px;
+}
+
+.history-page {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+
+[data-history-workspace] {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.history-viewport {
+  --history-row-height: 36px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+  overflow-anchor: none;
+}
+
+[data-history-rows] {
+  position: relative;
+}
+
+.history-viewport .history-commit {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(var(--history-row-height) - 4px);
+  box-sizing: border-box;
+}
+
+.history-viewport .history-summary strong,
+.history-viewport .history-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-viewport .history-summary span {
+  max-width: 35vw;
+}
+
+.history-load-status {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--latitude-color-border);
+  border-radius: 8px;
+  background: var(--latitude-color-surface);
+  color: var(--latitude-color-muted);
+  font-size: 0.82rem;
+}
+
+.history-load-status:has([data-history-status]:empty):has(
+    [data-history-retry][hidden]
+  ) {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .history-viewport {
+    --history-row-height: 64px;
+  }
+
+  .history-viewport .history-summary {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 4px 8px;
+  }
+
+  .history-viewport .history-summary span {
+    grid-column: 1 / -1;
+    max-width: 100%;
+    text-align: left;
+  }
 }
 
 .history-commit {
@@ -187,8 +271,8 @@ input {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
+  padding: 6px 10px;
   cursor: pointer;
 }
 
@@ -218,10 +302,10 @@ input {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 10px;
-  border: 1px solid #d7dfdc;
+  border: 1px solid var(--latitude-color-border);
   border-radius: 8px;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--latitude-color-surface);
 }
 
 .commit-meta {
@@ -338,6 +422,22 @@ input {
   display: none;
 }
 
+/* Action feedback must not move controls or intercept the next click. */
+[data-action-status] {
+  position: fixed;
+  z-index: 100;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(420px, calc(100vw - 32px));
+  max-height: 30vh;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 18%);
+}
+
 .file-panel {
   min-width: 0;
   border: 1px solid #d7dde8;
@@ -380,6 +480,7 @@ input {
 
 .file-card[data-file-section] .file-summary {
   grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  padding-block: 5px;
 }
 
 .file-select {
@@ -434,11 +535,17 @@ input {
 .file-summary-action button,
 .file-summary-action .editor-link {
   width: auto;
-  min-height: 28px;
+  min-height: 22px;
   border-radius: 5px;
   padding: 0 8px;
   font-size: 0.74rem;
   line-height: 1;
+}
+
+.collapse-files {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 0.78rem;
 }
 
 .file-content {
@@ -469,11 +576,16 @@ input {
 
 .section-heading {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 5px 10px;
   border-bottom: 1px solid #d7dde8;
+}
+
+.section-heading .collapse-files {
+  margin-left: auto;
+  width: auto;
+  flex: none;
 }
 
 .section-heading code {
@@ -639,11 +751,6 @@ pre {
 :root[data-latitude-theme='dark'] .history-commit {
   border-color: #2f3a4a;
   background: #151c28;
-}
-
-:root[data-latitude-theme='dark'] .commit-header {
-  border-color: #2e3936;
-  background: #171d1b;
 }
 
 :root[data-latitude-theme='dark'] .commit-meta,
@@ -814,7 +921,7 @@ pre {
   }
 
   .section-heading {
-    display: grid;
+    display: flex;
     gap: 6px;
   }
 
