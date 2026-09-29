@@ -25,8 +25,9 @@ use super::super::{
     },
     desktop_api::execute_desktop_action_request,
     git::{
-        GitCommandExecution, collect_project_diff, collect_project_file_diff,
-        collect_project_git_commit, collect_project_git_history_page, handle_git_action_request,
+        GitCommandExecution, collect_project_file_diff, collect_project_git_commit,
+        collect_project_git_history_page, collect_repository_view_diff, handle_git_action_request,
+        repository_summaries, repository_url, resolve_repository, submodule_paths,
     },
     render::{
         render_diff_file_update, render_diff_workspace_fragment, render_git_history_page,
@@ -543,6 +544,23 @@ async fn serve_project_diff(
         );
     }
 
+    let repository = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
+        .find(|(key, _)| key == "repository")
+        .map(|(_, value)| value.into_owned())
+        .unwrap_or_default();
+    let paths = match submodule_paths(&project.project_dir).await {
+        Ok(paths) => paths,
+        Err(error) => return plain_response(StatusCode::UNPROCESSABLE_ENTITY, error),
+    };
+    let repo_dir = match resolve_repository(&project.project_dir, &paths, &repository) {
+        Ok(path) => path,
+        Err(error) => return plain_response(StatusCode::BAD_REQUEST, error),
+    };
+    let action_url = repository_url(
+        &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+        &repository,
+    );
+
     if remainder == "/history" && (method == Method::GET || method == Method::HEAD) {
         let params = url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
             .into_owned()
@@ -560,39 +578,49 @@ async fn serve_project_diff(
             return plain_response(StatusCode::BAD_REQUEST, "History snapshot is required");
         }
         let (report, snapshot, has_more) =
-            match collect_project_git_history_page(&project.project_dir, offset, snapshot).await {
+            match collect_project_git_history_page(&repo_dir, offset, snapshot).await {
                 Ok(page) => page,
                 Err(error) => return plain_response(StatusCode::UNPROCESSABLE_ENTITY, error),
             };
         let next_url = has_more.then(|| {
-            format!(
-                "/{}/{}/history?offset={}&snapshot={snapshot}",
-                project.name,
-                DIFF_ROUTE_SEGMENT,
-                offset.saturating_add(report.commits.len())
+            repository_url(
+                &format!(
+                    "/{}/{}/history?offset={}&snapshot={snapshot}",
+                    project.name,
+                    DIFF_ROUTE_SEGMENT,
+                    offset.saturating_add(report.commits.len())
+                ),
+                &repository,
             )
         });
         if is_htmx_request {
             return html_response(
                 &method,
-                render_git_history_page(project, &report, next_url.as_deref()).into_string(),
+                render_git_history_page(project, &report, next_url.as_deref(), &repository)
+                    .into_string(),
             );
         }
         return html_response(
             &method,
-            render_project_git_history(project, &report, device_hostname, next_url.as_deref()),
+            render_project_git_history(
+                project,
+                &report,
+                device_hostname,
+                next_url.as_deref(),
+                &repository,
+            ),
         );
     }
 
     if let Some(hash) = remainder.strip_prefix("/history/")
         && (method == Method::GET || method == Method::HEAD)
     {
-        let Some(report) = collect_project_git_commit(&project.project_dir, hash).await else {
+        let Some(report) = collect_project_git_commit(&repo_dir, hash).await else {
             return plain_response(StatusCode::NOT_FOUND, "commit was not found\n");
         };
         return html_response(
             &method,
-            render_project_git_commit(project, &report, device_hostname),
+            render_project_git_commit(project, &report, device_hostname, &repository),
         );
     }
 
@@ -604,7 +632,7 @@ async fn serve_project_diff(
     }
 
     if method == Method::PATCH {
-        let action = match handle_git_action_request(req, &project.project_dir).await {
+        let action = match handle_git_action_request(req, &repo_dir).await {
             Ok(action) => action,
             Err(error) => {
                 error!(%error, project = %project.name, "git action failed");
@@ -614,27 +642,23 @@ async fn serve_project_diff(
         let Some(path) = action.affected_path() else {
             return StatusCode::NO_CONTENT.into_response();
         };
-        let report = collect_project_file_diff(&project.project_dir, path).await;
+        let mut report = collect_project_file_diff(&repo_dir, path).await;
+        report.selected_repository = repository.clone();
         return html_response(
             &method,
-            render_diff_file_update(
-                &report,
-                path,
-                &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
-            )
-            .into_string(),
+            render_diff_file_update(&report, path, &action_url).into_string(),
         );
     }
 
-    let report = collect_project_diff(&project.project_dir).await;
+    let mut report = collect_repository_view_diff(&repo_dir).await;
+    report.selected_repository = repository;
+    if !paths.is_empty() {
+        report.repositories = repository_summaries(&project.project_dir, &paths).await;
+    }
     if is_htmx_request && method == Method::GET {
         return html_response(
             &method,
-            render_diff_workspace_fragment(
-                &report,
-                &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
-            )
-            .into_string(),
+            render_diff_workspace_fragment(&report, &action_url).into_string(),
         );
     }
     html_response(
@@ -841,4 +865,176 @@ async fn load_enabled_project(
                 "catalog could not be read\n",
             )
         })
+}
+
+#[cfg(test)]
+mod submodule_tests {
+    use super::*;
+    use std::{fs, path::Path, process::Command};
+
+    fn git(root: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn init(root: &Path) {
+        fs::create_dir_all(root).unwrap();
+        git(root, &["init", "--quiet"]);
+        git(root, &["config", "user.name", "Latitude Tests"]);
+        git(root, &["config", "user.email", "latitude@example.invalid"]);
+        git(root, &["config", "core.autocrlf", "false"]);
+        fs::write(root.join("note.txt"), "before\n").unwrap();
+        git(root, &["add", "."]);
+        git(root, &["commit", "--quiet", "-m", "initial"]);
+    }
+
+    async fn request(
+        project: &ProjectConfig,
+        repository: &str,
+        method: Method,
+        body: &str,
+        remainder: &str,
+    ) -> (StatusCode, String) {
+        let uri = repository_url(&format!("/demo/_diff{remainder}"), repository);
+        let request = Request::builder()
+            .uri(uri)
+            .method(method)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = serve_project_diff(request, project, remainder, "test").await;
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    #[tokio::test]
+    async fn submodule_view_keeps_diffs_actions_and_navigation_in_the_selected_repository() {
+        let directory =
+            std::env::temp_dir().join(format!("latitude-submodules-{}", rand::random::<u64>()));
+        let root = directory.join("root");
+        let source = directory.join("source");
+        init(&root);
+        init(&source);
+        git(
+            &root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "modules/with space",
+            ],
+        );
+        let child = root.join("modules/with space");
+        git(
+            &child,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "nested",
+            ],
+        );
+        git(
+            &child,
+            &[
+                "-c",
+                "user.name=Latitude Tests",
+                "-c",
+                "user.email=latitude@example.invalid",
+                "commit",
+                "-am",
+                "add nested",
+            ],
+        );
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "--quiet", "-m", "add submodules"]);
+        let project = ProjectConfig {
+            name: "demo".to_string(),
+            enabled: true,
+            project_dir: root.clone(),
+            deployments: Vec::new(),
+        };
+        fs::write(child.join("note.txt"), "child edit\n").unwrap();
+        fs::write(child.join("nested/note.txt"), "nested edit\n").unwrap();
+        fs::write(child.join("new.txt"), "untracked\n").unwrap();
+
+        let (status, html) = request(&project, "", Method::GET, "", "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("Submodule modules/with space/nested"));
+        assert!(
+            !html.contains("data-file-path=\"modules/with space\""),
+            "dirty child files should not create a duplicate parent entry"
+        );
+        let (status, html) = request(&project, "modules/with space", Method::GET, "", "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("child edit"));
+        assert!(html.contains("data-file-path=\"new.txt\""));
+        assert!(html.contains("history?repository=modules%2Fwith+space"));
+        assert!(html.contains("_files?path=modules%2Fwith+space%2Fnote.txt"));
+        assert!(html.contains("hx-patch=\"/demo/_diff?repository=modules%2Fwith+space\""));
+        let (status, update) = request(
+            &project,
+            "modules/with space",
+            Method::PATCH,
+            "action=stage_file&path=note.txt",
+            "/",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(update.contains("repository=modules%2Fwith+space"));
+        assert_eq!(
+            git(&child, &["diff", "--cached", "--name-only"]).trim(),
+            "note.txt"
+        );
+        assert!(git(&root, &["diff", "--cached", "--name-only"]).is_empty());
+        let (status, html) =
+            request(&project, "modules/with space/nested", Method::GET, "", "/").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("nested edit"));
+        let (status, html) =
+            request(&project, "modules/with space", Method::GET, "", "/history").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("?repository=modules%2Fwith+space"));
+        assert!(html.contains("add nested"));
+        assert_eq!(
+            request(
+                &project,
+                "../source",
+                Method::PATCH,
+                "action=stage_all",
+                "/"
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            request(&project, "missing", Method::GET, "", "/").await.0,
+            StatusCode::BAD_REQUEST
+        );
+        git(
+            &root,
+            &["submodule", "deinit", "--force", "modules/with space"],
+        );
+        assert_eq!(
+            request(&project, "modules/with space", Method::GET, "", "/")
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

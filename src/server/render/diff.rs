@@ -8,7 +8,7 @@ use super::{
         constants::DIFF_ROUTE_SEGMENT,
         git::{
             FileSectionKind, GitCommitReport, GitDiffReport, GitFileChange, GitFileDiff,
-            GitHistoryReport,
+            GitHistoryReport, repository_url,
         },
         html as html_page,
         paths::display_path,
@@ -28,6 +28,7 @@ pub(in crate::server) fn render_project_git_history(
     report: &GitHistoryReport,
     device_hostname: &str,
     next_url: Option<&str>,
+    repository: &str,
 ) -> String {
     let page_title = format!("{} Git history - Latitude", project.name);
     let description = format!("{} on {device_hostname}", project.name);
@@ -41,7 +42,7 @@ pub(in crate::server) fn render_project_git_history(
             main class="history-page" {
                 (html_page::page_header(html_page::PageHeader {
                     class_name: None,
-                    back_href: &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+                    back_href: &repository_url(&format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT), repository),
                     back_label: "Back to code changes",
                     heading: "Git history",
                     description: &description,
@@ -50,7 +51,7 @@ pub(in crate::server) fn render_project_git_history(
                 section data-history-workspace {
                     div class="history-viewport" data-history-viewport tabindex="0" aria-label="Git history" {
                         div data-history-rows role="list" {
-                            (render_git_history_page(project, report, next_url))
+                            (render_git_history_page(project, report, next_url, repository))
                         }
                     }
                     div class="history-load-status" {
@@ -68,11 +69,12 @@ pub(in crate::server) fn render_git_history_page(
     project: &ProjectConfig,
     report: &GitHistoryReport,
     next_url: Option<&str>,
+    repository: &str,
 ) -> Markup {
     html! {
         div data-history-page data-next-url=[next_url] {
             @for commit in &report.commits {
-                a class="history-commit" role="listitem" href=(format!("/{}/{}/history/{}", project.name, DIFF_ROUTE_SEGMENT, commit.hash)) {
+                a class="history-commit" role="listitem" href=(repository_url(&format!("/{}/{}/history/{}", project.name, DIFF_ROUTE_SEGMENT, commit.hash), repository)) {
                     div class="history-summary" {
                         code { (&commit.short_hash) }
                         strong title=(&commit.subject) { (&commit.subject) }
@@ -88,6 +90,7 @@ pub(in crate::server) fn render_project_git_commit(
     project: &ProjectConfig,
     report: &GitCommitReport,
     device_hostname: &str,
+    repository: &str,
 ) -> String {
     let commit = &report.commit;
     let (additions, deletions) = commit.files.iter().fold((0, 0), |totals, file| {
@@ -106,7 +109,7 @@ pub(in crate::server) fn render_project_git_commit(
             main {
                 (html_page::page_header(html_page::PageHeader {
                     class_name: None,
-                    back_href: &format!("/{}/{}/history", project.name, DIFF_ROUTE_SEGMENT),
+                    back_href: &repository_url(&format!("/{}/{}/history", project.name, DIFF_ROUTE_SEGMENT), repository),
                     back_label: "Back to Git history",
                     heading: &commit.subject,
                     description: &description,
@@ -194,7 +197,10 @@ pub(in crate::server) fn render_project_diff(
     device_hostname: &str,
 ) -> String {
     let page_title = format!("{} code changes - Latitude", project.name);
-    let action_url = format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT);
+    let action_url = repository_url(
+        &format!("/{}/{}", project.name, DIFF_ROUTE_SEGMENT),
+        &report.selected_repository,
+    );
     let description = format!("{} on {device_hostname}", project.name);
     let repo_path = display_path(&report.repo_dir);
 
@@ -223,7 +229,19 @@ pub(in crate::server) fn render_project_diff(
 }
 
 fn diff_workspace_inner(report: &GitDiffReport, action_url: &str) -> Markup {
+    let base_url = action_url.split('?').next().unwrap_or(action_url);
     html! {
+        @if !report.repositories.is_empty() {
+            nav class="git-repositories" aria-label="Git repositories" {
+                @for repository in &report.repositories {
+                    a href=(repository_url(base_url, &repository.path))
+                        aria-current=[(repository.path == report.selected_repository).then_some("page")] {
+                        strong { @if repository.path.is_empty() { "Root" } @else { "Submodule " (&repository.path) } }
+                        span { @if repository.status.has_status() { (repository.status.label()) } @else { "Clean" } }
+                    }
+                }
+            }
+        }
         section class="git-overview" aria-label="Git change and sync totals" {
             strong { "Changes" }
             @if report.status.additions > 0 {
@@ -269,7 +287,7 @@ fn git_action_panel(action_url: &str) -> Markup {
                 button type="submit" name="action" value="commit" data-git-action="commit" { "Commit staged" }
             }
             div class="action-group action-group-push" {
-                a class="editor-link" href=(format!("{action_url}/history")) { "History" }
+                a class="editor-link" href=(history_href(action_url)) { "History" }
                 (git_action_button(action_url, "pull", "Pull"))
                 (git_action_button(action_url, "push", "Push"))
             }
@@ -377,7 +395,7 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind, action_url: &str
                 }
                 div class="file-summary-action" {
                     @if change.can_open_in_editor() {
-                        a class="editor-link" data-open-editor href=(editor_href(&change.path)) target="_blank" rel="noopener" { "Open in editor" }
+                        a class="editor-link" data-open-editor href=(editor_href(&change.path, action_url)) target="_blank" rel="noopener" { "Open in editor" }
                     }
                     @match kind {
                         FileSectionKind::Unstaged => {
@@ -409,9 +427,33 @@ fn git_file_card(change: &GitFileChange, kind: FileSectionKind, action_url: &str
     }
 }
 
-fn editor_href(path: &str) -> String {
+fn history_href(action_url: &str) -> String {
+    let (base, query) = action_url.split_once('?').unwrap_or((action_url, ""));
+    format!(
+        "{base}/history{}{}",
+        if query.is_empty() { "" } else { "?" },
+        query
+    )
+}
+
+fn editor_href(path: &str, action_url: &str) -> String {
+    let repository = url::form_urlencoded::parse(
+        action_url
+            .split_once('?')
+            .map(|(_, q)| q)
+            .unwrap_or("")
+            .as_bytes(),
+    )
+    .find(|(key, _)| key == "repository")
+    .map(|(_, value)| value.into_owned())
+    .unwrap_or_default();
+    let path = if repository.is_empty() {
+        path.to_string()
+    } else {
+        format!("{repository}/{path}")
+    };
     let query = url::form_urlencoded::Serializer::new(String::new())
-        .append_pair("path", path)
+        .append_pair("path", &path)
         .finish();
     format!("./_files?{query}")
 }

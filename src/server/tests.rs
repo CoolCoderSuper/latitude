@@ -1428,6 +1428,8 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
         deployments: Vec::new(),
     };
     let report = GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
         error: None,
@@ -1516,6 +1518,8 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
 #[test]
 fn renders_diff_workspace_fragment_without_full_document() {
     let report = GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
         error: None,
@@ -1530,7 +1534,9 @@ fn renders_diff_workspace_fragment_without_full_document() {
 
     let rendered = render_diff_workspace_fragment(&report, "/demo/_diff").into_string();
 
-    assert!(rendered.contains("data-action-status hidden"));
+    assert!(rendered.contains(
+        "data-action-status role=\"status\" aria-live=\"polite\" aria-atomic=\"true\" hidden"
+    ));
     assert!(rendered.contains("<h2>Unstaged files</h2>"));
     assert!(rendered.contains("data-git-action=\"stage_file\""));
     assert!(rendered.contains("data-git-action=\"discard_file\""));
@@ -1541,6 +1547,8 @@ fn renders_diff_workspace_fragment_without_full_document() {
 #[test]
 fn renders_git_collection_error_in_workspace() {
     let report = GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
         error: Some("git status failed <unexpectedly>".to_string()),
@@ -1556,6 +1564,8 @@ fn renders_git_collection_error_in_workspace() {
 #[test]
 fn renders_targeted_diff_file_update() {
     let report = GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
         error: None,
@@ -2083,6 +2093,8 @@ fn highlights_visual_basic_diff_by_file_path() {
 fn public_diff_response_includes_highlighted_lines() {
     let content = "diff --git a/src/lib.rs b/src/lib.rs\n@@ -0,0 +1 @@\n+let answer: i32 = 42;";
     let response = public_diff_response(GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir: PathBuf::from("C:/work/demo"),
         status: GitStatusSummary::default(),
         error: None,

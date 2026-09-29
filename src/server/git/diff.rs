@@ -14,7 +14,19 @@ use super::{
 };
 
 pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDiffReport {
-    let status_summary = collect_project_git_status(project_dir).await;
+    collect_repository_diff(project_dir, false).await
+}
+
+pub(in crate::server) async fn collect_repository_view_diff(project_dir: &Path) -> GitDiffReport {
+    collect_repository_diff(project_dir, true).await
+}
+
+async fn collect_repository_diff(project_dir: &Path, separate_submodules: bool) -> GitDiffReport {
+    let status_summary = if separate_submodules {
+        collect_repository_view_status(project_dir).await
+    } else {
+        collect_project_git_status(project_dir).await
+    };
     let fallback_dir = fs::canonicalize(project_dir)
         .await
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -30,6 +42,8 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
 
     if status.output.is_err() {
         return GitDiffReport {
+            repositories: Vec::new(),
+            selected_repository: String::new(),
             repo_dir,
             status: status_summary,
             error: status.output.err(),
@@ -37,17 +51,17 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
         };
     }
 
-    let mut file_changes = collect_git_file_changes(&repo_dir)
+    let mut file_changes = collect_git_file_changes(&repo_dir, separate_submodules)
         .await
         .unwrap_or_default();
-    let unstaged_diff =
-        collect_git_text(&repo_dir, &["diff", "--no-ext-diff", "--color=never"], &[0]).await;
-    let staged_diff = collect_git_text(
-        &repo_dir,
-        &["diff", "--cached", "--no-ext-diff", "--color=never"],
-        &[0],
-    )
-    .await;
+    let mut unstaged_args = vec!["diff", "--no-ext-diff", "--color=never"];
+    let mut staged_args = vec!["diff", "--cached", "--no-ext-diff", "--color=never"];
+    if separate_submodules {
+        unstaged_args.push("--ignore-submodules=dirty");
+        staged_args.push("--ignore-submodules=dirty");
+    }
+    let unstaged_diff = collect_git_text(&repo_dir, &unstaged_args, &[0]).await;
+    let staged_diff = collect_git_text(&repo_dir, &staged_args, &[0]).await;
     let untracked_diff = collect_untracked_diff(&repo_dir).await;
     attach_file_diffs(
         &mut file_changes,
@@ -69,6 +83,8 @@ pub(in crate::server) async fn collect_project_diff(project_dir: &Path) -> GitDi
     );
 
     GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir,
         status: status_summary,
         error: None,
@@ -80,7 +96,7 @@ pub(in crate::server) async fn collect_project_file_diff(
     project_dir: &Path,
     path: &str,
 ) -> GitDiffReport {
-    let status_summary = collect_project_git_status(project_dir).await;
+    let status_summary = collect_repository_view_status(project_dir).await;
     let fallback_dir = fs::canonicalize(project_dir)
         .await
         .unwrap_or_else(|_| project_dir.to_path_buf());
@@ -92,6 +108,7 @@ pub(in crate::server) async fn collect_project_file_diff(
         "--porcelain=v1".to_string(),
         "-z".to_string(),
         "--untracked-files=all".to_string(),
+        "--ignore-submodules=dirty".to_string(),
         "--".to_string(),
         path.to_string(),
     ];
@@ -99,6 +116,8 @@ pub(in crate::server) async fn collect_project_file_diff(
         Ok(output) => parse_porcelain_status(&output.stdout),
         Err(error) => {
             return GitDiffReport {
+                repositories: Vec::new(),
+                selected_repository: String::new(),
                 repo_dir,
                 status: status_summary,
                 error: Some(error),
@@ -109,6 +128,8 @@ pub(in crate::server) async fn collect_project_file_diff(
 
     if file_changes.is_empty() {
         return GitDiffReport {
+            repositories: Vec::new(),
+            selected_repository: String::new(),
             repo_dir,
             status: status_summary,
             error: None,
@@ -119,6 +140,7 @@ pub(in crate::server) async fn collect_project_file_diff(
     let unstaged_args = vec![
         "diff".to_string(),
         "--no-ext-diff".to_string(),
+        "--ignore-submodules=dirty".to_string(),
         "--color=never".to_string(),
         "--".to_string(),
         path.to_string(),
@@ -127,6 +149,7 @@ pub(in crate::server) async fn collect_project_file_diff(
         "diff".to_string(),
         "--cached".to_string(),
         "--no-ext-diff".to_string(),
+        "--ignore-submodules=dirty".to_string(),
         "--color=never".to_string(),
         "--".to_string(),
         path.to_string(),
@@ -157,6 +180,8 @@ pub(in crate::server) async fn collect_project_file_diff(
     }
 
     GitDiffReport {
+        repositories: Vec::new(),
+        selected_repository: String::new(),
         repo_dir,
         status: status_summary,
         error: None,
@@ -209,39 +234,52 @@ pub(crate) async fn file_baseline(project_dir: &Path, file: &Path) -> Option<Str
 }
 
 pub(in crate::server) async fn collect_project_git_status(project_dir: &Path) -> GitStatusSummary {
+    collect_repository_status(project_dir, None).await
+}
+
+pub(super) async fn collect_repository_view_status(project_dir: &Path) -> GitStatusSummary {
+    collect_repository_status(project_dir, Some("dirty")).await
+}
+
+async fn collect_repository_status(
+    project_dir: &Path,
+    ignore_submodules: Option<&str>,
+) -> GitStatusSummary {
     // Catalog project directories are normalized to worktree roots during discovery, so status
     // refreshes can run there directly without a separate `git rev-parse` process per project.
     let repo_dir = project_dir;
     let mut summary = GitStatusSummary::default();
+    let submodules_arg = ignore_submodules.map(|value| format!("--ignore-submodules={value}"));
 
-    let status_future = run_git_command(
-        repo_dir,
-        &[
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "-z",
-            "--untracked-files=normal",
-        ],
-        &[0],
-    );
-    let diff_future = run_git_command(
-        repo_dir,
-        &["diff", "HEAD", "--numstat", "--no-renames"],
-        &[0],
-    );
+    let mut status_args = vec![
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "-z",
+        "--untracked-files=normal",
+    ];
+    let mut diff_args = vec!["diff", "HEAD", "--numstat", "--no-renames"];
+    if let Some(arg) = submodules_arg.as_deref() {
+        status_args.push(arg);
+        diff_args.push(arg);
+    }
+    let status_future = run_git_command(repo_dir, &status_args, &[0]);
+    let diff_future = run_git_command(repo_dir, &diff_args, &[0]);
     let (status, diff) = tokio::join!(status_future, diff_future);
 
     match diff {
         Ok(output) => add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout)),
         Err(_) => {
+            let mut cached_args = vec!["diff", "--cached", "--numstat", "--no-renames"];
+            let mut unstaged_args = vec!["diff", "--numstat", "--no-renames"];
+            if let Some(arg) = submodules_arg.as_deref() {
+                cached_args.push(arg);
+                unstaged_args.push(arg);
+            }
+            unstaged_args.push("--");
             let (cached, unstaged) = tokio::join!(
-                run_git_command(
-                    repo_dir,
-                    &["diff", "--cached", "--numstat", "--no-renames"],
-                    &[0],
-                ),
-                run_git_command(repo_dir, &["diff", "--numstat", "--no-renames", "--"], &[0],)
+                run_git_command(repo_dir, &cached_args, &[0]),
+                run_git_command(repo_dir, &unstaged_args, &[0])
             );
             for output in [cached, unstaged].into_iter().flatten() {
                 add_numstat(&mut summary, &String::from_utf8_lossy(&output.stdout));
@@ -445,14 +483,15 @@ fn parse_git_history(output: &str) -> Vec<GitCommit> {
         .collect()
 }
 
-async fn collect_git_file_changes(repo_dir: &Path) -> Result<Vec<GitFileChange>, String> {
-    let output = run_git_command(
-        repo_dir,
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        &[0],
-    )
-    .await?;
-
+async fn collect_git_file_changes(
+    repo_dir: &Path,
+    separate_submodules: bool,
+) -> Result<Vec<GitFileChange>, String> {
+    let mut args = vec!["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+    if separate_submodules {
+        args.push("--ignore-submodules=dirty");
+    }
+    let output = run_git_command(repo_dir, &args, &[0]).await?;
     Ok(parse_porcelain_status(&output.stdout))
 }
 

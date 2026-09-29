@@ -4,6 +4,8 @@ use serde::Serialize;
 
 #[derive(Clone, Debug)]
 pub(crate) struct GitDiffReport {
+    pub(in crate::server) repositories: Vec<super::submodules::GitRepositorySummary>,
+    pub(in crate::server) selected_repository: String,
     pub(in crate::server) repo_dir: PathBuf,
     pub(in crate::server) status: GitStatusSummary,
     pub(in crate::server) error: Option<String>,
