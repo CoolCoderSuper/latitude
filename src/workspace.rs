@@ -1,6 +1,7 @@
 mod bridge;
 mod files;
 mod host;
+mod neovim;
 mod process;
 mod terminal;
 
@@ -40,12 +41,14 @@ pub(crate) struct WorkspaceBridge {
 pub(crate) struct WorkspaceServices {
     bridge: Option<WorkspaceBridge>,
     terminals: Arc<TerminalSessionManager>,
+    neovim: Arc<neovim::NeovimSessions>,
     files: ProjectFileService,
 }
 
 #[derive(Clone)]
 struct WorkspaceHostState {
     terminals: Arc<TerminalSessionManager>,
+    neovim: Arc<neovim::NeovimSessions>,
     files: ProjectFileService,
 }
 
@@ -98,6 +101,7 @@ impl WorkspaceServices {
         Self {
             bridge,
             terminals: Arc::new(TerminalSessionManager::default()),
+            neovim: Arc::new(neovim::NeovimSessions::default()),
             files: ProjectFileService::default(),
         }
     }

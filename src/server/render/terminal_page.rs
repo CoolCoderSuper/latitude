@@ -73,9 +73,9 @@ fn render_terminal_page(page: TerminalPage<'_>) -> String {
         TERMINAL_VIEWER_STYLE_HREF,
         html! {},
         html! {
-            main {
+            main class="project-tool-page" {
                 (html_page::page_header(html_page::PageHeader {
-                    class_name: None,
+                    class_name: Some("project-tool-header"),
                     back_href: page.back_href,
                     back_label: page.back_label,
                     heading: page.heading,

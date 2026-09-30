@@ -1,0 +1,79 @@
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  background: var(--latitude-color-canvas);
+  color: var(--latitude-color-text);
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+.project-tool-page {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100dvh;
+  padding: 12px;
+}
+.project-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid var(--latitude-color-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--latitude-color-surface);
+}
+.project-tool-header h1 {
+  margin: 0;
+  color: var(--latitude-color-heading);
+  font-size: 1rem;
+  font-weight: 900;
+}
+.project-tool-header p {
+  margin: 0;
+  color: var(--latitude-color-muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+.project-tool-header a {
+  color: var(--latitude-color-accent);
+  font-size: 0.86rem;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.project-tool-header a:hover {
+  text-decoration: underline;
+}
+.project-tool-header .project-path {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  text-align: right;
+}
+@media (max-width: 720px) {
+  .project-tool-page {
+    gap: 8px;
+    padding: 8px;
+  }
+  .project-tool-header {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 10px;
+  }
+  .project-tool-header .project-path {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+}

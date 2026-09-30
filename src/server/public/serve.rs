@@ -983,7 +983,7 @@ mod submodule_tests {
         assert!(html.contains("child edit"));
         assert!(html.contains("data-file-path=\"new.txt\""));
         assert!(html.contains("history?repository=modules%2Fwith+space"));
-        assert!(html.contains("_files?path=modules%2Fwith+space%2Fnote.txt"));
+        assert!(html.contains("_editor?path=modules%2Fwith+space%2Fnote.txt"));
         assert!(html.contains("hx-patch=\"/demo/_diff?repository=modules%2Fwith+space\""));
         let (status, update) = request(
             &project,

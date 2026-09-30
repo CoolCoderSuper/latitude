@@ -69,7 +69,7 @@
   color: var(--latitude-color-accent);
 }
 
-.latitude-theme-header {
+header.latitude-theme-header {
   box-sizing: border-box;
   position: relative;
   padding-right: max(58px, env(safe-area-inset-right));
@@ -77,7 +77,8 @@
 
 .latitude-theme-header > .latitude-theme-toggle {
   position: absolute;
-  top: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   right: 8px;
   box-shadow: none;
 }
@@ -115,4 +116,135 @@
 :root[data-latitude-theme='dark'] .latitude-theme-toggle:hover {
   border-color: var(--latitude-color-accent);
   color: var(--latitude-color-accent);
+}
+
+:root[data-latitude-editor='neovim'] [data-editor-tool='files'],
+:root:not([data-latitude-editor='neovim']) [data-editor-tool='neovim'] {
+  display: none;
+}
+.latitude-settings-toggle {
+  position: fixed;
+  top: 14px;
+  right: 60px;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--latitude-color-border-strong);
+  border-radius: 8px;
+  color: var(--latitude-color-text);
+  background: var(--latitude-color-surface);
+  cursor: pointer;
+}
+.latitude-settings-toggle svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.latitude-settings-toggle:hover {
+  color: var(--latitude-color-accent);
+  border-color: var(--latitude-color-accent);
+}
+header.latitude-settings-header {
+  padding-right: max(104px, env(safe-area-inset-right));
+}
+.latitude-settings-header > .latitude-settings-toggle {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: 54px;
+}
+dialog.latitude-settings {
+  width: min(360px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 20px;
+  border: 1px solid var(--latitude-color-border);
+  border-radius: 10px;
+  color: var(--latitude-color-text);
+  background: var(--latitude-color-surface);
+  box-shadow: var(--latitude-shadow-floating);
+  font:
+    400 14px/1.4 system-ui,
+    sans-serif;
+}
+.latitude-settings::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+.latitude-settings .latitude-settings-heading,
+.latitude-settings .latitude-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.latitude-settings h2 {
+  margin: 0;
+  color: var(--latitude-color-heading);
+  font:
+    600 15px/1.4 system-ui,
+    sans-serif;
+}
+.latitude-settings [data-settings-close] {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--latitude-color-muted);
+  font:
+    400 20px/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.latitude-settings [data-settings-close]:hover {
+  background: var(--latitude-color-surface-muted);
+  color: var(--latitude-color-text);
+}
+.latitude-settings .latitude-settings-row {
+  margin-top: 20px;
+}
+.latitude-settings span {
+  margin: 0;
+  font: inherit;
+  color: inherit;
+}
+.latitude-settings .latitude-editor-options {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--latitude-color-border);
+  border-radius: 7px;
+  background: var(--latitude-color-canvas);
+}
+.latitude-editor-options label {
+  position: relative;
+  cursor: pointer;
+}
+.latitude-editor-options input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.latitude-settings .latitude-editor-options span {
+  display: block;
+  padding: 6px 12px;
+  border-radius: 4px;
+  color: var(--latitude-color-muted);
+}
+.latitude-settings .latitude-editor-options input:checked + span {
+  background: var(--latitude-color-surface-muted);
+  color: var(--latitude-color-heading);
+}
+.latitude-editor-options input:focus-visible + span {
+  outline: 2px solid var(--latitude-color-focus);
+  outline-offset: 1px;
 }

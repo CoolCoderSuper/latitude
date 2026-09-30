@@ -47,10 +47,12 @@ pub(crate) async fn run_workspace_host(address: SocketAddr, token: String) -> Re
     let auth_token = Arc::from(token);
     let state = WorkspaceHostState {
         terminals: Arc::new(TerminalSessionManager::default()),
+        neovim: Arc::new(super::neovim::NeovimSessions::default()),
         files: ProjectFileService::default(),
     };
     let router = Router::new()
         .route(WORKSPACE_HEALTH_PATH, get(workspace_health))
+        .route("/neovim", get(super::neovim::workspace_neovim))
         .route(WORKSPACE_EXEC_PATH, post(workspace_exec))
         .route(
             WORKSPACE_TERMINALS_PATH,

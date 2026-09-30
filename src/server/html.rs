@@ -71,6 +71,7 @@ fn document_head(
             title { (document_title) }
             link rel="icon" type="image/png" href=(FAVICON_HREF);
             script src=(THEME_BOOTSTRAP_SCRIPT_SRC) {}
+            script src="/__latitude/assets/editor-preference.bundle.js" {}
             link rel="stylesheet" href=(COMMON_THEME_STYLE_HREF);
             link rel="stylesheet" href=(style_href);
             (head_extra)
@@ -81,6 +82,30 @@ fn document_head(
 fn document_body(body: Markup) -> Markup {
     html! {
         (theme_toggle())
+        button class="latitude-settings-toggle" data-settings-open type="button" aria-label="System settings" title="System settings" {
+            svg viewBox="0 0 24 24" aria-hidden="true" {
+                path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1Z" {}
+            }
+        }
+        dialog class="latitude-settings" data-settings-dialog aria-labelledby="latitude-settings-title" {
+            div class="latitude-settings-heading" {
+                h2 id="latitude-settings-title" { "System settings" }
+                button type="button" data-settings-close aria-label="Close settings" { "×" }
+            }
+            div class="latitude-settings-row" {
+                span id="latitude-editor-label" { "Editor" }
+                div class="latitude-editor-options" role="group" aria-labelledby="latitude-editor-label" {
+                    label {
+                        input type="radio" name="latitude-editor" value="files" data-editor-preference;
+                        span { "Files" }
+                    }
+                    label {
+                        input type="radio" name="latitude-editor" value="neovim" data-editor-preference;
+                        span { "Neovim" }
+                    }
+                }
+            }
+        }
         (body)
         script src=(THEME_TOGGLE_SCRIPT_SRC) {}
     }

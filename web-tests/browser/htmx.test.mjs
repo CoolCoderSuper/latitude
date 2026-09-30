@@ -23,7 +23,7 @@ test('history loads on scroll, retries errors, and keeps a bounded set of rows',
     `<style>${css}</style><main class="history-page"><section data-history-workspace>
     <div class="history-viewport" data-history-viewport><div data-history-rows>${batch(0)}</div></div>
     <div class="history-load-status"><span data-history-status></span><button data-history-retry hidden>Retry</button></div></section></main>`,
-    'git-history.js',
+    'git-history.bundle.js',
     async (route, url) => {
       const offset = Number(url.searchParams.get('offset'));
       requests.push(offset);
@@ -97,7 +97,7 @@ async function fixture(t, body, script, respond) {
       return route.fulfill({
         contentType: 'text/html',
         body: `<!doctype html><meta name="htmx-config" content='${config}'>
-          <script src="/assets/htmx.min.js"></script>${body}
+          <script src="/assets/htmx.bundle.js"></script>${body}
           <script type="module" src="/assets/${script}"></script>`,
       });
     }
@@ -127,7 +127,7 @@ test('share dialog replacements localize expiry dates and preserve controls on e
   const page = await fixture(
     t,
     `<main data-server-shell><dialog open data-share-dialog>${shell}</dialog></main>`,
-    'project-home.js',
+    'project-home.bundle.js',
     async (route, url) => {
       if (!url.pathname.startsWith('/shares'))
         return route.fulfill({ json: { projects: [] } });
@@ -250,7 +250,7 @@ test('Git actions apply fragments and clear pending state on HTTP and network fa
         <button name="action" value="commit">Commit</button>
       </form>
     </main>`,
-    'diff-viewer.js',
+    'diff-viewer.bundle.js',
     async (route) => {
       const params = new URLSearchParams(route.request().postData());
       if (params.get('action') === 'fetch')
@@ -310,7 +310,7 @@ test('Git staging and polling preserve the commit input, focus, and selection', 
   const page = await fixture(
     t,
     `<main data-diff-workspace data-action-url="/diff">${fragment()}</main>`,
-    'diff-viewer.js',
+    'diff-viewer.bundle.js',
     async (route) => {
       if (route.request().method() === 'GET') {
         return route.fulfill({ contentType: 'text/html', body: fragment() });
@@ -393,7 +393,7 @@ test('project refresh skips identical HTML and archive triggers refresh while di
     `<main data-server-shell>${list()}
     <button id="archive" hx-patch="/archive" hx-swap="none" hx-disable="this" hx-confirm="Archive?">Archive</button>
     </main>`,
-    'project-home.js',
+    'project-home.bundle.js',
     async (route, url) => {
       if (url.pathname === '/archive') {
         archived = true;
@@ -446,7 +446,7 @@ test('Git refresh skips identical content and retains selections, expanded files
   const page = await fixture(
     t,
     `<main data-diff-workspace data-action-url="/diff">${fragment()}</main>`,
-    'diff-viewer.js',
+    'diff-viewer.bundle.js',
     async (route) => {
       if (route.request().method() === 'PATCH')
         return route.fulfill({ status: 503 });

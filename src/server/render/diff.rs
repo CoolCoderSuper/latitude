@@ -59,7 +59,7 @@ pub(in crate::server) fn render_project_git_history(
                         button type="button" data-history-retry hidden { "Retry" }
                     }
                 }
-                script type="module" src="/__latitude/assets/git-history.js" {}
+                script type="module" src="/__latitude/assets/git-history.bundle.js" {}
             }
         },
     )
@@ -455,7 +455,7 @@ fn editor_href(path: &str, action_url: &str) -> String {
     let query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("path", &path)
         .finish();
-    format!("./_files?{query}")
+    format!("./_editor?{query}")
 }
 
 fn git_destructive_action_button(

@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import { editorFontFamily, editorFontSize } from './editor-font.js';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { Terminal } from '@xterm/xterm';
 import { createTerminalOutputWriter } from './terminal-stream.js';
@@ -207,9 +208,8 @@ if (workspace) {
     convertEol: false,
     cursorBlink: true,
     cursorStyle: 'block',
-    fontFamily:
-      '"CaskaydiaCove Nerd Font", Consolas, "Cascadia Mono", "DejaVu Sans Mono", monospace',
-    fontSize: 14,
+    fontFamily: editorFontFamily,
+    fontSize: editorFontSize,
     lineHeight: 1,
     letterSpacing: 0,
     scrollback: 5000,

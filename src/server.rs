@@ -3,9 +3,11 @@ mod auth;
 mod command;
 mod constants;
 mod desktop_api;
+mod editor;
 mod files_api;
 mod git;
 mod html;
+mod neovim;
 mod page;
 mod paths;
 mod presentation;
@@ -178,6 +180,10 @@ fn public_pages_router(state: AppState) -> Router<AppState> {
         .route("/{project}/_diff", any(public_project_diff))
         .route("/{project}/_diff/", any(public_project_diff))
         .route("/{project}/_diff/{*remainder}", any(public_project_diff))
+        .route("/{project}/_neovim", get(neovim::page))
+        .route("/{project}/_editor", get(editor::open))
+        .route("/{project}/_neovim/", get(neovim::page))
+        .route("/{project}/_neovim/ws", get(neovim::websocket))
         .route("/{project}/_files", any(public_project_files))
         .route("/{project}/_files/", any(public_project_files))
         .route("/{project}/_files/{*remainder}", any(public_project_files))

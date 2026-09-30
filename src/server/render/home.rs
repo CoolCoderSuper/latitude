@@ -55,7 +55,12 @@ pub(in crate::server) fn render_project_home(
                     p { "Project tools and deployments on " (device_hostname) }
                 }
                 ul {
-                    (tool_link(&project.name, FILES_ROUTE_SEGMENT, "Files", "Browse, preview, and edit project files"))
+                    li data-editor-tool="files" { a href=(format!("/{}/{}", project.name, FILES_ROUTE_SEGMENT)) {
+                        strong { "Files" } span { "Browse, preview, and edit project files" }
+                    } }
+                    li data-editor-tool="neovim" { a href=(format!("/{}/_neovim", project.name)) {
+                        strong { "Neovim" } span { "Open Neovim in the project directory" }
+                    } }
                     (code_changes_tool_link(&project.name, git_status))
                     (tool_link(&project.name, TERMINAL_ROUTE_SEGMENT, "Terminal", "Run commands in the project directory"))
                     @if t3code_enabled {

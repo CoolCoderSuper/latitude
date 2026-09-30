@@ -1,3 +1,4 @@
+mod neovim;
 mod shares;
 
 use std::{
@@ -123,8 +124,11 @@ async fn test_state(config: BootConfig) -> AppState {
 }
 
 async fn test_state_with_fixture(config: BootConfig, fixture: CatalogFixture) -> AppState {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let data_dir = std::env::temp_dir().join(format!(
-        "latitude-test-data-{}",
+        "latitude-test-data-{}-{}-{}",
+        std::process::id(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -497,8 +501,8 @@ fn generated_theme_assets_do_not_follow_system_color_scheme() {
         rendered
             .contains("rel=\"icon\" type=\"image/png\" href=\"/__latitude/assets/favicon.png\"")
     );
-    assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.js\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.js\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-bootstrap.bundle.js\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/theme-toggle.bundle.js\""));
     assert!(!rendered.contains("var cookieName"));
 }
 
@@ -576,13 +580,16 @@ fn t3code_embed_ui_supports_iframes_and_marked_desktop_webviews() {
 
 #[tokio::test]
 async fn serves_embedded_assets_with_cache_validation() {
+    assert!(embedded_asset_names()
+        .filter(|name| name.ends_with(".js"))
+        .all(|name| name.ends_with(".bundle.js")));
     assert!(embedded_asset_names().any(|name| name == "favicon.png"));
-    assert!(embedded_asset_names().any(|name| name == "htmx.min.js"));
+    assert!(embedded_asset_names().any(|name| name == "htmx.bundle.js"));
     assert!(embedded_asset_names().any(|name| name == "file-viewer.bundle.js"));
     assert!(embedded_asset_names().any(|name| name == "terminal-viewer.bundle.js"));
     assert!(embedded_asset_names().any(|name| name == "terminal-viewer.bundle.css"));
     let response = public_asset(
-        axum::extract::Path("htmx.min.js".to_string()),
+        axum::extract::Path("htmx.bundle.js".to_string()),
         HeaderMap::new(),
     )
     .await;
@@ -603,11 +610,11 @@ async fn serves_embedded_assets_with_cache_validation() {
     );
     let etag = response.headers().get(header::ETAG).unwrap().clone();
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-    assert!(body.starts_with(b"var htmx="));
+    assert_eq!(body.as_ref(), include_bytes!("assets/htmx.bundle.js"));
 
     let mut headers = HeaderMap::new();
     headers.insert(header::IF_NONE_MATCH, etag);
-    let response = public_asset(axum::extract::Path("htmx.min.js".to_string()), headers).await;
+    let response = public_asset(axum::extract::Path("htmx.bundle.js".to_string()), headers).await;
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(body.is_empty());
@@ -1030,7 +1037,7 @@ fn renders_project_home_with_enabled_deployments() {
     assert!(rendered.contains("data-share-dialog"));
     assert!(rendered.contains("hx-get=\"/__latitude/ui/shares/demo/website\""));
     assert!(rendered.contains("hx-target=\"[data-share-dialog-shell]\""));
-    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/project-home.js\""));
+    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/project-home.bundle.js\""));
     assert!(!rendered.contains("/__latitude/api/shares"));
     assert!(!rendered.contains("/demo/draft"));
     assert!(!rendered.contains("data-deployment=\"draft\""));
@@ -1505,7 +1512,7 @@ fn renders_project_diff_with_escaped_highlighted_lines() {
     assert!(rendered.contains("data-git-action=\"pull\""));
     assert!(rendered.contains("href=\"/demo/_diff/history\""));
     assert!(rendered.contains("hx-patch=\"/demo/_diff\""));
-    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/diff-viewer.js\""));
+    assert!(rendered.contains("type=\"module\" src=\"/__latitude/assets/diff-viewer.bundle.js\""));
     assert!(!rendered.contains("method=\"post\""));
     assert!(!rendered.contains("Done."));
     assert!(rendered.contains("class=\"line remove\">-<span class=\"tok-keyword\">let</span> old"));
@@ -1892,7 +1899,7 @@ fn renders_root_desktop_page() {
     assert!(rendered.contains("data-screen-layout=\"[]\""));
     assert!(rendered.contains("data-resolution-options=\"[]\""));
     assert!(rendered.contains("href=\"/__latitude/assets/desktop-viewer.css\""));
-    assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.js\""));
+    assert!(rendered.contains("src=\"/__latitude/assets/desktop-viewer.bundle.js\""));
 }
 
 #[tokio::test]
