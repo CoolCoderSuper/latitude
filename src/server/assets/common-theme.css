@@ -1,3 +1,8 @@
+:root {
+  --latitude-header-gap: 8px;
+  --latitude-header-padding: 6px 12px;
+}
+
 :root,
 :root[data-latitude-theme='light'] {
   color-scheme: light;

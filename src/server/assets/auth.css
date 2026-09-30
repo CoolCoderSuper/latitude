@@ -42,7 +42,7 @@ p {
 form {
   display: grid;
   gap: 14px;
-  margin-top: 28px;
+  margin-top: var(--latitude-header-gap);
 }
 
 label {

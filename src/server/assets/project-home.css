@@ -36,7 +36,7 @@ p {
 }
 
 header {
-  margin: 0 0 24px;
+  margin: 0 0 var(--latitude-header-gap);
 }
 
 header p {
@@ -179,7 +179,7 @@ li {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: var(--latitude-header-gap);
 }
 
 .archived-projects-header h2 {
@@ -308,7 +308,7 @@ li {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: var(--latitude-header-gap);
 }
 
 .archived-deployments-header h2 {

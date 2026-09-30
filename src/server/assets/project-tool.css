@@ -19,18 +19,18 @@ body {
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--latitude-header-gap);
   height: 100dvh;
   padding: 12px;
 }
 .project-tool-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--latitude-header-gap);
   min-width: 0;
   border: 1px solid var(--latitude-color-border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--latitude-header-padding);
   background: var(--latitude-color-surface);
 }
 .project-tool-header h1 {

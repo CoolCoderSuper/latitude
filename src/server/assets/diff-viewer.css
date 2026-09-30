@@ -27,12 +27,12 @@ main {
 header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--latitude-header-gap);
   min-width: 0;
-  margin-bottom: 16px;
+  margin-bottom: var(--latitude-header-gap);
   border: 1px solid var(--latitude-color-border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--latitude-header-padding);
   background: var(--latitude-color-surface);
 }
 
@@ -300,11 +300,11 @@ input {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 10px;
+  gap: var(--latitude-header-gap);
+  margin-bottom: var(--latitude-header-gap);
   border: 1px solid var(--latitude-color-border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--latitude-header-padding);
   background: var(--latitude-color-surface);
 }
 
@@ -364,7 +364,7 @@ input {
 .diff-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: var(--latitude-header-gap);
 }
 
 .git-overview {
@@ -883,7 +883,7 @@ pre {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 4px 10px;
-    margin-bottom: 12px;
+    margin-bottom: var(--latitude-header-gap);
   }
 
   .project-path {
@@ -950,7 +950,7 @@ pre {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
+  margin: 0;
 }
 
 .git-repositories a {

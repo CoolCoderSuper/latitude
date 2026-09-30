@@ -37,7 +37,7 @@ body {
   box-sizing: border-box;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--latitude-header-gap);
   width: 100%;
   height: 100%;
   padding: 12px;
@@ -46,11 +46,11 @@ body {
 .files-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--latitude-header-gap);
   min-width: 0;
   border: 1px solid var(--files-border);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--latitude-header-padding);
   background: var(--files-panel);
 }
 
