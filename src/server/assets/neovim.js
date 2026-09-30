@@ -1,5 +1,6 @@
 import { NeovimGrid, keyInput } from './neovim-grid.js';
 import { editorFontFamily, editorFontSize } from './editor-font.js';
+import { drawBoxDrawing } from './neovim-box-drawing.js';
 
 const root = document.querySelector('[data-neovim]');
 if (root) {
@@ -82,7 +83,18 @@ if (root) {
       const attrs = override ?? grid.style(cell[1]);
       ctx.font = `${attrs.italic ? 'italic ' : ''}${attrs.bold ? 'bold ' : ''}${font}`;
       ctx.fillStyle = attrs.foreground;
-      ctx.fillText(cell[0], col * cellWidth, row * cellHeight + 16);
+      if (
+        !drawBoxDrawing(
+          ctx,
+          cell[0],
+          col * cellWidth,
+          row * cellHeight,
+          cellWidth,
+          cellHeight,
+          scale,
+        )
+      )
+        ctx.fillText(cell[0], col * cellWidth, row * cellHeight + 16);
       ctx.fillStyle = attrs.special;
       if (
         attrs.underline ||
