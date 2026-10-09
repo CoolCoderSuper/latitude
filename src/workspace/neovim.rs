@@ -113,14 +113,14 @@ async fn open_file_rpc(cwd: &Path, path: &str) -> Result<Value> {
         bail!("Choose a file inside the project directory");
     }
     let path = crate::util::strip_windows_extended_path(&target.to_string_lossy()).into_owned();
-    // The path is a Lua argument, never executable Ex/Lua text. :hide keeps the
-    // previous buffer alive even when it has unsaved changes and 'hidden' is off.
+    // The path is a Lua argument, never executable Ex/Lua text. :tab sbuffer
+    // keeps the previous tab and its unsaved buffer open even when 'hidden' is off.
     Ok(json!([
         0,
         3,
         "nvim_exec_lua",
         [
-            "local path = ...; local buf = vim.fn.bufadd(path); vim.fn.bufload(buf); vim.bo[buf].buflisted = true; vim.cmd('stopinsert'); vim.cmd('hide buffer ' .. buf); return buf",
+            "local path = ...; local buf = vim.fn.bufadd(path); vim.fn.bufload(buf); vim.bo[buf].buflisted = true; vim.cmd('stopinsert'); vim.cmd('tab sbuffer ' .. buf); return buf",
             [path]
         ]
     ]))

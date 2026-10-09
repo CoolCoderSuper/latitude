@@ -395,24 +395,24 @@ test(
       () => 'Git file was not opened in Neovim',
     );
     await page.keyboard.type(
-      ":call writefile([string(getpid())], 'git-editor.pid')",
+      ":call writefile([string(getpid()), string(tabpagenr('$'))], 'git-editor.pid')",
     );
     await page.keyboard.press('Enter');
     await until(
       async () => {
         try {
           return (
-            Number(
-              (await readFile(join(project, 'git-editor.pid'), 'utf8')).trim(),
-            ) === pid
+            (await readFile(join(project, 'git-editor.pid'), 'utf8'))
+              .trim()
+              .replaceAll('\r\n', '\n') === `${pid}\n2`
           );
         } catch {
           return false;
         }
       },
-      () => 'Git action started a different Neovim session',
+      () => 'Git action did not open a new tab in the existing Neovim session',
     );
-    await page.keyboard.type(':buffer #');
+    await page.keyboard.type(':tabprevious');
     await page.keyboard.press('Enter');
     await page.keyboard.type(':w recovered.txt');
     await page.keyboard.press('Enter');
